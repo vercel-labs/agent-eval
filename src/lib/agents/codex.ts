@@ -146,10 +146,11 @@ export function createCodexAgent({ useVercelAiGateway }: { useVercelAiGateway: b
         };
       }
 
-      // Create sandbox (auto-detects backend based on env)
+      // Create sandbox
       sandbox = await createSandbox({
         timeout: options.timeout,
         runtime: 'node24',
+        backend: options.sandbox,
       });
 
       // Check for abort after sandbox creation (abort may have fired during create)

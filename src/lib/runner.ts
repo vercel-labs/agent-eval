@@ -124,6 +124,7 @@ export async function runExperiment(
       setup: config.setup,
       scripts: config.scripts,
       signal: config.earlyExit ? controller.signal : undefined,
+      sandbox: config.sandbox,
     });
 
     // Check if this was aborted
@@ -219,6 +220,7 @@ export async function runSingleEval(
     apiKey: string;
     setup?: ResolvedExperimentConfig['setup'];
     scripts?: string[];
+    sandbox?: ResolvedExperimentConfig['sandbox'];
     verbose?: boolean;
   }
 ): Promise<EvalRunData> {
@@ -231,6 +233,7 @@ export async function runSingleEval(
     apiKey: options.apiKey,
     setup: options.setup,
     scripts: options.scripts,
+    sandbox: options.sandbox,
   });
 
   return agentResultToEvalRunData(agentResult);

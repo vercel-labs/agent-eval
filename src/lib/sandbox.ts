@@ -216,23 +216,16 @@ export class SandboxManager implements Sandbox {
 }
 
 /**
- * Resolve which sandbox backend to use based on options and environment.
+ * Resolve which sandbox backend to use based on options.
  *
  * Priority:
  * 1. Explicit backend in options (if not 'auto')
- * 2. SANDBOX_BACKEND environment variable
- * 3. Auto-detect: Vercel if token present, else Docker
+ * 2. Auto-detect: Vercel if token present, else Docker
  */
 export function resolveBackend(options?: SandboxOptions): SandboxBackend {
   // Explicit backend in options
   if (options?.backend && options.backend !== 'auto') {
     return options.backend;
-  }
-
-  // Environment variable override
-  const envBackend = process.env.SANDBOX_BACKEND;
-  if (envBackend === 'vercel' || envBackend === 'docker') {
-    return envBackend;
   }
 
   // Auto-detect: Vercel if token present, else Docker
@@ -254,11 +247,9 @@ export function getSandboxBackendInfo(options?: SandboxOptions): SandboxBackendI
   let reason: 'explicit' | 'auto-detected';
   let description: string;
 
-  const envBackend = process.env.SANDBOX_BACKEND;
   const hasExplicitOption = options?.backend && options.backend !== 'auto';
-  const hasEnvVar = envBackend === 'vercel' || envBackend === 'docker';
 
-  if (hasExplicitOption || hasEnvVar) {
+  if (hasExplicitOption) {
     reason = 'explicit';
     description = `${backend} (explicit)`;
   } else {

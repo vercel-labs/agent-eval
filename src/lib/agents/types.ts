@@ -2,7 +2,7 @@
  * Agent interface and common types for all agents.
  */
 
-import type { ModelTier, SetupFunction } from '../types.js';
+import type { ModelTier, SetupFunction, SandboxBackend } from '../types.js';
 
 /**
  * Common options for all agents.
@@ -22,6 +22,8 @@ export interface AgentRunOptions {
   scripts?: string[];
   /** Abort signal to cancel the run */
   signal?: AbortSignal;
+  /** Sandbox backend to use */
+  sandbox?: SandboxBackend | 'auto';
 }
 
 /**

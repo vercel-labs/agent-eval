@@ -99,7 +99,7 @@ async function runExperimentCommand(configInput: string, options: { dry?: boolea
     console.log(chalk.blue(`Agent: ${config.agent}, Model: ${config.model}, Timeout: ${config.timeout}s, Early Exit: ${config.earlyExit}`));
 
     // Show which sandbox backend will be used
-    const sandboxInfo = getSandboxBackendInfo();
+    const sandboxInfo = getSandboxBackendInfo({ backend: config.sandbox });
     console.log(chalk.blue(`Sandbox: ${sandboxInfo.description}`));
 
     if (options.dry) {

@@ -49,6 +49,11 @@ export interface Sandbox {
 export type SetupFunction = (sandbox: Sandbox) => Promise<void>;
 
 /**
+ * Sandbox backend type.
+ */
+export type SandboxBackend = 'vercel' | 'docker';
+
+/**
  * Experiment configuration.
  * Defines what to test and how.
  */
@@ -76,6 +81,9 @@ export interface ExperimentConfig {
 
   /** Setup function that runs before agent starts. @default undefined */
   setup?: SetupFunction;
+
+  /** Sandbox backend to use. @default 'auto' (Vercel if token present, else Docker) */
+  sandbox?: SandboxBackend | 'auto';
 }
 
 /**
@@ -90,6 +98,7 @@ export interface ResolvedExperimentConfig {
   scripts: string[];
   timeout: number;
   setup?: SetupFunction;
+  sandbox: SandboxBackend | 'auto';
 }
 
 /**

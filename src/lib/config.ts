@@ -20,6 +20,7 @@ export const CONFIG_DEFAULTS = {
   earlyExit: true,
   scripts: [] as string[],
   timeout: 300, // 5 minutes
+  sandbox: 'auto' as const,
 };
 
 /**
@@ -42,6 +43,7 @@ const experimentConfigSchema = z.object({
   scripts: z.array(z.string()).optional(),
   timeout: z.number().positive().optional(),
   setup: z.function().optional(),
+  sandbox: z.enum(['vercel', 'docker', 'auto']).optional(),
 });
 
 /**
@@ -80,6 +82,7 @@ export function resolveConfig(config: ExperimentConfig): ResolvedExperimentConfi
     scripts: config.scripts ?? CONFIG_DEFAULTS.scripts,
     timeout: config.timeout ?? CONFIG_DEFAULTS.timeout,
     setup: config.setup,
+    sandbox: config.sandbox ?? CONFIG_DEFAULTS.sandbox,
   };
 }
 
