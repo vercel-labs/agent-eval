@@ -360,7 +360,7 @@ describe('runExperiment', () => {
       expect(abortEvents.length).toBeGreaterThanOrEqual(2); // At minimum the slow runs got it
     });
 
-    it('does not pass signal when earlyExit is false', async () => {
+    it('always passes signal for timeout cleanup even when earlyExit is false', async () => {
       const receivedSignals: (AbortSignal | undefined)[] = [];
 
       const mockAgent: Agent = {
@@ -409,8 +409,8 @@ describe('runExperiment', () => {
         experimentName: 'test-experiment',
       });
 
-      // No signals should be passed when earlyExit is false
-      expect(receivedSignals.every((s) => s === undefined)).toBe(true);
+      // Signals should always be passed for timeout cleanup
+      expect(receivedSignals.every((s) => s instanceof AbortSignal)).toBe(true);
     });
   });
 
@@ -550,8 +550,137 @@ describe('runExperiment', () => {
         apiKey: 'my-api-key',
         setup: mockSetup,
         scripts: ['build', 'lint'],
-        signal: undefined, // No signal when earlyExit is false
+        signal: expect.any(AbortSignal), // Signal always passed for timeout cleanup
+        sandbox: undefined,
       });
+    });
+  });
+
+  describe('timeout enforcement', () => {
+    it('times out and returns error when agent exceeds timeout', async () => {
+      const mockAgent: Agent = {
+        name: 'mock-agent',
+        displayName: 'Mock Agent',
+        getApiKeyEnvVar: () => 'MOCK_API_KEY',
+        getDefaultModel: () => 'mock-model',
+        run: vi.fn().mockImplementation(async () => {
+          // Simulate agent taking 500ms (longer than 100ms timeout)
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          return {
+            success: true,
+            output: 'Should not reach this',
+            duration: 500,
+            testResult: { success: true, output: 'Test passed' },
+            scriptsResults: {},
+          };
+        }),
+      };
+
+      vi.spyOn(agentsIndex, 'getAgent').mockReturnValue(mockAgent);
+
+      const config: ResolvedExperimentConfig = {
+        agent: 'claude-code',
+        model: 'sonnet',
+        evals: ['test-eval'],
+        runs: 1,
+        earlyExit: false,
+        scripts: [],
+        timeout: 0.1, // 100ms in seconds
+      };
+
+      const fixtures: EvalFixture[] = [
+        {
+          name: 'test-eval',
+          path: '/fake/path',
+          prompt: 'Test prompt',
+          isModule: true,
+        },
+      ];
+
+      const startTime = Date.now();
+      const results = await runExperiment({
+        config,
+        fixtures,
+        apiKey: 'test-key',
+        resultsDir: TEST_DIR,
+        experimentName: 'test-experiment',
+      });
+      const elapsed = Date.now() - startTime;
+
+      // Should fail with timeout error
+      expect(results.evals[0].passedRuns).toBe(0);
+      expect(results.evals[0].runs[0].result.status).toBe('failed');
+      expect(results.evals[0].runs[0].result.error).toContain('timed out');
+
+      // Should not wait for full 500ms agent duration
+      expect(elapsed).toBeLessThan(300);
+    });
+
+    it('signals abort to agent on timeout for cleanup', async () => {
+      let receivedSignal: AbortSignal | undefined;
+      let signalAborted = false;
+
+      const mockAgent: Agent = {
+        name: 'mock-agent',
+        displayName: 'Mock Agent',
+        getApiKeyEnvVar: () => 'MOCK_API_KEY',
+        getDefaultModel: () => 'mock-model',
+        run: vi.fn().mockImplementation(async (_path: string, options: { signal?: AbortSignal }) => {
+          receivedSignal = options.signal;
+
+          // Listen for abort
+          if (receivedSignal) {
+            receivedSignal.addEventListener('abort', () => {
+              signalAborted = true;
+            });
+          }
+
+          // Simulate slow agent
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          return {
+            success: true,
+            output: 'Done',
+            duration: 500,
+            testResult: { success: true, output: 'Test passed' },
+            scriptsResults: {},
+          };
+        }),
+      };
+
+      vi.spyOn(agentsIndex, 'getAgent').mockReturnValue(mockAgent);
+
+      const config: ResolvedExperimentConfig = {
+        agent: 'claude-code',
+        model: 'sonnet',
+        evals: ['test-eval'],
+        runs: 1,
+        earlyExit: false,
+        scripts: [],
+        timeout: 0.1, // 100ms
+      };
+
+      const fixtures: EvalFixture[] = [
+        {
+          name: 'test-eval',
+          path: '/fake/path',
+          prompt: 'Test prompt',
+          isModule: true,
+        },
+      ];
+
+      await runExperiment({
+        config,
+        fixtures,
+        apiKey: 'test-key',
+        resultsDir: TEST_DIR,
+        experimentName: 'test-experiment',
+      });
+
+      // Agent should have received a signal
+      expect(receivedSignal).toBeDefined();
+
+      // Signal should have been aborted on timeout
+      expect(signalAborted).toBe(true);
     });
   });
 });

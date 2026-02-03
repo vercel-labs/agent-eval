@@ -116,16 +116,51 @@ export async function runExperiment(
 
     log(createProgressDisplay(fixture.name, runIndex + 1, config.runs));
 
-    const agentResult = await agent.run(fixture.path, {
-      prompt: fixture.prompt,
-      model: config.model,
-      timeout: config.timeout * 1000,
-      apiKey,
-      setup: config.setup,
-      scripts: config.scripts,
-      signal: config.earlyExit ? controller.signal : undefined,
-      sandbox: config.sandbox,
+    const timeoutMs = config.timeout * 1000;
+    const startTime = Date.now();
+
+    // Create per-attempt controller for timeout cleanup
+    const attemptController = new AbortController();
+
+    // Propagate earlyExit abort to this attempt's controller
+    if (config.earlyExit) {
+      controller.signal.addEventListener('abort', () => attemptController.abort(), { once: true });
+    }
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const agentResult = await Promise.race([
+      agent.run(fixture.path, {
+        prompt: fixture.prompt,
+        model: config.model,
+        timeout: timeoutMs,
+        apiKey,
+        setup: config.setup,
+        scripts: config.scripts,
+        signal: attemptController.signal,
+        sandbox: config.sandbox,
+      }),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          attemptController.abort(); // Signal agent to clean up sandbox
+          reject(new Error(`Eval timed out after ${config.timeout}s`));
+        }, timeoutMs);
+      }),
+    ]).catch((error) => {
+      // Convert timeout error to AgentResult format
+      if (error instanceof Error && error.message.includes('timed out')) {
+        return {
+          success: false,
+          output: '',
+          error: error.message,
+          duration: Date.now() - startTime,
+        };
+      }
+      throw error;
     });
+
+    // Clear timeout if agent completed before timeout
+    if (timeoutId) clearTimeout(timeoutId);
 
     // Check if this was aborted
     if (agentResult.error === 'Aborted' || agentResult.error === 'Aborted before start') {
