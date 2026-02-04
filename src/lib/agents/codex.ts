@@ -62,7 +62,7 @@ profile = "default"
 name = "Vercel AI Gateway"
 base_url = "${AI_GATEWAY.openAiBaseUrl}"
 env_key = "${AI_GATEWAY.apiKeyEnvVar}"
-wire_api = "chat"
+wire_api = "responses"
 
 [profiles.default]
 model_provider = "vercel"
@@ -78,7 +78,7 @@ profile = "default"
 name = "OpenAI"
 base_url = "${OPENAI_DIRECT.baseUrl}"
 api_key = "${apiKey}"
-wire_api = "chat"
+wire_api = "responses"
 
 [profiles.default]
 model_provider = "openai"
@@ -228,12 +228,17 @@ EOF`);
 
       agentOutput = codexResult.stdout + codexResult.stderr;
 
+      // Extract transcript from the Codex JSON output (--json flag outputs JSONL)
+      // Do this before checking exit code so we capture transcripts even on failure
+      const transcript = extractTranscriptFromOutput(agentOutput);
+
       if (codexResult.exitCode !== 0) {
         // Extract meaningful error from output (last few lines usually contain the error)
         const errorLines = agentOutput.trim().split('\n').slice(-5).join('\n');
         return {
           success: false,
           output: agentOutput,
+          transcript, // Include transcript even on failure
           error: errorLines || `Codex CLI exited with code ${codexResult.exitCode}`,
           duration: Date.now() - startTime,
           sandboxId: sandbox.sandboxId,
@@ -245,9 +250,6 @@ EOF`);
 
       // Create vitest config for EVAL.ts/tsx
       await createVitestConfig(sandbox);
-
-      // Extract transcript from the Codex JSON output (--json flag outputs JSONL)
-      const transcript = extractTranscriptFromOutput(agentOutput);
 
       // Run validation scripts
       const validationResults = await runValidation(sandbox, options.scripts ?? []);

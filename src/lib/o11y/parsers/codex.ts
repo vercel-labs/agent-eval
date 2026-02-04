@@ -170,6 +170,56 @@ function parseCodexLine(line: string): TranscriptEvent[] {
         break;
       }
 
+      // Codex Responses API events
+      case 'thread.started':
+      case 'thread.completed':
+      case 'turn.started':
+      case 'turn.completed':
+      case 'turn.failed': {
+        // These are control flow events, capture as metadata
+        events.push({
+          timestamp: data.timestamp || data.ts,
+          type: eventType === 'turn.failed' ? 'error' : 'message',
+          role: 'system',
+          content: eventType === 'turn.failed' 
+            ? (data.error?.message || `Turn failed`) 
+            : eventType,
+          raw: data,
+        });
+        break;
+      }
+
+      case 'response.created':
+      case 'response.completed':
+      case 'response.cancelled':
+      case 'response.failed': {
+        // Response lifecycle events
+        if (eventType === 'response.failed') {
+          events.push({
+            timestamp: data.timestamp || data.ts,
+            type: 'error',
+            content: data.error?.message || 'Response failed',
+            raw: data,
+          });
+        }
+        break;
+      }
+
+      case 'output_text.delta':
+      case 'output_text.done': {
+        // Text streaming events
+        if (data.text || data.delta) {
+          events.push({
+            timestamp: data.timestamp || data.ts,
+            type: 'message',
+            role: 'assistant',
+            content: data.text || data.delta,
+            raw: data,
+          });
+        }
+        break;
+      }
+
       default: {
         // Try to infer from structure
         if (data.role === 'assistant' || data.role === 'user') {
