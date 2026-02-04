@@ -95,3 +95,22 @@ export { runExperiment, runSingleEval } from './lib/runner.js';
 // Re-export init utilities
 export type { InitOptions } from './lib/init.js';
 export { initProject, getPostInitInstructions } from './lib/init.js';
+
+// Re-export o11y (observability) utilities
+export type {
+  NormalizedToolName,
+  NormalizedEvent,
+  WebFetchInfo,
+  FileOperationInfo,
+  ShellCommandInfo,
+  TranscriptSummary,
+  NormalizedTranscript,
+  ParseableAgent,
+} from './lib/o11y/index.js';
+export {
+  parseTranscript,
+  parseTranscriptSummary,
+  parseClaudeCodeTranscript,
+  parseCodexTranscript,
+  parseOpenCodeTranscript,
+} from './lib/o11y/index.js';

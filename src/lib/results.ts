@@ -13,6 +13,7 @@ import type {
   ResolvedExperimentConfig,
 } from './types.js';
 import type { AgentRunResult } from './agents/types.js';
+import { parseTranscript, type NormalizedTranscript } from './o11y/index.js';
 
 /**
  * Convert AgentRunResult to EvalRunData (result + transcript).
@@ -103,6 +104,7 @@ export interface SaveResultsOptions {
  *         run-1/
  *           result.json
  *           transcript.jsonl
+ *           transcript-normalized.json
  *           outputs/
  *         summary.json
  */
@@ -139,13 +141,31 @@ export function saveResults(
       const runDir = join(evalDir, `run-${i + 1}`);
       mkdirSync(runDir, { recursive: true });
 
-      // Build the result with paths
-      const resultWithPaths = { ...runData.result };
+      // Build the result with paths and o11y summary
+      const resultWithPaths: EvalRunResult & { o11y?: NormalizedTranscript['summary'] } = {
+        ...runData.result,
+      };
 
-      // Save transcript.jsonl if available
+      // Save transcript.jsonl if available (raw format for compatibility)
       if (runData.transcript) {
         writeFileSync(join(runDir, 'transcript.jsonl'), runData.transcript);
         resultWithPaths.transcriptPath = './transcript.jsonl';
+
+        // Parse and save normalized transcript
+        const normalized = parseTranscript(
+          runData.transcript,
+          results.config.agent,
+          results.config.model
+        );
+
+        // Save full normalized transcript (with all events)
+        writeFileSync(
+          join(runDir, 'transcript-normalized.json'),
+          JSON.stringify(normalized, null, 2)
+        );
+
+        // Include summary in result.json for quick access
+        resultWithPaths.o11y = normalized.summary;
       }
 
       // Save script/test outputs to outputs/
@@ -178,7 +198,7 @@ export function saveResults(
         }
       }
 
-      // Save result.json with paths
+      // Save result.json with paths and o11y summary
       writeFileSync(
         join(runDir, 'result.json'),
         JSON.stringify(resultWithPaths, null, 2)
