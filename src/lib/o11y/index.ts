@@ -15,7 +15,7 @@ export type {
 } from './types.js';
 
 // Main parsing functions
-export { parseTranscript, parseTranscriptSummary, loadTranscript } from './parsers/index.js';
+export { parseTranscript, parseTranscriptSummary, loadTranscript, SUPPORTED_AGENTS } from './parsers/index.js';
 export type { ParseableAgent } from './parsers/index.js';
 
 // Individual parsers (for advanced use)

@@ -26,22 +26,32 @@ export type ParseableAgent =
   | 'vercel-ai-gateway/opencode';
 
 /**
+ * Parser registry mapping agent key patterns to their parsers.
+ */
+const AGENT_PARSERS = {
+  'claude-code': parseClaudeCodeTranscript,
+  'codex': parseCodexTranscript,
+  'opencode': parseOpenCodeTranscript,
+} as const;
+
+/**
+ * List of supported agent keys for error messages.
+ */
+export const SUPPORTED_AGENTS = Object.keys(AGENT_PARSERS) as Array<keyof typeof AGENT_PARSERS>;
+
+/**
  * Get the parser function for an agent type.
+ * Returns null if no parser is available for the agent.
  */
 function getParserForAgent(
   agent: string
-): (raw: string) => { events: TranscriptEvent[]; errors: string[] } {
-  if (agent.includes('claude-code')) {
-    return parseClaudeCodeTranscript;
+): ((raw: string) => { events: TranscriptEvent[]; errors: string[] }) | null {
+  for (const key of SUPPORTED_AGENTS) {
+    if (agent.includes(key)) {
+      return AGENT_PARSERS[key];
+    }
   }
-  if (agent.includes('codex')) {
-    return parseCodexTranscript;
-  }
-  if (agent.includes('opencode')) {
-    return parseOpenCodeTranscript;
-  }
-  // Default to Claude Code parser as a fallback
-  return parseClaudeCodeTranscript;
+  return null;
 }
 
 /**
@@ -213,6 +223,41 @@ export function parseTranscript(
   }
 
   const parser = getParserForAgent(agent);
+  
+  // No parser available for this agent
+  if (!parser) {
+    return {
+      agent,
+      model,
+      events: [],
+      summary: {
+        totalTurns: 0,
+        toolCalls: {
+          file_read: 0,
+          file_write: 0,
+          file_edit: 0,
+          shell: 0,
+          web_fetch: 0,
+          web_search: 0,
+          glob: 0,
+          grep: 0,
+          list_dir: 0,
+          agent_task: 0,
+          unknown: 0,
+        },
+        totalToolCalls: 0,
+        webFetches: [],
+        filesRead: [],
+        filesModified: [],
+        shellCommands: [],
+        errors: [],
+        thinkingBlocks: 0,
+      },
+      parseSuccess: false,
+      parseErrors: [`No parser available for agent: ${agent}. Supported agents: ${SUPPORTED_AGENTS.join(', ')}`],
+    };
+  }
+  
   const { events, errors } = parser(raw);
   const summary = generateSummary(events);
 

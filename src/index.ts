@@ -111,6 +111,7 @@ export {
   parseTranscript,
   parseTranscriptSummary,
   loadTranscript,
+  SUPPORTED_AGENTS,
   parseClaudeCodeTranscript,
   parseCodexTranscript,
   parseOpenCodeTranscript,

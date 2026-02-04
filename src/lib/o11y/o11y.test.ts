@@ -32,6 +32,19 @@ describe('o11y', () => {
       expect(opencodeResult.agent).toBe('vercel-ai-gateway/opencode');
     });
 
+    it('returns parseSuccess: false for unsupported agents', () => {
+      const transcript = '{"type":"assistant","content":"Hello"}';
+
+      const result = parseTranscript(transcript, 'unsupported-agent');
+
+      expect(result.parseSuccess).toBe(false);
+      expect(result.parseErrors).toContain(
+        'No parser available for agent: unsupported-agent. Supported agents: claude-code, codex, opencode'
+      );
+      expect(result.events).toEqual([]);
+      expect(result.summary.totalToolCalls).toBe(0);
+    });
+
     it('includes model in result', () => {
       const result = parseTranscript('{}', 'claude-code', 'opus');
       expect(result.model).toBe('opus');
