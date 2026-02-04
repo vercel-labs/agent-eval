@@ -150,10 +150,12 @@ describe('results utilities', () => {
       expect(existsSync(join(outputDir, 'eval-1', 'run-1', 'result.json'))).toBe(true);
       expect(existsSync(join(outputDir, 'eval-1', 'run-2', 'result.json'))).toBe(true);
 
-      // Check transcript.jsonl exists for run with transcript
-      expect(existsSync(join(outputDir, 'eval-1', 'run-1', 'transcript.jsonl'))).toBe(true);
+      // Check transcript files exist for run with transcript
+      expect(existsSync(join(outputDir, 'eval-1', 'run-1', 'transcript.json'))).toBe(true);
+      expect(existsSync(join(outputDir, 'eval-1', 'run-1', 'transcript-raw.jsonl'))).toBe(true);
       // No transcript for run-2
-      expect(existsSync(join(outputDir, 'eval-1', 'run-2', 'transcript.jsonl'))).toBe(false);
+      expect(existsSync(join(outputDir, 'eval-1', 'run-2', 'transcript.json'))).toBe(false);
+      expect(existsSync(join(outputDir, 'eval-1', 'run-2', 'transcript-raw.jsonl'))).toBe(false);
 
       // Check outputs/ directory exists and contains script output files
       expect(existsSync(join(outputDir, 'eval-1', 'run-1', 'outputs'))).toBe(true);
@@ -192,7 +194,7 @@ describe('results utilities', () => {
       expect(resultJson.status).toBe('passed');
       expect(resultJson.duration).toBe(10);
       // Should have paths to transcript and outputs
-      expect(resultJson.transcriptPath).toBe('./transcript.jsonl');
+      expect(resultJson.transcriptPath).toBe('./transcript.json');
       expect(resultJson.outputPaths).toEqual({
         eval: './outputs/eval.txt',
         scripts: {
@@ -203,12 +205,22 @@ describe('results utilities', () => {
       expect(resultJson.transcript).toBeUndefined();
       expect(resultJson.outputContent).toBeUndefined();
 
-      // Verify transcript.jsonl content
-      const transcriptContent = readFileSync(
-        join(outputDir, 'eval-1', 'run-1', 'transcript.jsonl'),
+      // Verify transcript-raw.jsonl content (raw agent output)
+      const rawTranscriptContent = readFileSync(
+        join(outputDir, 'eval-1', 'run-1', 'transcript-raw.jsonl'),
         'utf-8'
       );
-      expect(transcriptContent).toBe('{"role":"assistant"}');
+      expect(rawTranscriptContent).toBe('{"role":"assistant"}');
+
+      // Verify transcript.json exists and is valid JSON (parsed transcript)
+      const parsedTranscriptContent = readFileSync(
+        join(outputDir, 'eval-1', 'run-1', 'transcript.json'),
+        'utf-8'
+      );
+      const parsedTranscript = JSON.parse(parsedTranscriptContent);
+      expect(parsedTranscript).toHaveProperty('agent');
+      expect(parsedTranscript).toHaveProperty('events');
+      expect(parsedTranscript).toHaveProperty('summary');
     });
   });
 

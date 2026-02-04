@@ -8,13 +8,13 @@
  * - Tool results appear as separate messages with type: "tool_result"
  */
 
-import type { NormalizedEvent, NormalizedToolName } from '../types.js';
+import type { TranscriptEvent, ToolName } from '../types.js';
 
 /**
- * Map Claude Code tool names to normalized names.
+ * Map Claude Code tool names to canonical names.
  */
-function normalizeToolName(name: string): NormalizedToolName {
-  const toolMap: Record<string, NormalizedToolName> = {
+function normalizeToolName(name: string): ToolName {
+  const toolMap: Record<string, ToolName> = {
     // File operations
     Read: 'file_read',
     read_file: 'file_read',
@@ -55,6 +55,10 @@ function normalizeToolName(name: string): NormalizedToolName {
     LS: 'list_dir',
     list_dir: 'list_dir',
     ListDir: 'list_dir',
+
+    // Agent/subagent tools
+    Task: 'agent_task',
+    task: 'agent_task',
   };
 
   return toolMap[name] || 'unknown';
@@ -87,21 +91,46 @@ function extractCommand(args: Record<string, unknown>): string | undefined {
 /**
  * Parse a single JSONL line from Claude Code transcript.
  */
-function parseClaudeCodeLine(line: string): NormalizedEvent[] {
-  const events: NormalizedEvent[] = [];
+function parseClaudeCodeLine(line: string): TranscriptEvent[] {
+  const events: TranscriptEvent[] = [];
 
   try {
     const data = JSON.parse(line);
 
     // Handle different Claude Code message formats
     if (data.type === 'user' || data.role === 'user') {
-      events.push({
-        timestamp: data.timestamp,
-        type: 'message',
-        role: 'user',
-        content: extractContent(data),
-        raw: data,
-      });
+      // Check if this is a tool_result message (user message containing tool results)
+      const contentArray = getContentArray(data);
+      const toolResults = contentArray?.filter(
+        (block: unknown) => (block as Record<string, unknown>).type === 'tool_result'
+      );
+      
+      if (toolResults && toolResults.length > 0) {
+        // Extract tool results from user message
+        for (const result of toolResults) {
+          const r = result as Record<string, unknown>;
+          events.push({
+            timestamp: data.timestamp,
+            type: 'tool_result',
+            tool: {
+              name: 'unknown',
+              originalName: (r.tool_use_id || 'unknown') as string,
+              result: r.content,
+              success: !r.is_error && !r.error,
+            },
+            raw: r,
+          });
+        }
+      } else {
+        // Regular user message
+        events.push({
+          timestamp: data.timestamp,
+          type: 'message',
+          role: 'user',
+          content: extractContent(data),
+          raw: data,
+        });
+      }
     } else if (data.type === 'assistant' || data.role === 'assistant') {
       // Assistant message - may contain text and/or tool_use blocks
       const content = extractContent(data);
@@ -176,27 +205,61 @@ function parseClaudeCodeLine(line: string): NormalizedEvent[] {
 }
 
 /**
- * Extract text content from various message formats.
+ * Get the content array from data, handling nested message format.
+ * Claude Code wraps messages: { type: "assistant", message: { content: [...] } }
  */
-function extractContent(data: Record<string, unknown>): string | undefined {
+function getContentArray(data: Record<string, unknown>): unknown[] | undefined {
+  // Direct content array
+  if (Array.isArray(data.content)) {
+    return data.content;
+  }
+  // Nested message format (real Claude Code format)
+  const message = data.message as Record<string, unknown> | undefined;
+  if (message && Array.isArray(message.content)) {
+    return message.content;
+  }
+  return undefined;
+}
+
+/**
+ * Get string content from data, handling nested message format.
+ */
+function getStringContent(data: Record<string, unknown>): string | undefined {
   if (typeof data.content === 'string') {
     return data.content;
   }
-  if (Array.isArray(data.content)) {
-    // Content blocks format
-    const textBlocks = data.content.filter(
-      (block: Record<string, unknown>) => block.type === 'text'
+  const message = data.message as Record<string, unknown> | undefined;
+  if (message && typeof message.content === 'string') {
+    return message.content;
+  }
+  return undefined;
+}
+
+/**
+ * Extract text content from various message formats.
+ */
+function extractContent(data: Record<string, unknown>): string | undefined {
+  // Check for direct string content
+  const stringContent = getStringContent(data);
+  if (stringContent) {
+    return stringContent;
+  }
+  
+  // Check for content blocks array
+  const contentArray = getContentArray(data);
+  if (contentArray) {
+    const textBlocks = contentArray.filter(
+      (block: unknown) => (block as Record<string, unknown>).type === 'text'
     );
     if (textBlocks.length > 0) {
-      return textBlocks.map((b: Record<string, unknown>) => b.text).join('\n');
+      return textBlocks.map((b: unknown) => (b as Record<string, unknown>).text).join('\n');
     }
   }
+  
   if (typeof data.text === 'string') {
     return data.text;
   }
-  if (typeof data.message === 'string') {
-    return data.message;
-  }
+  // Note: don't check data.message as string since message is an object in Claude Code format
   return undefined;
 }
 
@@ -212,25 +275,31 @@ function extractToolUses(
     args?: Record<string, unknown>;
   }> = [];
 
-  if (Array.isArray(data.content)) {
-    for (const block of data.content) {
-      if (block.type === 'tool_use') {
+  // Check content array (handles both direct and nested message format)
+  const contentArray = getContentArray(data);
+  if (contentArray) {
+    for (const block of contentArray) {
+      const b = block as Record<string, unknown>;
+      if (b.type === 'tool_use') {
         toolUses.push({
-          name: block.name,
-          input: block.input,
+          name: b.name as string,
+          input: b.input as Record<string, unknown> | undefined,
         });
       }
     }
   }
 
-  // Also check for tool_calls array format
-  if (Array.isArray(data.tool_calls)) {
-    for (const call of data.tool_calls) {
+  // Also check for tool_calls array format (OpenAI-style)
+  const toolCalls = data.tool_calls || (data.message as Record<string, unknown>)?.tool_calls;
+  if (Array.isArray(toolCalls)) {
+    for (const call of toolCalls) {
+      const c = call as Record<string, unknown>;
+      const func = c.function as Record<string, unknown> | undefined;
       toolUses.push({
-        name: call.function?.name || call.name,
-        args: call.function?.arguments
-          ? JSON.parse(call.function.arguments)
-          : call.arguments || call.input,
+        name: (func?.name || c.name) as string,
+        args: func?.arguments
+          ? JSON.parse(func.arguments as string)
+          : (c.arguments || c.input) as Record<string, unknown> | undefined,
       });
     }
   }
@@ -242,25 +311,29 @@ function extractToolUses(
  * Extract thinking/reasoning content.
  */
 function extractThinking(data: Record<string, unknown>): string | undefined {
-  if (Array.isArray(data.content)) {
-    const thinkingBlocks = data.content.filter(
-      (block: Record<string, unknown>) => block.type === 'thinking'
+  const contentArray = getContentArray(data);
+  if (contentArray) {
+    const thinkingBlocks = contentArray.filter(
+      (block: unknown) => (block as Record<string, unknown>).type === 'thinking'
     );
     if (thinkingBlocks.length > 0) {
-      return thinkingBlocks.map((b: Record<string, unknown>) => b.thinking || b.text).join('\n');
+      return thinkingBlocks.map((b: unknown) => {
+        const block = b as Record<string, unknown>;
+        return block.thinking || block.text;
+      }).join('\n');
     }
   }
   return undefined;
 }
 
 /**
- * Parse Claude Code JSONL transcript into normalized events.
+ * Parse Claude Code JSONL transcript into events.
  */
 export function parseClaudeCodeTranscript(raw: string): {
-  events: NormalizedEvent[];
+  events: TranscriptEvent[];
   errors: string[];
 } {
-  const events: NormalizedEvent[] = [];
+  const events: TranscriptEvent[] = [];
   const errors: string[] = [];
 
   const lines = raw.split('\n').filter((line) => line.trim());

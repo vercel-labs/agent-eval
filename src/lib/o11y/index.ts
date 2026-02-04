@@ -1,21 +1,21 @@
 /**
  * Observability module for agent-eval.
- * Provides normalized transcript parsing and analysis across all agents.
+ * Provides transcript parsing and analysis across all agents.
  */
 
 // Types
 export type {
-  NormalizedToolName,
-  NormalizedEvent,
+  ToolName,
+  TranscriptEvent,
   WebFetchInfo,
   FileOperationInfo,
   ShellCommandInfo,
   TranscriptSummary,
-  NormalizedTranscript,
+  Transcript,
 } from './types.js';
 
 // Main parsing functions
-export { parseTranscript, parseTranscriptSummary } from './parsers/index.js';
+export { parseTranscript, parseTranscriptSummary, loadTranscript } from './parsers/index.js';
 export type { ParseableAgent } from './parsers/index.js';
 
 // Individual parsers (for advanced use)

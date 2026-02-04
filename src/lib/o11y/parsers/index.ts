@@ -4,10 +4,10 @@
  */
 
 import type {
-  NormalizedEvent,
-  NormalizedTranscript,
+  TranscriptEvent,
+  Transcript,
   TranscriptSummary,
-  NormalizedToolName,
+  ToolName,
   WebFetchInfo,
   ShellCommandInfo,
 } from '../types.js';
@@ -30,7 +30,7 @@ export type ParseableAgent =
  */
 function getParserForAgent(
   agent: string
-): (raw: string) => { events: NormalizedEvent[]; errors: string[] } {
+): (raw: string) => { events: TranscriptEvent[]; errors: string[] } {
   if (agent.includes('claude-code')) {
     return parseClaudeCodeTranscript;
   }
@@ -45,10 +45,10 @@ function getParserForAgent(
 }
 
 /**
- * Generate summary statistics from normalized events.
+ * Generate summary statistics from transcript events.
  */
-function generateSummary(events: NormalizedEvent[]): TranscriptSummary {
-  const toolCalls: Record<NormalizedToolName, number> = {
+function generateSummary(events: TranscriptEvent[]): TranscriptSummary {
+  const toolCalls: Record<ToolName, number> = {
     file_read: 0,
     file_write: 0,
     file_edit: 0,
@@ -58,6 +58,7 @@ function generateSummary(events: NormalizedEvent[]): TranscriptSummary {
     glob: 0,
     grep: 0,
     list_dir: 0,
+    agent_task: 0,
     unknown: 0,
   };
 
@@ -166,18 +167,18 @@ function generateSummary(events: NormalizedEvent[]): TranscriptSummary {
 }
 
 /**
- * Parse a raw transcript into a normalized format.
+ * Parse a raw transcript into a structured format.
  *
  * @param raw - The raw transcript string (JSONL format)
  * @param agent - The agent type that produced this transcript
  * @param model - Optional model name
- * @returns Normalized transcript with events and summary
+ * @returns Transcript with events and summary
  */
 export function parseTranscript(
   raw: string,
   agent: string,
   model?: string
-): NormalizedTranscript {
+): Transcript {
   if (!raw || !raw.trim()) {
     return {
       agent,
@@ -195,6 +196,7 @@ export function parseTranscript(
           glob: 0,
           grep: 0,
           list_dir: 0,
+          agent_task: 0,
           unknown: 0,
         },
         totalToolCalls: 0,
@@ -233,4 +235,61 @@ export function parseTranscriptSummary(
 ): TranscriptSummary {
   const { summary } = parseTranscript(raw, agent);
   return summary;
+}
+
+/**
+ * Check if a parsed object looks like a Transcript.
+ */
+function isTranscript(obj: unknown): obj is Transcript {
+  if (typeof obj !== 'object' || obj === null) return false;
+  const t = obj as Record<string, unknown>;
+  return (
+    typeof t.agent === 'string' &&
+    Array.isArray(t.events) &&
+    typeof t.summary === 'object' &&
+    t.summary !== null &&
+    typeof t.parseSuccess === 'boolean'
+  );
+}
+
+/**
+ * Load a transcript from a string, handling both raw and parsed formats.
+ * 
+ * - If the input is already a parsed transcript (JSON), returns it directly
+ * - If the input is raw JSONL from an agent, parses it
+ * 
+ * @param content - The transcript content (raw JSONL or parsed JSON)
+ * @param agent - The agent type (required for raw transcripts, optional for parsed)
+ * @param model - Optional model name
+ * @returns Transcript
+ */
+export function loadTranscript(
+  content: string,
+  agent?: string,
+  model?: string
+): Transcript {
+  const trimmed = content.trim();
+  
+  // Try to detect if it's already a parsed transcript (single JSON object)
+  // Parsed transcripts start with { and are valid JSON with our structure
+  if (trimmed.startsWith('{') && !trimmed.includes('\n{')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (isTranscript(parsed)) {
+        return parsed;
+      }
+    } catch {
+      // Not valid JSON, treat as raw transcript
+    }
+  }
+  
+  // It's a raw transcript - agent is required
+  if (!agent) {
+    throw new Error(
+      'Agent type is required when parsing raw transcripts. ' +
+      'Provide the agent parameter or use an already-parsed transcript.'
+    );
+  }
+  
+  return parseTranscript(content, agent, model);
 }

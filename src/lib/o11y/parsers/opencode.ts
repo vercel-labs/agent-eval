@@ -7,13 +7,13 @@
  * - Messages, tool calls, and results are separate events
  */
 
-import type { NormalizedEvent, NormalizedToolName } from '../types.js';
+import type { TranscriptEvent, ToolName } from '../types.js';
 
 /**
- * Map OpenCode tool names to normalized names.
+ * Map OpenCode tool names to canonical names.
  */
-function normalizeToolName(name: string): NormalizedToolName {
-  const toolMap: Record<string, NormalizedToolName> = {
+function normalizeToolName(name: string): ToolName {
+  const toolMap: Record<string, ToolName> = {
     // File operations
     read: 'file_read',
     read_file: 'file_read',
@@ -62,7 +62,7 @@ function normalizeToolName(name: string): NormalizedToolName {
  * Extract file path from tool arguments.
  */
 function extractFilePath(args: Record<string, unknown>): string | undefined {
-  return (args.path || args.file || args.filename || args.target) as string | undefined;
+  return (args.path || args.filePath || args.file || args.filename || args.target) as string | undefined;
 }
 
 /**
@@ -88,25 +88,93 @@ function extractCommand(args: Record<string, unknown>): string | undefined {
 
 /**
  * Parse a single JSONL line from OpenCode transcript.
+ * Handles the real OpenCode format:
+ * - type: "tool_use" | "text" | "step_start" | "step_finish"
+ * - Tool info in part.tool, part.state.input, part.state.output
+ * - Text in part.text
  */
-function parseOpenCodeLine(line: string): NormalizedEvent[] {
-  const events: NormalizedEvent[] = [];
+function parseOpenCodeLine(line: string): TranscriptEvent[] {
+  const events: TranscriptEvent[] = [];
 
   try {
     const data = JSON.parse(line);
 
-    // OpenCode uses "kind" for event type
-    const eventKind = data.kind || data.type || data.event;
+    // OpenCode uses "type" for event type
+    const eventType = data.type || data.kind || data.event;
+    const part = data.part as Record<string, unknown> | undefined;
+    const state = part?.state as Record<string, unknown> | undefined;
 
-    switch (eventKind) {
+    switch (eventType) {
+      // Real OpenCode format: tool_use with part.tool
+      case 'tool_use': {
+        if (part && part.tool) {
+          const name = part.tool as string;
+          const args = (state?.input as Record<string, unknown>) || {};
+          const output = state?.output;
+          const status = state?.status as string | undefined;
+
+          // Emit tool_call event
+          events.push({
+            timestamp: data.timestamp ? new Date(data.timestamp).toISOString() : undefined,
+            type: 'tool_call',
+            tool: {
+              name: normalizeToolName(name),
+              originalName: name,
+              args,
+            },
+            raw: data,
+          });
+
+          // If completed, also emit tool_result
+          if (status === 'completed' && output !== undefined) {
+            events.push({
+              timestamp: data.timestamp ? new Date(data.timestamp).toISOString() : undefined,
+              type: 'tool_result',
+              tool: {
+                name: normalizeToolName(name),
+                originalName: name,
+                result: output,
+                success: status === 'completed' && !state?.error,
+              },
+              raw: state,
+            });
+          }
+        }
+        break;
+      }
+
+      // Real OpenCode format: text with part.text
+      case 'text': {
+        const text = part?.text as string | undefined;
+        if (text && text.trim()) {
+          events.push({
+            timestamp: data.timestamp ? new Date(data.timestamp).toISOString() : undefined,
+            type: 'message',
+            role: 'assistant',
+            content: text,
+            raw: data,
+          });
+        }
+        break;
+      }
+
+      // Step events - extract cost/token info if needed
+      case 'step_start':
+      case 'step_finish': {
+        // These are metadata events, skip for now
+        // Could extract token usage from step_finish if needed
+        break;
+      }
+
+      // Legacy/fallback formats
       case 'message':
       case 'response':
       case 'assistant':
       case 'user': {
         const role =
-          data.role || eventKind === 'assistant'
+          data.role || eventType === 'assistant'
             ? 'assistant'
-            : eventKind === 'user'
+            : eventType === 'user'
               ? 'user'
               : 'assistant';
         const content = data.message?.content || data.content || data.text;
@@ -228,10 +296,10 @@ function parseOpenCodeLine(line: string): NormalizedEvent[] {
  * Parse OpenCode JSONL transcript into normalized events.
  */
 export function parseOpenCodeTranscript(raw: string): {
-  events: NormalizedEvent[];
+  events: TranscriptEvent[];
   errors: string[];
 } {
-  const events: NormalizedEvent[] = [];
+  const events: TranscriptEvent[] = [];
   const errors: string[] = [];
 
   const lines = raw.split('\n').filter((line) => line.trim());

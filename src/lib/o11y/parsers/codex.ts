@@ -7,13 +7,13 @@
  * - Messages, function calls, and results are separate events
  */
 
-import type { NormalizedEvent, NormalizedToolName } from '../types.js';
+import type { TranscriptEvent, ToolName } from '../types.js';
 
 /**
- * Map Codex tool names to normalized names.
+ * Map Codex tool names to canonical names.
  */
-function normalizeToolName(name: string): NormalizedToolName {
-  const toolMap: Record<string, NormalizedToolName> = {
+function normalizeToolName(name: string): ToolName {
+  const toolMap: Record<string, ToolName> = {
     // File operations
     read_file: 'file_read',
     write_file: 'file_write',
@@ -82,8 +82,8 @@ function extractCommand(args: Record<string, unknown>): string | undefined {
 /**
  * Parse a single JSONL line from Codex transcript.
  */
-function parseCodexLine(line: string): NormalizedEvent[] {
-  const events: NormalizedEvent[] = [];
+function parseCodexLine(line: string): TranscriptEvent[] {
+  const events: TranscriptEvent[] = [];
 
   try {
     const data = JSON.parse(line);
@@ -218,13 +218,13 @@ function parseCodexLine(line: string): NormalizedEvent[] {
 }
 
 /**
- * Parse Codex JSONL transcript into normalized events.
+ * Parse Codex JSONL transcript into events.
  */
 export function parseCodexTranscript(raw: string): {
-  events: NormalizedEvent[];
+  events: TranscriptEvent[];
   errors: string[];
 } {
-  const events: NormalizedEvent[] = [];
+  const events: TranscriptEvent[] = [];
   const errors: string[] = [];
 
   const lines = raw.split('\n').filter((line) => line.trim());

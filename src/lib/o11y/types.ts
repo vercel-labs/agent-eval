@@ -1,13 +1,13 @@
 /**
- * Normalized observability types for cross-agent transcript analysis.
+ * Observability types for cross-agent transcript analysis.
  * Provides a unified schema regardless of which agent produced the transcript.
  */
 
 /**
- * Normalized tool names across agents.
- * Maps agent-specific tool names to canonical names.
+ * Canonical tool names across agents.
+ * Maps agent-specific tool names to standardized names.
  */
-export type NormalizedToolName =
+export type ToolName =
   | 'file_read'
   | 'file_write'
   | 'file_edit'
@@ -17,12 +17,13 @@ export type NormalizedToolName =
   | 'glob'
   | 'grep'
   | 'list_dir'
+  | 'agent_task'
   | 'unknown';
 
 /**
- * A normalized event in the transcript.
+ * An event in the transcript.
  */
-export interface NormalizedEvent {
+export interface TranscriptEvent {
   /** ISO timestamp of the event */
   timestamp?: string;
 
@@ -37,8 +38,8 @@ export interface NormalizedEvent {
 
   /** For tool_call and tool_result events */
   tool?: {
-    /** Normalized tool name */
-    name: NormalizedToolName;
+    /** Canonical tool name */
+    name: ToolName;
     /** Original tool name from the agent */
     originalName: string;
     /** Tool arguments */
@@ -99,7 +100,7 @@ export interface TranscriptSummary {
   totalTurns: number;
 
   /** Count of each tool type used */
-  toolCalls: Record<NormalizedToolName, number>;
+  toolCalls: Record<ToolName, number>;
 
   /** Total tool calls */
   totalToolCalls: number;
@@ -124,9 +125,9 @@ export interface TranscriptSummary {
 }
 
 /**
- * A fully normalized transcript with events and summary.
+ * A parsed transcript with events and summary.
  */
-export interface NormalizedTranscript {
+export interface Transcript {
   /** Agent that produced this transcript */
   agent: string;
 
@@ -134,7 +135,7 @@ export interface NormalizedTranscript {
   model?: string;
 
   /** All events in order */
-  events: NormalizedEvent[];
+  events: TranscriptEvent[];
 
   /** Derived summary statistics */
   summary: TranscriptSummary;

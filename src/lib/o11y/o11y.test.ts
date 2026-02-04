@@ -3,7 +3,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseTranscript, parseTranscriptSummary } from './index.js';
+import { parseTranscript, parseTranscriptSummary, loadTranscript } from './index.js';
+import type { Transcript } from './types.js';
 import { parseClaudeCodeTranscript } from './parsers/claude-code.js';
 import { parseCodexTranscript } from './parsers/codex.js';
 import { parseOpenCodeTranscript } from './parsers/opencode.js';
@@ -349,6 +350,110 @@ describe('o11y', () => {
       ].join('\n');
 
       const result = parseTranscript(transcript, 'claude-code');
+
+      expect(result.events).toHaveLength(2);
+    });
+  });
+
+  describe('loadTranscript', () => {
+    it('parses raw JSONL transcripts when agent is provided', () => {
+      const raw = '{"type":"assistant","content":"Hello"}';
+      const result = loadTranscript(raw, 'claude-code');
+
+      expect(result.agent).toBe('claude-code');
+      expect(result.events).toHaveLength(1);
+      expect(result.parseSuccess).toBe(true);
+    });
+
+    it('returns parsed transcripts directly', () => {
+      const transcript: Transcript = {
+        agent: 'claude-code',
+        model: 'opus',
+        events: [
+          { type: 'message', role: 'assistant', content: 'Hello' },
+        ],
+        summary: {
+          totalTurns: 1,
+          toolCalls: {
+            file_read: 0,
+            file_write: 0,
+            file_edit: 0,
+            shell: 0,
+            web_fetch: 0,
+            web_search: 0,
+            glob: 0,
+            grep: 0,
+            list_dir: 0,
+            agent_task: 0,
+            unknown: 0,
+          },
+          totalToolCalls: 0,
+          webFetches: [],
+          filesRead: [],
+          filesModified: [],
+          shellCommands: [],
+          errors: [],
+          thinkingBlocks: 0,
+        },
+        parseSuccess: true,
+      };
+
+      const result = loadTranscript(JSON.stringify(transcript));
+
+      expect(result).toEqual(transcript);
+      expect(result.agent).toBe('claude-code');
+      expect(result.model).toBe('opus');
+    });
+
+    it('throws error for raw transcripts without agent', () => {
+      const raw = '{"type":"assistant","content":"Hello"}';
+      
+      expect(() => loadTranscript(raw)).toThrow('Agent type is required');
+    });
+
+    it('does not require agent for parsed transcripts', () => {
+      const transcript: Transcript = {
+        agent: 'codex',
+        events: [],
+        summary: {
+          totalTurns: 0,
+          toolCalls: {
+            file_read: 0,
+            file_write: 0,
+            file_edit: 0,
+            shell: 0,
+            web_fetch: 0,
+            web_search: 0,
+            glob: 0,
+            grep: 0,
+            list_dir: 0,
+            agent_task: 0,
+            unknown: 0,
+          },
+          totalToolCalls: 0,
+          webFetches: [],
+          filesRead: [],
+          filesModified: [],
+          shellCommands: [],
+          errors: [],
+          thinkingBlocks: 0,
+        },
+        parseSuccess: true,
+      };
+
+      // Should not throw even without agent
+      const result = loadTranscript(JSON.stringify(transcript));
+      expect(result.agent).toBe('codex');
+    });
+
+    it('distinguishes JSONL from single-line JSON', () => {
+      // Multi-line JSONL should be treated as raw
+      const jsonl = [
+        '{"type":"assistant","content":"Line 1"}',
+        '{"type":"user","content":"Line 2"}',
+      ].join('\n');
+
+      const result = loadTranscript(jsonl, 'claude-code');
 
       expect(result.events).toHaveLength(2);
     });

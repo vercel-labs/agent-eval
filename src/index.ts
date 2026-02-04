@@ -98,18 +98,19 @@ export { initProject, getPostInitInstructions } from './lib/init.js';
 
 // Re-export o11y (observability) utilities
 export type {
-  NormalizedToolName,
-  NormalizedEvent,
+  ToolName,
+  TranscriptEvent,
   WebFetchInfo,
   FileOperationInfo,
   ShellCommandInfo,
   TranscriptSummary,
-  NormalizedTranscript,
+  Transcript,
   ParseableAgent,
 } from './lib/o11y/index.js';
 export {
   parseTranscript,
   parseTranscriptSummary,
+  loadTranscript,
   parseClaudeCodeTranscript,
   parseCodexTranscript,
   parseOpenCodeTranscript,
