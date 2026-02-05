@@ -195,6 +195,7 @@ describe('results utilities', () => {
       expect(resultJson.duration).toBe(10);
       // Should have paths to transcript and outputs
       expect(resultJson.transcriptPath).toBe('./transcript.json');
+      expect(resultJson.transcriptRawPath).toBe('./transcript-raw.jsonl');
       expect(resultJson.outputPaths).toEqual({
         eval: './outputs/eval.txt',
         scripts: {

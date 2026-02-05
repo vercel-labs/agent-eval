@@ -164,6 +164,7 @@ export function saveResults(
 
         // Save raw transcript for debugging (transcript-raw.jsonl)
         writeFileSync(join(runDir, 'transcript-raw.jsonl'), runData.transcript);
+        resultWithPaths.transcriptRawPath = './transcript-raw.jsonl';
 
         // Include summary in result.json for quick access
         resultWithPaths.o11y = transcript.summary;

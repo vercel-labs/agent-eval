@@ -138,8 +138,10 @@ export interface EvalRunResult {
   error?: string;
   /** Duration in seconds */
   duration: number;
-  /** Path to transcript file (relative to run directory) */
+  /** Path to parsed transcript file (relative to run directory) */
   transcriptPath?: string;
+  /** Path to raw transcript file (relative to run directory) */
+  transcriptRawPath?: string;
   /** Paths to output files (relative to run directory) */
   outputPaths?: {
     /** Path to EVAL.ts test output */
