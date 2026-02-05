@@ -63,11 +63,19 @@ describe.skipIf(!process.env.INTEGRATION_TEST)('integration tests', () => {
   });
 
   describe('project initialization', () => {
+    // Create test project before all tests in this block
+    beforeAll(() => {
+      const projectDir = join(TEST_DIR, 'test-project');
+      if (!existsSync(projectDir)) {
+        initProject({
+          name: 'test-project',
+          targetDir: TEST_DIR,
+        });
+      }
+    });
+
     it('creates a complete project structure', () => {
-      const projectDir = initProject({
-        name: 'test-project',
-        targetDir: TEST_DIR,
-      });
+      const projectDir = join(TEST_DIR, 'test-project');
 
       // Verify structure
       expect(existsSync(join(projectDir, 'package.json'))).toBe(true);
@@ -214,7 +222,11 @@ test('greet exists', () => {
       // Verify result structure
       expect(result.result.duration).toBeGreaterThan(0);
       expect(result.result.status).toBeDefined();
-      expect(['passed', 'failed']).toContain(result.result.status);
+      // Agent must actually succeed - not just return a result
+      if (result.result.status === 'failed') {
+        console.error('Agent failed with error:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
 
       // Verify output content exists (if available)
       if (result.outputContent) {
@@ -281,7 +293,11 @@ test('greet exists', () => {
       // Verify result structure
       expect(result.result.duration).toBeGreaterThan(0);
       expect(result.result.status).toBeDefined();
-      expect(['passed', 'failed']).toContain(result.result.status);
+      // Agent must actually succeed - not just return a result
+      if (result.result.status === 'failed') {
+        console.error('Agent failed with error:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
 
       // Verify output content exists (if available)
       if (result.outputContent) {
@@ -345,10 +361,12 @@ test('greet exists', () => {
         scripts: ['build'],
       });
 
-      // Verify result structure
+      // Verify Codex actually succeeded (not just returned a result)
+      if (result.result.status === 'failed') {
+        console.error('Codex failed with error:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
       expect(result.result.duration).toBeGreaterThan(0);
-      expect(result.result.status).toBeDefined();
-      expect(['passed', 'failed']).toContain(result.result.status);
 
       // Verify output content exists (if available)
       if (result.outputContent) {
@@ -509,7 +527,11 @@ test('greet exists', () => {
       // Verify result structure
       expect(result.result.duration).toBeGreaterThan(0);
       expect(result.result.status).toBeDefined();
-      expect(['passed', 'failed']).toContain(result.result.status);
+      // Agent must actually succeed - not just return a result
+      if (result.result.status === 'failed') {
+        console.error('Agent failed with error:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
 
       // Verify output content exists (if available)
       if (result.outputContent) {
@@ -639,7 +661,11 @@ test('greet exists', () => {
       // Verify result structure
       expect(result.result.duration).toBeGreaterThan(0);
       expect(result.result.status).toBeDefined();
-      expect(['passed', 'failed']).toContain(result.result.status);
+      // Agent must actually succeed - not just return a result
+      if (result.result.status === 'failed') {
+        console.error('Agent failed with error:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
 
       // Verify output content exists (if available)
       if (result.outputContent) {
@@ -887,7 +913,11 @@ test('greet exists', () => {
       // Verify result structure
       expect(result.result.duration).toBeGreaterThan(0);
       expect(result.result.status).toBeDefined();
-      expect(['passed', 'failed']).toContain(result.result.status);
+      // Agent must actually succeed - not just return a result
+      if (result.result.status === 'failed') {
+        console.error('Agent failed with error:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
 
       // Verify transcript is captured
       if (result.transcript) {
@@ -1071,7 +1101,11 @@ test('greet exists', () => {
           sandbox: 'docker',
         });
         expect(result.result.duration).toBeGreaterThan(0);
-        expect(['passed', 'failed']).toContain(result.result.status);
+        // Agent must actually succeed - not just return a result
+      if (result.result.status === 'failed') {
+        console.error('Agent failed with error:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
       },
       300000
     );
@@ -1090,7 +1124,11 @@ test('greet exists', () => {
           sandbox: 'vercel',
         });
         expect(result.result.duration).toBeGreaterThan(0);
-        expect(['passed', 'failed']).toContain(result.result.status);
+        // Agent must actually succeed - not just return a result
+      if (result.result.status === 'failed') {
+        console.error('Agent failed with error:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
       },
       300000
     );
@@ -1109,7 +1147,11 @@ test('greet exists', () => {
           sandbox: 'docker',
         });
         expect(result.result.duration).toBeGreaterThan(0);
-        expect(['passed', 'failed']).toContain(result.result.status);
+        // Agent must actually succeed - not just return a result
+      if (result.result.status === 'failed') {
+        console.error('Agent failed with error:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
       },
       300000
     );
@@ -1128,7 +1170,11 @@ test('greet exists', () => {
           sandbox: 'vercel',
         });
         expect(result.result.duration).toBeGreaterThan(0);
-        expect(['passed', 'failed']).toContain(result.result.status);
+        // Agent must actually succeed - not just return a result
+      if (result.result.status === 'failed') {
+        console.error('Agent failed with error:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
       },
       300000
     );
@@ -1147,7 +1193,11 @@ test('greet exists', () => {
           sandbox: 'docker',
         });
         expect(result.result.duration).toBeGreaterThan(0);
-        expect(['passed', 'failed']).toContain(result.result.status);
+        // Agent must actually succeed - not just return a result
+      if (result.result.status === 'failed') {
+        console.error('Agent failed with error:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
       },
       300000
     );
@@ -1166,7 +1216,11 @@ test('greet exists', () => {
           sandbox: 'vercel',
         });
         expect(result.result.duration).toBeGreaterThan(0);
-        expect(['passed', 'failed']).toContain(result.result.status);
+        // Agent must actually succeed - not just return a result
+      if (result.result.status === 'failed') {
+        console.error('Agent failed with error:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
       },
       300000
     );
@@ -1186,7 +1240,11 @@ test('greet exists', () => {
         });
         console.log('AI SDK + kimi-k2.5 Docker:', result.result.status, result.result.error || '');
         expect(result.result.duration).toBeGreaterThan(0);
-        expect(['passed', 'failed']).toContain(result.result.status);
+        // Agent must actually succeed - not just return a result
+      if (result.result.status === 'failed') {
+        console.error('Agent failed with error:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
       },
       600000
     );
@@ -1206,13 +1264,28 @@ test('greet exists', () => {
         });
         console.log('AI SDK + kimi-k2.5 Vercel:', result.result.status, result.result.error || '');
         expect(result.result.duration).toBeGreaterThan(0);
-        expect(['passed', 'failed']).toContain(result.result.status);
+        // Agent must actually succeed - not just return a result
+      if (result.result.status === 'failed') {
+        console.error('Agent failed with error:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
       },
       600000
     );
   });
 
   describe('CLI commands', () => {
+    // Ensure test project exists before CLI tests
+    beforeAll(() => {
+      const projectDir = join(TEST_DIR, 'test-project');
+      if (!existsSync(projectDir)) {
+        initProject({
+          name: 'test-project',
+          targetDir: TEST_DIR,
+        });
+      }
+    });
+
     it('can dry run Claude Code experiment via CLI', () => {
       const projectDir = join(TEST_DIR, 'test-project');
       // Config at experiments/cc.ts -> evals inferred at ../evals
