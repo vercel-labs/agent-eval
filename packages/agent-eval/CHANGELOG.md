@@ -1,5 +1,11 @@
 # @vercel/agent-eval
 
+## 0.3.1
+
+### Patch Changes
+
+- [#47](https://github.com/vercel-labs/agent-eval/pull/47) [`e10e69b`](https://github.com/vercel-labs/agent-eval/commit/e10e69b2b3e6e4632ee88056bfb4eab1a57e6570) Thanks [@gaojude](https://github.com/gaojude)! - Fix fingerprint reuse: fingerprints are now persisted to `summary.json` so results can actually be reused across runs. Also fixes `--dry` to check reusability and report what would run, `--smoke` to always run fresh and skip housekeeping, and housekeeping to dedupe by fingerprint so results from different configs coexist.
+
 ## 0.3.0
 
 ### Minor Changes
