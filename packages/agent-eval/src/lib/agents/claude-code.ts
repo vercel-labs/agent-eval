@@ -160,27 +160,32 @@ export function createClaudeCodeAgent({ useVercelAiGateway }: { useVercelAiGatew
       // Verify no test files in sandbox
       await verifyNoTestFiles(sandbox);
 
+      // Build sandbox environment based on authentication method.
+      // Note: options.apiKey is always resolved from process.env[getApiKeyEnvVar()]
+      // by the CLI (cli.ts), so the env-var check here is consistent with getApiKeyEnvVar().
+      let claudeEnv: Record<string, string>;
+      if (useVercelAiGateway) {
+        claudeEnv = {
+          ANTHROPIC_BASE_URL: AI_GATEWAY.baseUrl,
+          ANTHROPIC_AUTH_TOKEN: options.apiKey,
+          ANTHROPIC_API_KEY: '',
+        };
+      } else if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+        claudeEnv = {
+          CLAUDE_CODE_OAUTH_TOKEN: options.apiKey,
+        };
+      } else {
+        claudeEnv = {
+          ANTHROPIC_API_KEY: options.apiKey,
+        };
+      }
+
       // Run Claude Code with appropriate authentication
       const claudeResult = await sandbox.runCommand(
         'claude',
         ['--print', '--model', options.model, '--dangerously-skip-permissions', options.prompt],
         {
-          env: useVercelAiGateway
-            ? {
-                // AI Gateway configuration for Claude Code
-                ANTHROPIC_BASE_URL: AI_GATEWAY.baseUrl,
-                ANTHROPIC_AUTH_TOKEN: options.apiKey,
-                ANTHROPIC_API_KEY: '',
-              }
-            : process.env.CLAUDE_CODE_OAUTH_TOKEN
-              ? {
-                  // OAuth token for Claude Pro/Max subscribers
-                  CLAUDE_CODE_OAUTH_TOKEN: options.apiKey,
-                }
-              : {
-                  // Direct Anthropic API
-                  ANTHROPIC_API_KEY: options.apiKey,
-                },
+          env: claudeEnv,
         }
       );
 
