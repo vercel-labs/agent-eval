@@ -1,5 +1,11 @@
 # @vercel/agent-eval
 
+## 0.4.0
+
+### Minor Changes
+
+- [#56](https://github.com/vercel-labs/agent-eval/pull/56) [`5e45159`](https://github.com/vercel-labs/agent-eval/commit/5e451599e036fc44c0b1c2bf0e9936a9ea131dcd) Thanks [@gaojude](https://github.com/gaojude)! - Support reasoning effort via model string query params for Codex (e.g. `gpt-5.3-codex?reasoningEffort=high`), install CA certificates in Docker sandbox, retry npm install once on failure, and exclude smoke test results from fingerprint-based reuse.
+
 ## 0.3.2
 
 ### Patch Changes
