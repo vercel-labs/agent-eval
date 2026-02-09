@@ -63,7 +63,9 @@ export function createClaudeCodeAgent({ useVercelAiGateway }: { useVercelAiGatew
     displayName: useVercelAiGateway ? 'Claude Code (Vercel AI Gateway)' : 'Claude Code',
 
     getApiKeyEnvVar(): string {
-      return useVercelAiGateway ? AI_GATEWAY.apiKeyEnvVar : ANTHROPIC_DIRECT.apiKeyEnvVar;
+      if (useVercelAiGateway) return AI_GATEWAY.apiKeyEnvVar;
+      if (process.env.CLAUDE_CODE_OAUTH_TOKEN) return 'CLAUDE_CODE_OAUTH_TOKEN';
+      return ANTHROPIC_DIRECT.apiKeyEnvVar;
     },
 
     getDefaultModel(): ModelTier {
@@ -170,10 +172,15 @@ export function createClaudeCodeAgent({ useVercelAiGateway }: { useVercelAiGatew
                 ANTHROPIC_AUTH_TOKEN: options.apiKey,
                 ANTHROPIC_API_KEY: '',
               }
-            : {
-                // Direct Anthropic API
-                ANTHROPIC_API_KEY: options.apiKey,
-              },
+            : process.env.CLAUDE_CODE_OAUTH_TOKEN
+              ? {
+                  // OAuth token for Claude Pro/Max subscribers
+                  CLAUDE_CODE_OAUTH_TOKEN: options.apiKey,
+                }
+              : {
+                  // Direct Anthropic API
+                  ANTHROPIC_API_KEY: options.apiKey,
+                },
         }
       );
 
