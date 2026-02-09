@@ -100,7 +100,7 @@ export async function captureGeneratedFiles(sandbox: AnySandbox): Promise<Record
   try {
     // Find all source files
     const findResult = await sandbox.runShell(
-      "find . -path './node_modules' -prune -o \\( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' \\) -type f -print"
+      "find . -path './node_modules' -prune -o -path './dist' -prune -o \\( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' -o -name '*.vue' -o -name '*.svelte' -o -name '*.astro' -o -name '*.css' -o -name '*.html' -o -name '*.json' \\) -type f -print"
     );
 
     const filePaths = findResult.stdout
