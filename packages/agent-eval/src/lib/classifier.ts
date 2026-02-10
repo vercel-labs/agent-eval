@@ -275,10 +275,18 @@ export async function classifyFailure(
 }
 
 /**
- * Check if all runs of an eval failed with non-model failures.
- * Used to determine if auto-retry is appropriate.
+ * Check if an eval result was classified as a non-model failure (infra or timeout).
+ * Reads classification.json — the single source of truth for classification data.
+ *
+ * Returns false for acknowledged failures (--ack-failures), since those are
+ * intentionally kept as final results.
  */
-export function shouldRetry(classifications: Classification[]): boolean {
-  if (classifications.length === 0) return false;
-  return classifications.every((c) => c.failureType !== 'model');
+export function isNonModelFailure(evalResultDir: string): boolean {
+  try {
+    const classification = JSON.parse(readFileSync(join(evalResultDir, 'classification.json'), 'utf-8'));
+    if (classification.acknowledged) return false;
+    return classification.failureType != null && classification.failureType !== 'model';
+  } catch {
+    return false;
+  }
 }

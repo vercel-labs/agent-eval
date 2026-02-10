@@ -221,7 +221,22 @@ export type FailureType = 'model' | 'infra' | 'timeout';
 export interface Classification {
   failureType: FailureType;
   failureReason: string;
+  /** When true, the user has acknowledged this non-model failure as a final result via --ack-failures. */
+  acknowledged?: boolean;
 }
+
+/**
+ * Structured progress events emitted by the runner.
+ * The CLI decides how to render these (dashboard, console.log, etc.).
+ */
+export type ProgressEvent =
+  | { type: 'experiment:start'; totalAttempts: number; totalEvals: number; totalRuns: number }
+  | { type: 'eval:start'; evalName: string; runNumber: number; totalRuns: number }
+  | { type: 'eval:complete'; evalName: string; runNumber: number; totalRuns: number; result: EvalRunResult }
+  | { type: 'eval:abort'; evalName: string; runNumber: number }
+  | { type: 'experiment:earlyExit'; evalName: string; runNumber: number }
+  | { type: 'experiment:saved'; outputDir: string }
+  | { type: 'experiment:summary'; results: ExperimentResults };
 
 /**
  * Complete experiment results.

@@ -7,18 +7,20 @@
 import { Command } from 'commander';
 import { config as dotenvConfig } from 'dotenv';
 import { resolve, dirname, basename } from 'path';
-import { existsSync, readFileSync, readdirSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 import { loadConfig, resolveEvalNames } from './lib/config.js';
 import { loadAllFixtures } from './lib/fixture.js';
 import { runExperiment } from './lib/runner.js';
+import { Dashboard, createConsoleProgressHandler } from './lib/dashboard.js';
+import type { ProgressEvent, Classification } from './lib/types.js';
 import { initProject, getPostInitInstructions } from './lib/init.js';
 import { getAgent } from './lib/agents/index.js';
 import { getSandboxBackendInfo } from './lib/sandbox.js';
 import { computeFingerprint } from './lib/fingerprint.js';
 import { scanReusableResults } from './lib/results.js';
-import { classifyFailure, shouldRetry } from './lib/classifier.js';
+import { classifyFailure } from './lib/classifier.js';
 import { housekeep } from './lib/housekeeping.js';
 import { spawnSync } from 'child_process';
 import { minimatch } from 'minimatch';
@@ -178,7 +180,11 @@ async function runExperimentCommand(configInput: string, options: { dry?: boolea
         resultsDir,
         experimentName,
         smoke: options.smoke,
-        onProgress: (msg) => console.log(msg),
+        onProgress: createConsoleProgressHandler({
+          experimentName,
+          model,
+          agent: config.agent,
+        }),
       });
 
       // Check if this experiment passed
@@ -266,11 +272,11 @@ program
   });
 
 /**
- * Run-all handler: discover and run all experiments with fingerprint reuse,
- * classification, and auto-retry. Used by both `run-all` subcommand and
- * the default (no-args) invocation.
+ * Run-all handler: discover and run all experiments with fingerprint reuse
+ * and classification. Used by both `run-all` subcommand and the default
+ * (no-args) invocation.
  */
-async function runAllCommand(experimentArgs: string[], options: { dry?: boolean; force?: boolean; smoke?: boolean }) {
+async function runAllCommand(experimentArgs: string[], options: { dry?: boolean; force?: boolean; smoke?: boolean; ackFailures?: boolean }) {
     try {
       const projectDir = process.cwd();
       const experimentsDir = resolve(projectDir, 'experiments');
@@ -324,11 +330,103 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
         process.exit(1);
       }
 
+      // --- Dry run: collect info and print a single summary table ---
       if (options.dry) {
-        console.log(chalk.yellow('\n[DRY RUN] Checking what would run...\n'));
+        interface DryRunInfo { name: string; toRun: string[]; cached: number; total: number }
+        const dryResults: DryRunInfo[] = [];
+
+        for (const file of selectedFiles) {
+          const configPath = resolve(experimentsDir, file);
+          const baseExperimentName = file.replace(/\.ts$/, '');
+
+          let config;
+          try {
+            config = await loadConfig(configPath);
+          } catch (err) {
+            console.error(chalk.red(`Failed to load ${file}: ${err instanceof Error ? err.message : err}`));
+            continue;
+          }
+
+          const models = Array.isArray(config.model) ? config.model : [config.model];
+          const availableNames = fixtures.map((f) => f.name);
+          let evalNames: string[];
+          try {
+            evalNames = resolveEvalNames(config.evals, availableNames);
+          } catch {
+            evalNames = availableNames;
+          }
+
+          if (options.smoke) {
+            evalNames = [evalNames.sort()[0]];
+          }
+
+          for (const model of models) {
+            const experimentName = models.length > 1
+              ? `${baseExperimentName}/${model}`
+              : baseExperimentName;
+
+            const modelConfig = { ...config, model, runs: options.smoke ? 1 : config.runs };
+            const selectedFixtures = fixtures.filter((f) => evalNames.includes(f.name));
+            const fingerprints: Record<string, string> = {};
+            for (const fixture of selectedFixtures) {
+              fingerprints[fixture.name] = computeFingerprint(fixture.path, modelConfig);
+            }
+
+            let fixturesToRun = selectedFixtures;
+            if (!options.force && !options.smoke) {
+              const reusable = scanReusableResults(resultsDir, experimentName, fingerprints);
+              if (reusable.size > 0) {
+                fixturesToRun = selectedFixtures.filter((f) => !reusable.has(f.name));
+              }
+            }
+
+            dryResults.push({
+              name: experimentName,
+              toRun: fixturesToRun.map((f) => f.name),
+              cached: selectedFixtures.length - fixturesToRun.length,
+              total: selectedFixtures.length,
+            });
+          }
+        }
+
+        // Print summary
+        const totalToRun = dryResults.reduce((sum, d) => sum + d.toRun.length, 0);
+        const totalCached = dryResults.reduce((sum, d) => sum + d.cached, 0);
+        const nameWidth = Math.max(...dryResults.map((d) => d.name.length)) + 2;
+
+        console.log('');
+        if (totalToRun === 0) {
+          console.log(chalk.green(`  All ${totalCached} evals cached across ${dryResults.length} experiments. Nothing to run.`));
+        } else {
+          console.log(chalk.bold(`  ${totalToRun} evals to run, ${totalCached} cached\n`));
+          for (const d of dryResults) {
+            const label = d.name.padEnd(nameWidth);
+            if (d.toRun.length === 0) {
+              console.log(chalk.gray(`  ${label} ${d.total} cached`));
+            } else {
+              console.log(
+                chalk.white(`  ${label}`) +
+                chalk.blue(` ${d.toRun.length} to run`) +
+                (d.cached > 0 ? chalk.gray(`, ${d.cached} cached`) : '')
+              );
+              for (const name of d.toRun) {
+                console.log(chalk.green(`  ${' '.repeat(nameWidth)} → ${name}`));
+              }
+            }
+          }
+        }
+        console.log('');
+        return;
       }
 
-      // Run all experiments in parallel
+      // --- Live run ---
+      const useDashboard = process.stdout.isTTY && selectedFiles.length > 1;
+      const dashboard = useDashboard ? new Dashboard() : null;
+
+      if (dashboard) {
+        dashboard.start();
+      }
+
       let allPassed = true;
       const experimentPromises = selectedFiles.map(async (file) => {
         const configPath = resolve(experimentsDir, file);
@@ -351,7 +449,6 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
           evalNames = availableNames;
         }
 
-        // Smoke mode: pick first eval
         if (options.smoke) {
           evalNames = [evalNames.sort()[0]];
         }
@@ -359,7 +456,7 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
         const agent = getAgent(config.agent);
         const apiKeyEnvVar = agent.getApiKeyEnvVar();
         const apiKey = process.env[apiKeyEnvVar] ?? process.env.VERCEL_OIDC_TOKEN;
-        if (!apiKey && !options.dry) {
+        if (!apiKey) {
           console.error(chalk.red(`${apiKeyEnvVar} (or VERCEL_OIDC_TOKEN) not set, skipping ${baseExperimentName}`));
           return;
         }
@@ -375,49 +472,39 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
             runs: options.smoke ? 1 : config.runs,
           };
 
-          // Compute fingerprints
           const selectedFixtures = fixtures.filter((f) => evalNames.includes(f.name));
           const fingerprints: Record<string, string> = {};
           for (const fixture of selectedFixtures) {
             fingerprints[fixture.name] = computeFingerprint(fixture.path, modelConfig);
           }
 
-          // Check for reusable results (unless --force or --smoke)
           let fixturesToRun = selectedFixtures;
           if (!options.force && !options.smoke) {
             const reusable = scanReusableResults(resultsDir, experimentName, fingerprints);
             if (reusable.size > 0) {
-              console.log(chalk.gray(`  ${experimentName}: reusing ${reusable.size} cached result(s)`));
               fixturesToRun = selectedFixtures.filter((f) => !reusable.has(f.name));
             }
           }
 
-          // Dry run: report what would happen and move on
-          if (options.dry) {
-            const cachedCount = selectedFixtures.length - fixturesToRun.length;
-            if (fixturesToRun.length === 0) {
-              console.log(chalk.gray(`  ${experimentName}: ${selectedFixtures.length} eval(s) — all cached, nothing to run`));
-            } else {
-              console.log(chalk.blue(`  ${experimentName}: ${fixturesToRun.length} to run, ${cachedCount} cached`));
-              for (const f of fixturesToRun) {
-                console.log(chalk.green(`    → ${f.name}`));
-              }
-              if (cachedCount > 0) {
-                const cachedNames = selectedFixtures
-                  .filter((f) => !fixturesToRun.some((r) => r.name === f.name))
-                  .map((f) => f.name);
-                console.log(chalk.gray(`    cached: ${cachedNames.join(', ')}`));
-              }
-            }
-            continue;
-          }
-
           if (fixturesToRun.length === 0) {
-            console.log(chalk.gray(`  ${experimentName}: all evals cached, skipping`));
             continue;
           }
 
-          console.log(chalk.blue(`\nRunning ${experimentName}: ${fixturesToRun.length} eval(s)`));
+          // Register with dashboard or log to console
+          if (dashboard) {
+            dashboard.addExperiment(experimentName, {
+              agent: config.agent,
+              model,
+              totalEvals: fixturesToRun.length,
+            });
+          } else {
+            console.log(chalk.blue(`\nRunning ${experimentName}: ${fixturesToRun.length} eval(s)`));
+          }
+
+          // Build the progress handler
+          const onProgress: (event: ProgressEvent) => void = dashboard
+            ? (event) => dashboard.handleEvent(experimentName, event)
+            : createConsoleProgressHandler({ experimentName, model, agent: config.agent });
 
           try {
             const results = await runExperiment({
@@ -428,13 +515,19 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
               experimentName,
               fingerprints,
               smoke: options.smoke,
-              onProgress: (msg) => console.log(`  ${msg}`),
+              onProgress,
             });
 
-            // Classify failures and check for auto-retry
+            // Classify failures
             const failedEvals = results.evals.filter((e) => e.passedRuns === 0);
+            const classifications = new Map<string, Classification>();
+            let hasNonModelFailures = false;
+
+            if (dashboard) {
+              dashboard.setPhase(experimentName, 'classifying');
+            }
+
             if (failedEvals.length > 0 && !options.smoke) {
-              const classifications: Record<string, { failureType: string; failureReason: string }> = {};
               const timestamp = results.startedAt.replace(/:/g, '-');
 
               for (const evalSummary of failedEvals) {
@@ -445,32 +538,40 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
                   experimentName
                 );
                 if (classification) {
-                  classifications[evalSummary.name] = classification;
-                  const icon = { model: '  ', infra: '  ', timeout: '  ' }[classification.failureType];
-                  console.log(chalk.gray(`  ${icon} ${evalSummary.name}: ${classification.failureType} — ${classification.failureReason}`));
+                  classifications.set(evalSummary.name, classification);
+
+                  if (!dashboard) {
+                    const icon = { model: '  ', infra: '  ', timeout: '  ' }[classification.failureType];
+                    console.log(chalk.gray(`  ${icon} ${evalSummary.name}: ${classification.failureType} — ${classification.failureReason}`));
+                  }
+
+                  if (classification.failureType !== 'model') {
+                    if (options.ackFailures) {
+                      classification.acknowledged = true;
+                      const classificationPath = resolve(evalResultDir, 'classification.json');
+                      writeFileSync(classificationPath, JSON.stringify(classification, null, 2));
+                      if (!dashboard) {
+                        console.log(chalk.yellow(`  ✓ Acknowledged ${evalSummary.name} (${classification.failureType} failure — kept as final result)`));
+                      }
+                    } else {
+                      rmSync(evalResultDir, { recursive: true });
+                      if (!dashboard) {
+                        console.log(chalk.gray(`  🗑️  Removed ${evalSummary.name} (${classification.failureType} failure)`));
+                      }
+                      hasNonModelFailures = true;
+                    }
+                  }
                 }
               }
 
-              // Auto-retry: if ALL failures are non-model, retry once
-              const classificationValues = Object.values(classifications);
-              if (
-                classificationValues.length === failedEvals.length &&
-                shouldRetry(classificationValues.map((c) => ({ failureType: c.failureType as 'model' | 'infra' | 'timeout', failureReason: c.failureReason })))
-              ) {
-                const retryFixtures = fixturesToRun.filter((f) =>
-                  failedEvals.some((e) => e.name === f.name)
-                );
-                console.log(chalk.yellow(`  Retrying ${retryFixtures.length} infra-failed eval(s)...`));
-                await runExperiment({
-                  config: modelConfig,
-                  fixtures: retryFixtures,
-                  apiKey: apiKey!,
-                  resultsDir,
-                  experimentName,
-                  fingerprints,
-                  onProgress: (msg) => console.log(`  [retry] ${msg}`),
-                });
+              if (hasNonModelFailures && !dashboard) {
+                console.log(chalk.yellow(`\n  To keep non-model failures as final results, re-run with --ack-failures`));
               }
+            }
+
+            // Complete the experiment in the dashboard (prints permanent block)
+            if (dashboard) {
+              dashboard.completeExperiment(experimentName, results, classifications);
             }
 
             const experimentPassed = results.evals.every((e) => e.passedRuns > 0);
@@ -478,14 +579,17 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
           } catch (err) {
             console.error(chalk.red(`  Error running ${experimentName}: ${err instanceof Error ? err.message : err}`));
             allPassed = false;
+            if (dashboard) {
+              dashboard.setPhase(experimentName, 'done');
+            }
           }
 
           // Housekeeping after each experiment
           const stats = housekeep(resultsDir, experimentName);
-          if (stats.removedDuplicates + stats.removedIncomplete > 0) {
+          if (stats.removedDuplicates + stats.removedIncomplete + stats.removedNonModelFailures > 0) {
             console.log(
               chalk.gray(
-                `  Housekeeping: removed ${stats.removedDuplicates} duplicate(s), ${stats.removedIncomplete} incomplete`
+                `  Housekeeping: removed ${stats.removedDuplicates} duplicate(s), ${stats.removedIncomplete} incomplete, ${stats.removedNonModelFailures} non-model failure(s)`
               )
             );
           }
@@ -493,9 +597,12 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
       });
 
       await Promise.all(experimentPromises);
-      if (!options.dry) {
-        process.exit(allPassed ? 0 : 1);
+
+      if (dashboard) {
+        dashboard.stop();
       }
+
+      process.exit(allPassed ? 0 : 1);
     } catch (error) {
       if (error instanceof Error) {
         console.error(chalk.red(`Error: ${error.message}`));
@@ -511,11 +618,12 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
  */
 program
   .command('run-all')
-  .description('Discover and run all experiments, with fingerprint reuse, classification, and auto-retry')
+  .description('Discover and run all experiments with fingerprint reuse and classification')
   .argument('[experiments...]', 'Experiment names or glob patterns (default: all)')
   .option('--dry', 'Preview what would run without executing')
   .option('--force', 'Ignore fingerprints, re-run everything')
   .option('--smoke', 'Run 1 eval per experiment for sanity checking')
+  .option('--ack-failures', 'Keep non-model failures (infra/timeout) as final results instead of deleting them')
   .action(runAllCommand);
 
 /**
@@ -530,7 +638,8 @@ program
   .option('--dry', 'Preview what would run without executing')
   .option('--smoke', 'Run a single eval to verify setup (API keys, model IDs, sandbox)')
   .option('--force', 'Ignore fingerprints, re-run everything (only applies when running all)')
-  .action(async (configInput: string | undefined, options: { dry?: boolean; smoke?: boolean; force?: boolean }) => {
+  .option('--ack-failures', 'Keep non-model failures (infra/timeout) as final results instead of deleting them')
+  .action(async (configInput: string | undefined, options: { dry?: boolean; smoke?: boolean; force?: boolean; ackFailures?: boolean }) => {
     if (!configInput) {
       await runAllCommand([], options);
       return;

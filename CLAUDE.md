@@ -10,6 +10,11 @@ Configuration should be done through the experiment config file, not environment
 - The only acceptable env vars are API keys (e.g., `AI_GATEWAY_API_KEY`, `ANTHROPIC_API_KEY`, `VERCEL_TOKEN`)
 - When adding new configuration options, add them to the config schema in `src/lib/config.ts`
 
+### DRY & Colocation
+
+- Don't duplicate logic across files. If the same check exists in multiple places, extract it into a single function and import it.
+- Colocate shared helpers in the module that owns the concept (e.g. classification logic belongs in `classifier.ts`, not scattered across `housekeeping.ts` and `results.ts`).
+
 ### Testing
 
 - Always use the existing integration test framework (`src/integration.test.ts`) for testing

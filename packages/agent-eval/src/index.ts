@@ -17,6 +17,7 @@ export type {
   EvalRunResult,
   EvalRunData,
   EvalSummary,
+  ProgressEvent,
   ExperimentResults,
   FailureType,
   Classification,
@@ -98,7 +99,7 @@ export { computeFingerprint } from './lib/fingerprint.js';
 export {
   classifyFailure,
   classifyWithAI,
-  shouldRetry,
+  isNonModelFailure,
 } from './lib/classifier.js';
 
 // Re-export housekeeping
@@ -107,6 +108,9 @@ export { housekeep } from './lib/housekeeping.js';
 // Re-export runner utilities
 export type { RunExperimentOptions } from './lib/runner.js';
 export { runExperiment, runSingleEval } from './lib/runner.js';
+
+// Re-export dashboard utilities
+export { Dashboard, createConsoleProgressHandler } from './lib/dashboard.js';
 
 // Re-export init utilities
 export type { InitOptions } from './lib/init.js';

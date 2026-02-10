@@ -11,6 +11,7 @@ import type {
   EvalSummary,
   ExperimentResults,
   RunnableExperimentConfig,
+  ProgressEvent,
 } from './types.js';
 import { getAgent } from './agents/index.js';
 import {
@@ -18,9 +19,6 @@ import {
   createEvalSummary,
   createExperimentResults,
   saveResults,
-  formatResultsTable,
-  formatRunResult,
-  createProgressDisplay,
 } from './results.js';
 
 /**
@@ -40,7 +38,7 @@ export interface RunExperimentOptions {
   /** Per-eval fingerprints (eval name -> hash) for result reuse */
   fingerprints?: Record<string, string>;
   /** Callback for progress updates */
-  onProgress?: (message: string) => void;
+  onProgress?: (event: ProgressEvent) => void;
   /** Whether to run in verbose mode */
   verbose?: boolean;
   /** Whether this is a smoke test run */
@@ -78,11 +76,9 @@ export async function runExperiment(
   // Get the agent from registry
   const agent = getAgent(config.agent);
 
-  const log = (msg: string) => {
+  const emit = (event: ProgressEvent) => {
     if (onProgress) {
-      onProgress(msg);
-    } else if (verbose) {
-      console.log(msg);
+      onProgress(event);
     }
   };
 
@@ -100,7 +96,7 @@ export async function runExperiment(
     }
   }
 
-  log(`Starting ${attempts.length} eval attempts concurrently (${fixtures.length} evals × ${config.runs} runs)`);
+  emit({ type: 'experiment:start', totalAttempts: attempts.length, totalEvals: fixtures.length, totalRuns: config.runs });
 
   // Run a single attempt
   const runAttempt = async (attempt: EvalAttempt): Promise<AttemptResult> => {
@@ -119,7 +115,7 @@ export async function runExperiment(
       };
     }
 
-    log(createProgressDisplay(fixture.name, runIndex + 1, config.runs));
+    emit({ type: 'eval:start', evalName: fixture.name, runNumber: runIndex + 1, totalRuns: config.runs });
 
     const timeoutMs = config.timeout * 1000;
     const startTime = Date.now();
@@ -181,11 +177,11 @@ export async function runExperiment(
 
     const runData = agentResultToEvalRunData(agentResult);
 
-    log(formatRunResult(fixture.name, runIndex + 1, config.runs, runData.result));
+    emit({ type: 'eval:complete', evalName: fixture.name, runNumber: runIndex + 1, totalRuns: config.runs, result: runData.result });
 
     // If this attempt passed and earlyExit is enabled, abort remaining attempts
     if (config.earlyExit && runData.result.status === 'passed') {
-      log(`Early exit: ${fixture.name} passed on run ${runIndex + 1}, aborting remaining attempts`);
+      emit({ type: 'experiment:earlyExit', evalName: fixture.name, runNumber: runIndex + 1 });
       controller.abort();
     }
 
@@ -244,8 +240,8 @@ export async function runExperiment(
     smoke,
   });
 
-  log(`\nResults saved to: ${outputDir}`);
-  log(formatResultsTable(experimentResults));
+  emit({ type: 'experiment:saved', outputDir });
+  emit({ type: 'experiment:summary', results: experimentResults });
 
   return experimentResults;
 }

@@ -14,6 +14,7 @@ import type {
 } from './types.js';
 import type { AgentRunResult } from './agents/types.js';
 import { parseTranscript, type Transcript } from './o11y/index.js';
+import { isNonModelFailure } from './classifier.js';
 
 /**
  * Convert AgentRunResult to EvalRunData (result + transcript).
@@ -93,8 +94,6 @@ export interface SaveResultsOptions {
   experimentName: string;
   /** Per-eval fingerprints (eval name -> fingerprint hash) */
   fingerprints?: Record<string, string>;
-  /** Per-eval classification results (eval name -> classification) */
-  classifications?: Record<string, { failureType: string; failureReason: string }>;
   /** Per-eval validity flags (eval name -> valid). Defaults to true. */
   validity?: Record<string, boolean>;
   /** Whether this is a smoke test run. Smoke results are excluded from reuse. */
@@ -133,7 +132,6 @@ export function saveResults(
 
     // Save summary (simplified format per design)
     const fingerprint = options.fingerprints?.[evalSummary.name];
-    const classification = options.classifications?.[evalSummary.name];
     const valid = options.validity?.[evalSummary.name];
     const summaryForFile: Record<string, unknown> = {
       totalRuns: evalSummary.totalRuns,
@@ -143,9 +141,6 @@ export function saveResults(
     };
     if (fingerprint) {
       summaryForFile.fingerprint = fingerprint;
-    }
-    if (classification) {
-      summaryForFile.classification = classification;
     }
     if (valid === false) {
       summaryForFile.valid = false;
@@ -288,16 +283,21 @@ export function formatRunResult(
   evalName: string,
   runNumber: number,
   totalRuns: number,
-  result: EvalRunResult
+  result: EvalRunResult,
+  context?: { experimentName?: string; model?: string; agent?: string }
 ): string {
   const icon = result.status === 'passed' ? '✓' : '✗';
   const color = result.status === 'passed' ? chalk.green : chalk.red;
+  const prefix = context?.experimentName ? `${context.experimentName}/${evalName}` : evalName;
 
-  let line = color(`${icon} ${evalName} [${runNumber}/${totalRuns}]`);
+  let line = color(`${icon} ${prefix} [${runNumber}/${totalRuns}]`);
+  if (context?.model || context?.agent) {
+    line += chalk.gray(` (${[context.agent, context.model].filter(Boolean).join(' · ')})`);
+  }
   line += chalk.gray(` (${result.duration.toFixed(1)}s)`);
 
   if (result.error) {
-    line += chalk.red(` - ${result.error.slice(0, 50)}${result.error.length > 50 ? '...' : ''}`);
+    line += chalk.red(` - ${result.error.slice(0, 200)}${result.error.length > 200 ? '...' : ''}`);
   }
 
   return line;
@@ -309,9 +309,13 @@ export function formatRunResult(
 export function createProgressDisplay(
   evalName: string,
   runNumber: number,
-  totalRuns: number
+  totalRuns: number,
+  context?: { experimentName?: string; model?: string; agent?: string }
 ): string {
-  return chalk.blue(`Running ${evalName} [${runNumber}/${totalRuns}]...`);
+  const prefix = context?.experimentName ? `${context.experimentName}/${evalName}` : evalName;
+  const meta = [context?.agent, context?.model].filter(Boolean).join(' · ');
+  const suffix = meta ? ` [${meta}]` : '';
+  return chalk.blue(`Running ${prefix} [${runNumber}/${totalRuns}]${suffix}...`);
 }
 
 /**
@@ -387,8 +391,15 @@ export function scanReusableResults(
         // Skip smoke test results
         if (summary.smoke === true) continue;
 
+        // Skip non-model failures (infra/timeout) — they should be re-run
+        if (isNonModelFailure(join(tsDir, evalDir))) continue;
+
         // Check that it has completed runs (use --force to re-run failures)
         if (summary.totalRuns <= 0) continue;
+
+        // Unclassified failures (0% with no classification.json) are not reusable —
+        // they were never properly processed (e.g. interrupted run) and need re-running.
+        if (summary.passedRuns === 0 && !existsSync(join(tsDir, evalDir, 'classification.json'))) continue;
 
         reusable.set(evalDir, {
           evalName: evalDir,

@@ -95,6 +95,48 @@ describe('housekeep', () => {
     expect(stats.removedEmptyDirs).toBe(0);
   });
 
+  it('removes results with infra classification from classification.json', () => {
+    const evalDir = join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z', 'eval-1');
+    createResult(evalDir, { passedRuns: 0 });
+    writeFileSync(
+      join(evalDir, 'classification.json'),
+      JSON.stringify({ failureType: 'infra', failureReason: 'API error' })
+    );
+
+    const stats = housekeep(TEST_DIR, 'exp');
+
+    expect(stats.removedNonModelFailures).toBe(1);
+    expect(existsSync(evalDir)).toBe(false);
+  });
+
+  it('removes results with timeout classification from classification.json', () => {
+    const evalDir = join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z', 'eval-1');
+    createResult(evalDir, { passedRuns: 0 });
+    writeFileSync(
+      join(evalDir, 'classification.json'),
+      JSON.stringify({ failureType: 'timeout', failureReason: 'Hit time limit' })
+    );
+
+    const stats = housekeep(TEST_DIR, 'exp');
+
+    expect(stats.removedNonModelFailures).toBe(1);
+    expect(existsSync(evalDir)).toBe(false);
+  });
+
+  it('keeps results with model classification', () => {
+    const evalDir = join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z', 'eval-1');
+    createResult(evalDir, { passedRuns: 0 });
+    writeFileSync(
+      join(evalDir, 'classification.json'),
+      JSON.stringify({ failureType: 'model', failureReason: 'Incorrect code' })
+    );
+
+    const stats = housekeep(TEST_DIR, 'exp');
+
+    expect(stats.removedNonModelFailures).toBe(0);
+    expect(existsSync(evalDir)).toBe(true);
+  });
+
   it('keeps results without transcript if summary has totalRuns > 0', () => {
     createResult(join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z', 'eval-1'), {
       transcript: false,

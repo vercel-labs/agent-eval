@@ -9,10 +9,12 @@
 
 import { readdirSync, rmSync, existsSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
+import { isNonModelFailure } from './classifier.js';
 
 interface HousekeepingStats {
   removedDuplicates: number;
   removedIncomplete: number;
+  removedNonModelFailures: number;
   removedEmptyDirs: number;
 }
 
@@ -31,6 +33,7 @@ export function housekeep(
   const stats: HousekeepingStats = {
     removedDuplicates: 0,
     removedIncomplete: 0,
+    removedNonModelFailures: 0,
     removedEmptyDirs: 0,
   };
 
@@ -88,11 +91,16 @@ export function housekeep(
         continue;
       }
 
-      // Check if this result is complete (smoke results are always cleaned up)
-      if (isComplete(evalResultDir) && !isSmoke(evalResultDir)) {
+      // Check if this result is complete (smoke and non-model failures are always cleaned up)
+      if (isComplete(evalResultDir) && !isSmoke(evalResultDir) && !isNonModelFailure(evalResultDir)) {
         seenEvals.add(dedupeKey);
+      } else if (isNonModelFailure(evalResultDir)) {
+        if (!options?.dry) {
+          rmSync(evalResultDir, { recursive: true });
+        }
+        stats.removedNonModelFailures++;
       } else {
-        // Incomplete — remove
+        // Incomplete or smoke — remove
         if (!options?.dry) {
           rmSync(evalResultDir, { recursive: true });
         }
