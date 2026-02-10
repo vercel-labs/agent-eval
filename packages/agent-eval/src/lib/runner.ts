@@ -70,7 +70,7 @@ interface AttemptResult {
 export async function runExperiment(
   options: RunExperimentOptions
 ): Promise<ExperimentResults> {
-  const { config, fixtures, apiKey, resultsDir, experimentName, fingerprints, onProgress, verbose, smoke } = options;
+  const { config, fixtures, apiKey, resultsDir, experimentName, fingerprints, onProgress, smoke } = options;
   const startedAt = new Date();
 
   // Get the agent from registry

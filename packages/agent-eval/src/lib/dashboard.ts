@@ -189,24 +189,6 @@ function renderExperimentLine(state: ExperimentState, nameWidth: number): string
   return ` ${chalk.white(nameCol)} ${bar}  ${stats} ${chalk.gray('\u00b7')} ${time}`;
 }
 
-/**
- * Render the detail line showing active evals or recent results.
- */
-function renderDetailLine(state: ExperimentState, nameWidth: number): string | null {
-  if (state.phase === 'waiting' || state.phase === 'classifying') return null;
-
-  const indent = ' '.repeat(nameWidth + 2);
-
-  // Show active evals
-  if (state.activeEvals.size > 0) {
-    const names = [...state.activeEvals].slice(0, 4);
-    const more = state.activeEvals.size > 4 ? ` +${state.activeEvals.size - 4}` : '';
-    return `${indent}${chalk.gray('\u2937')} ${chalk.gray(names.join(', '))}${chalk.gray(more)}`;
-  }
-
-  return null;
-}
-
 function renderStats(state: ExperimentState): string {
   const parts: string[] = [];
   parts.push(chalk.white(`${state.completedEvals}/${state.totalEvals}`));
