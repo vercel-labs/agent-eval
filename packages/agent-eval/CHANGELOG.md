@@ -1,5 +1,15 @@
 # @vercel/agent-eval
 
+## 0.5.0
+
+### Minor Changes
+
+- [#63](https://github.com/vercel-labs/agent-eval/pull/63) [`bc5114c`](https://github.com/vercel-labs/agent-eval/commit/bc5114cea6638aa1704233ebed96a3d81e20ba12) Thanks [@gaojude](https://github.com/gaojude)! - Add live terminal dashboard for parallel experiment runs
+
+### Patch Changes
+
+- [#61](https://github.com/vercel-labs/agent-eval/pull/61) [`b846fc7`](https://github.com/vercel-labs/agent-eval/commit/b846fc7ec7c92579b90f659eddba08af23927cce) Thanks [@paoloricciuti](https://github.com/paoloricciuti)! - fix: allow user defined tests in `verifyNoTestFiles`
+
 ## 0.4.1
 
 ### Patch Changes
