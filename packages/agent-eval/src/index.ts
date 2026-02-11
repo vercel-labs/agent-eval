@@ -97,6 +97,7 @@ export { computeFingerprint } from './lib/fingerprint.js';
 
 // Re-export classifier
 export {
+  isClassifierEnabled,
   classifyFailure,
   classifyWithAI,
   isNonModelFailure,

@@ -32,12 +32,16 @@ function createResult(
 describe('housekeep', () => {
   beforeEach(() => {
     mkdirSync(TEST_DIR, { recursive: true });
+    // Enable classifier for tests that expect non-model failures to be cleaned up
+    process.env.AI_GATEWAY_API_KEY = 'test-key';
   });
 
   afterEach(() => {
     if (existsSync(TEST_DIR)) {
       rmSync(TEST_DIR, { recursive: true });
     }
+    // Clean up env var
+    delete process.env.AI_GATEWAY_API_KEY;
   });
 
   it('keeps newest result and removes older duplicate', () => {
@@ -148,5 +152,23 @@ describe('housekeep', () => {
     // Should be kept (model failure with valid summary)
     expect(stats.removedIncomplete).toBe(0);
     expect(existsSync(join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z', 'eval-1'))).toBe(true);
+  });
+
+  it('keeps non-model failures when classifier is disabled', () => {
+    const evalDir = join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z', 'eval-1');
+    createResult(evalDir, { passedRuns: 0 });
+    writeFileSync(
+      join(evalDir, 'classification.json'),
+      JSON.stringify({ failureType: 'infra', failureReason: 'API error' })
+    );
+
+    // Disable classifier by removing env var
+    delete process.env.AI_GATEWAY_API_KEY;
+
+    const stats = housekeep(TEST_DIR, 'exp');
+
+    // Non-model failures should NOT be removed when classifier is disabled
+    expect(stats.removedNonModelFailures).toBe(0);
+    expect(existsSync(evalDir)).toBe(true);
   });
 });

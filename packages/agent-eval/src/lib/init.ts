@@ -50,20 +50,29 @@ function getPackageJson(projectName: string): string {
  * Get the .env.example template.
  */
 function getEnvExample(): string {
-  return `# Required - Vercel AI Gateway API key (works for all agents)
-# Get yours at: https://vercel.com/dashboard -> AI Gateway
+  return `# API Keys (choose one based on your agent)
+# For vercel-ai-gateway agents or to enable failure classification:
 AI_GATEWAY_API_KEY=your-ai-gateway-api-key
 
-# Required - Vercel token for sandbox access (choose ONE of the options below)
+# For direct Claude Code API:
+# ANTHROPIC_API_KEY=sk-ant-...
+
+# For direct OpenAI Codex API:
+# OPENAI_API_KEY=sk-proj-...
+
+# Sandbox access - Required (choose ONE of the options below)
 # The @vercel/sandbox package automatically detects either token.
 
-# Option 1: Personal Access Token (for local development)
+# Option 1: Vercel Token (for local development)
 # Create at: https://vercel.com/account/tokens
 VERCEL_TOKEN=your-vercel-token
 
 # Option 2: OIDC Token (for CI/CD pipelines like GitHub Actions)
 # Automatically provided by Vercel's CI integration
 # VERCEL_OIDC_TOKEN=your-oidc-token
+
+# Alternative: Use Docker instead of Vercel sandbox (no token needed)
+# Set sandbox: 'docker' in your experiment config
 `;
 }
 
@@ -101,9 +110,9 @@ Test AI coding agents to measure what actually works.
    cp .env.example .env.local
    \`\`\`
 
-   Edit \`.env.local\` and add your API keys:
-   - \`AI_GATEWAY_API_KEY\` - Vercel AI Gateway API key ([get yours](https://vercel.com/dashboard))
-   - \`VERCEL_TOKEN\` - Vercel personal access token ([create one](https://vercel.com/account/tokens))
+   Edit \`.env.local\` and add your API keys (see comments in \`.env.example\` for options):
+   - **Choose ONE agent key**: \`AI_GATEWAY_API_KEY\` (for Vercel agents), \`ANTHROPIC_API_KEY\`, or \`OPENAI_API_KEY\`
+   - **Choose ONE sandbox option**: \`VERCEL_TOKEN\`, \`VERCEL_OIDC_TOKEN\`, or use Docker (set \`sandbox: 'docker'\` in config)
 
 ## Running Evals
 

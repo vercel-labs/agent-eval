@@ -6,7 +6,7 @@
  * - "infra" — infrastructure broke (API errors, rate limits, crashes)
  * - "timeout" — the run hit its time limit
  *
- * Uses AI classification via the Vercel AI Gateway. Requires AI_GATEWAY_API_KEY.
+ * Uses AI classification via the Vercel AI Gateway. Requires AI_GATEWAY_API_KEY or VERCEL_OIDC_TOKEN.
  */
 
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
@@ -14,6 +14,15 @@ import { join, resolve } from 'path';
 import { tool } from 'ai';
 import { z } from 'zod';
 import type { Classification, FailureType } from './types.js';
+
+/**
+ * Check if the classifier feature is enabled.
+ * The classifier requires either AI_GATEWAY_API_KEY or VERCEL_OIDC_TOKEN to be set.
+ * If neither is available, classification is disabled and housekeeping won't clean up non-model failures.
+ */
+export function isClassifierEnabled(): boolean {
+  return !!(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN);
+}
 
 const CLASSIFIER_SYSTEM_PROMPT = `You are a failure classifier for an AI coding agent benchmark.
 

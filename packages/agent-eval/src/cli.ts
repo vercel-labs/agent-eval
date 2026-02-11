@@ -20,7 +20,7 @@ import { getAgent } from './lib/agents/index.js';
 import { getSandboxBackendInfo } from './lib/sandbox.js';
 import { computeFingerprint } from './lib/fingerprint.js';
 import { scanReusableResults } from './lib/results.js';
-import { classifyFailure } from './lib/classifier.js';
+import { isClassifierEnabled, classifyFailure } from './lib/classifier.js';
 import { housekeep } from './lib/housekeeping.js';
 import { spawnSync } from 'child_process';
 import { minimatch } from 'minimatch';
@@ -427,6 +427,18 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
         dashboard.start();
       }
 
+      // Warn if classifier is disabled
+      if (!isClassifierEnabled()) {
+        console.log(
+          chalk.yellow(
+            '\n⚠️  Classifier disabled: Neither AI_GATEWAY_API_KEY nor VERCEL_OIDC_TOKEN is set.\n' +
+            '  The classifier automatically identifies why evals failed (model error, infrastructure issue, or timeout).\n' +
+            '  Without it, all failed results are kept as-is and housekeeping will not remove non-model failures.\n' +
+            '  Set AI_GATEWAY_API_KEY or VERCEL_OIDC_TOKEN to enable classifier for cleaner result management.\n'
+          )
+        );
+      }
+
       let allPassed = true;
       const experimentPromises = selectedFiles.map(async (file) => {
         const configPath = resolve(experimentsDir, file);
@@ -518,54 +530,56 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
               onProgress,
             });
 
-            // Classify failures
+            // Classify failures (only if classifier is enabled)
             const failedEvals = results.evals.filter((e) => e.passedRuns === 0);
             const classifications = new Map<string, Classification>();
             let hasNonModelFailures = false;
 
-            if (dashboard) {
-              dashboard.setPhase(experimentName, 'classifying');
-            }
+            if (isClassifierEnabled()) {
+              if (dashboard) {
+                dashboard.setPhase(experimentName, 'classifying');
+              }
 
-            if (failedEvals.length > 0 && !options.smoke) {
-              const timestamp = results.startedAt.replace(/:/g, '-');
+              if (failedEvals.length > 0 && !options.smoke) {
+                const timestamp = results.startedAt.replace(/:/g, '-');
 
-              for (const evalSummary of failedEvals) {
-                const evalResultDir = resolve(resultsDir, experimentName, timestamp, evalSummary.name);
-                const classification = await classifyFailure(
-                  evalResultDir,
-                  evalSummary.name,
-                  experimentName
-                );
-                if (classification) {
-                  classifications.set(evalSummary.name, classification);
+                for (const evalSummary of failedEvals) {
+                  const evalResultDir = resolve(resultsDir, experimentName, timestamp, evalSummary.name);
+                  const classification = await classifyFailure(
+                    evalResultDir,
+                    evalSummary.name,
+                    experimentName
+                  );
+                  if (classification) {
+                    classifications.set(evalSummary.name, classification);
 
-                  if (!dashboard) {
-                    const icon = { model: '  ', infra: '  ', timeout: '  ' }[classification.failureType];
-                    console.log(chalk.gray(`  ${icon} ${evalSummary.name}: ${classification.failureType} — ${classification.failureReason}`));
-                  }
+                    if (!dashboard) {
+                      const icon = { model: '  ', infra: '  ', timeout: '  ' }[classification.failureType];
+                      console.log(chalk.gray(`  ${icon} ${evalSummary.name}: ${classification.failureType} — ${classification.failureReason}`));
+                    }
 
-                  if (classification.failureType !== 'model') {
-                    if (options.ackFailures) {
-                      classification.acknowledged = true;
-                      const classificationPath = resolve(evalResultDir, 'classification.json');
-                      writeFileSync(classificationPath, JSON.stringify(classification, null, 2));
-                      if (!dashboard) {
-                        console.log(chalk.yellow(`  ✓ Acknowledged ${evalSummary.name} (${classification.failureType} failure — kept as final result)`));
+                    if (classification.failureType !== 'model') {
+                      if (options.ackFailures) {
+                        classification.acknowledged = true;
+                        const classificationPath = resolve(evalResultDir, 'classification.json');
+                        writeFileSync(classificationPath, JSON.stringify(classification, null, 2));
+                        if (!dashboard) {
+                          console.log(chalk.yellow(`  ✓ Acknowledged ${evalSummary.name} (${classification.failureType} failure — kept as final result)`));
+                        }
+                      } else {
+                        rmSync(evalResultDir, { recursive: true });
+                        if (!dashboard) {
+                          console.log(chalk.gray(`  🗑️  Removed ${evalSummary.name} (${classification.failureType} failure)`));
+                        }
+                        hasNonModelFailures = true;
                       }
-                    } else {
-                      rmSync(evalResultDir, { recursive: true });
-                      if (!dashboard) {
-                        console.log(chalk.gray(`  🗑️  Removed ${evalSummary.name} (${classification.failureType} failure)`));
-                      }
-                      hasNonModelFailures = true;
                     }
                   }
                 }
-              }
 
-              if (hasNonModelFailures && !dashboard) {
-                console.log(chalk.yellow(`\n  To keep non-model failures as final results, re-run with --ack-failures`));
+                if (hasNonModelFailures && !dashboard) {
+                  console.log(chalk.yellow(`\n  To keep non-model failures as final results, re-run with --ack-failures`));
+                }
               }
             }
 

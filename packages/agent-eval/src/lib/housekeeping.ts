@@ -9,7 +9,7 @@
 
 import { readdirSync, rmSync, existsSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
-import { isNonModelFailure } from './classifier.js';
+import { isClassifierEnabled, isNonModelFailure } from './classifier.js';
 
 interface HousekeepingStats {
   removedDuplicates: number;
@@ -91,10 +91,12 @@ export function housekeep(
         continue;
       }
 
-      // Check if this result is complete (smoke and non-model failures are always cleaned up)
-      if (isComplete(evalResultDir) && !isSmoke(evalResultDir) && !isNonModelFailure(evalResultDir)) {
+      // Check if this result is complete
+      // Note: non-model failures are only cleaned up if the classifier is enabled
+      const isNonModel = isClassifierEnabled() && isNonModelFailure(evalResultDir);
+      if (isComplete(evalResultDir) && !isSmoke(evalResultDir) && !isNonModel) {
         seenEvals.add(dedupeKey);
-      } else if (isNonModelFailure(evalResultDir)) {
+      } else if (isNonModel) {
         if (!options?.dry) {
           rmSync(evalResultDir, { recursive: true });
         }
