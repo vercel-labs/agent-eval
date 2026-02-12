@@ -1,5 +1,15 @@
 # @vercel/agent-eval
 
+## 0.7.0
+
+### Minor Changes
+
+- [#73](https://github.com/vercel-labs/agent-eval/pull/73) [`be7ca15`](https://github.com/vercel-labs/agent-eval/commit/be7ca1560e8137baf3369fbdb859f9cde5f75778) Thanks [@gaojude](https://github.com/gaojude)! - Add Cursor CLI agent with direct API and stream-json transcript support. Enables testing against Cursor models (default: `composer-1.5`) through direct API access. The agent captures detailed execution transcripts in JSONL format and is fully integrated with the eval framework sandbox infrastructure.
+
+- [#71](https://github.com/vercel-labs/agent-eval/pull/71) [`8f198d4`](https://github.com/vercel-labs/agent-eval/commit/8f198d4d183b9b919deb315c0a490d92394111de) Thanks [@gaojude](https://github.com/gaojude)! - Add Gemini CLI agent with direct API and stream-json transcript support. Enables testing against Gemini models (default: `gemini-3-pro-preview`) through direct Google API access. The agent captures detailed execution transcripts in JSONL format and is fully integrated with the eval framework sandbox infrastructure.
+
+- [#74](https://github.com/vercel-labs/agent-eval/pull/74) [`087415c`](https://github.com/vercel-labs/agent-eval/commit/087415c73dbac50ce1ff3948b22d5770b5da363e) Thanks [@gaojude](https://github.com/gaojude)! - Add transcript parsers for Gemini and Cursor agents to the o11y module
+
 ## 0.6.2
 
 ### Patch Changes
