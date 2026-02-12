@@ -413,7 +413,7 @@ describe('o11y', () => {
       expect(events[0].tool?.success).toBe(false);
     });
 
-    it('skips delta messages in direct-API format', () => {
+    it('aggregates contiguous assistant delta messages into one event', () => {
       const transcript = [
         JSON.stringify({
           type: 'message',
@@ -432,7 +432,10 @@ describe('o11y', () => {
       ].join('\n');
       const { events } = parseGeminiTranscript(transcript);
 
-      expect(events).toHaveLength(0);
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('message');
+      expect(events[0].role).toBe('assistant');
+      expect(events[0].content).toBe('I will read the files.');
     });
 
     it('parses direct-API non-delta messages', () => {
@@ -500,7 +503,7 @@ describe('o11y', () => {
       const result = parseTranscript(transcript, 'gemini');
 
       expect(result.parseSuccess).toBe(true);
-      expect(result.summary.totalTurns).toBe(0); // user message doesn't count as assistant turn, delta skipped
+      expect(result.summary.totalTurns).toBe(1); // deltas aggregated into one assistant turn
       expect(result.summary.toolCalls.file_read).toBe(1);
       expect(result.summary.toolCalls.shell).toBe(1);
       expect(result.summary.toolCalls.file_write).toBe(1);

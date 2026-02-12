@@ -183,18 +183,15 @@ function parseGeminiLine(line: string): TranscriptEvent[] {
 
     // --- Direct-API format: message with role/content ---
     if (eventType === 'message') {
-      // Skip delta messages to avoid inflating turn counts
-      if (data.delta) return events;
-
       const role = data.role as string | undefined;
       const content = data.content as string | undefined;
-      if (role && content && content.trim()) {
+      if (role && content) {
         events.push({
           timestamp: toISO(data.timestamp),
           type: 'message',
           role: role as 'user' | 'assistant' | 'system',
           content,
-          raw: data,
+          raw: { ...data, _delta: !!data.delta },
         });
       }
       return events;
@@ -230,8 +227,28 @@ export function parseGeminiTranscript(raw: string): {
     }
   }
 
-  // Post-process: extract metadata into tool args
+  // Post-process: aggregate contiguous assistant delta messages into single events.
+  // This avoids inflating turn counts while still counting actual turns.
+  const aggregated: TranscriptEvent[] = [];
   for (const event of events) {
+    const isDelta = (event.raw as Record<string, unknown>)?._delta === true;
+    if (event.type === 'message' && event.role === 'assistant' && isDelta) {
+      const prev = aggregated[aggregated.length - 1];
+      if (
+        prev?.type === 'message' &&
+        prev.role === 'assistant' &&
+        (prev.raw as Record<string, unknown>)?._delta === true
+      ) {
+        // Merge into previous delta message
+        prev.content = (prev.content || '') + (event.content || '');
+        continue;
+      }
+    }
+    aggregated.push(event);
+  }
+
+  // Post-process: extract metadata into tool args
+  for (const event of aggregated) {
     if (event.type === 'tool_call' && event.tool) {
       const args = event.tool.args || {};
 
@@ -251,5 +268,5 @@ export function parseGeminiTranscript(raw: string): {
     }
   }
 
-  return { events, errors };
+  return { events: aggregated, errors };
 }
