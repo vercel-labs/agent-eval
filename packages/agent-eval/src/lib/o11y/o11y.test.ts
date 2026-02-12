@@ -360,6 +360,159 @@ describe('o11y', () => {
       expect(events[0].tool?.args?._extractedCommand).toBe('npm test');
     });
 
+    // --- Direct-API format tests ---
+
+    it('parses direct-API tool_use events with tool_name/parameters', () => {
+      const transcript = JSON.stringify({
+        type: 'tool_use',
+        timestamp: '2026-02-12T20:21:56.095Z',
+        tool_name: 'read_file',
+        tool_id: 'read_file-1770927716095-abc',
+        parameters: { file_path: 'package.json' },
+      });
+      const { events } = parseGeminiTranscript(transcript);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('tool_call');
+      expect(events[0].tool?.name).toBe('file_read');
+      expect(events[0].tool?.originalName).toBe('read_file');
+      expect(events[0].tool?.args?._extractedPath).toBe('package.json');
+      expect(events[0].timestamp).toBe('2026-02-12T20:21:56.095Z');
+    });
+
+    it('parses direct-API tool_result events', () => {
+      const transcript = JSON.stringify({
+        type: 'tool_result',
+        timestamp: '2026-02-12T20:21:57.039Z',
+        tool_id: 'read_file-1770927716095-abc',
+        status: 'success',
+        output: 'file contents',
+      });
+      const { events } = parseGeminiTranscript(transcript);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('tool_result');
+      expect(events[0].tool?.name).toBe('file_read');
+      expect(events[0].tool?.success).toBe(true);
+      expect(events[0].tool?.result).toBe('file contents');
+    });
+
+    it('parses direct-API error tool_result events', () => {
+      const transcript = JSON.stringify({
+        type: 'tool_result',
+        timestamp: '2026-02-12T20:22:28.806Z',
+        tool_id: 'list_directory-1770927747602-abc',
+        status: 'error',
+        output: 'Error: Failed to list directory.',
+        error: { type: 'ls_execution_error', message: 'ENOENT' },
+      });
+      const { events } = parseGeminiTranscript(transcript);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].tool?.name).toBe('list_dir');
+      expect(events[0].tool?.success).toBe(false);
+    });
+
+    it('skips delta messages in direct-API format', () => {
+      const transcript = [
+        JSON.stringify({
+          type: 'message',
+          timestamp: '2026-02-12T20:21:55.630Z',
+          role: 'assistant',
+          content: 'I will',
+          delta: true,
+        }),
+        JSON.stringify({
+          type: 'message',
+          timestamp: '2026-02-12T20:21:55.875Z',
+          role: 'assistant',
+          content: ' read the files.',
+          delta: true,
+        }),
+      ].join('\n');
+      const { events } = parseGeminiTranscript(transcript);
+
+      expect(events).toHaveLength(0);
+    });
+
+    it('parses direct-API non-delta messages', () => {
+      const transcript = JSON.stringify({
+        type: 'message',
+        timestamp: '2026-02-12T20:21:50.503Z',
+        role: 'user',
+        content: 'Migrate this project.',
+      });
+      const { events } = parseGeminiTranscript(transcript);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('message');
+      expect(events[0].role).toBe('user');
+    });
+
+    it('normalizes direct-API tool names', () => {
+      const tools = [
+        { name: 'read_file', expected: 'file_read' },
+        { name: 'write_file', expected: 'file_write' },
+        { name: 'list_directory', expected: 'list_dir' },
+        { name: 'run_shell_command', expected: 'shell' },
+      ];
+
+      for (const { name, expected } of tools) {
+        const transcript = JSON.stringify({
+          type: 'tool_use',
+          timestamp: '2026-02-12T20:21:56.095Z',
+          tool_name: name,
+          tool_id: `${name}-123`,
+          parameters: {},
+        });
+        const { events } = parseGeminiTranscript(transcript);
+        expect(events[0].tool?.name).toBe(expected);
+      }
+    });
+
+    it('extracts shell commands from direct-API run_shell_command', () => {
+      const transcript = JSON.stringify({
+        type: 'tool_use',
+        timestamp: '2026-02-12T20:22:11.570Z',
+        tool_name: 'run_shell_command',
+        tool_id: 'run_shell_command-123',
+        parameters: { command: 'mkdir app' },
+      });
+      const { events } = parseGeminiTranscript(transcript);
+
+      expect(events[0].tool?.name).toBe('shell');
+      expect(events[0].tool?.args?._extractedCommand).toBe('mkdir app');
+    });
+
+    it('handles a full direct-API transcript end-to-end', () => {
+      const transcript = [
+        JSON.stringify({ type: 'init', timestamp: '2026-02-12T20:21:50.502Z', model: 'gemini-3-pro-preview' }),
+        JSON.stringify({ type: 'message', timestamp: '2026-02-12T20:21:50.503Z', role: 'user', content: 'Migrate this project.' }),
+        JSON.stringify({ type: 'message', timestamp: '2026-02-12T20:21:55.630Z', role: 'assistant', content: 'I will read', delta: true }),
+        JSON.stringify({ type: 'tool_use', timestamp: '2026-02-12T20:21:56.095Z', tool_name: 'read_file', tool_id: 'read_file-1', parameters: { file_path: 'pkg.json' } }),
+        JSON.stringify({ type: 'tool_result', timestamp: '2026-02-12T20:21:57.039Z', tool_id: 'read_file-1', status: 'success', output: '{}' }),
+        JSON.stringify({ type: 'tool_use', timestamp: '2026-02-12T20:22:11.570Z', tool_name: 'run_shell_command', tool_id: 'run_shell_command-2', parameters: { command: 'mkdir app' } }),
+        JSON.stringify({ type: 'tool_result', timestamp: '2026-02-12T20:22:12.565Z', tool_id: 'run_shell_command-2', status: 'success', output: '' }),
+        JSON.stringify({ type: 'tool_use', timestamp: '2026-02-12T20:22:12.518Z', tool_name: 'write_file', tool_id: 'write_file-3', parameters: { file_path: 'app/layout.tsx', content: 'export default ...' } }),
+        JSON.stringify({ type: 'tool_result', timestamp: '2026-02-12T20:22:12.565Z', tool_id: 'write_file-3', status: 'success' }),
+      ].join('\n');
+
+      const result = parseTranscript(transcript, 'gemini');
+
+      expect(result.parseSuccess).toBe(true);
+      expect(result.summary.totalTurns).toBe(0); // user message doesn't count as assistant turn, delta skipped
+      expect(result.summary.toolCalls.file_read).toBe(1);
+      expect(result.summary.toolCalls.shell).toBe(1);
+      expect(result.summary.toolCalls.file_write).toBe(1);
+      expect(result.summary.totalToolCalls).toBe(3);
+      expect(result.summary.filesRead).toContain('pkg.json');
+      expect(result.summary.filesModified).toContain('app/layout.tsx');
+      expect(result.summary.shellCommands).toHaveLength(1);
+      expect(result.summary.shellCommands[0].command).toBe('mkdir app');
+    });
+
+    // --- CLI format tests (continued) ---
+
     it('detects shell command failure via exit code', () => {
       const transcript = JSON.stringify({
         type: 'tool_use',

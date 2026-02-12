@@ -1,12 +1,14 @@
 /**
  * Parser for Gemini CLI transcript format.
- * Gemini CLI outputs JSONL events with the same structure as OpenCode
- * (step_start, tool_use, text, step_finish) since they share a framework.
+ * Supports two output formats:
  *
- * Format reference (based on Gemini CLI --output-format stream-json):
- * - Events have a "type" field: step_start, tool_use, text, step_finish
- * - Tool calls use part.tool (name) and part.state (input/output/status)
- * - Timestamps are epoch milliseconds
+ * 1. CLI format (--output-format stream-json via OpenCode framework):
+ *    - Events: step_start, tool_use (with part.tool/part.state), text, step_finish
+ *    - Timestamps: epoch milliseconds
+ *
+ * 2. Direct-API format (custom agent runner):
+ *    - Events: init, message (with delta), tool_use (with tool_name/parameters), tool_result
+ *    - Timestamps: ISO strings
  */
 
 import type { TranscriptEvent, ToolName } from '../types.js';
@@ -16,18 +18,20 @@ import type { TranscriptEvent, ToolName } from '../types.js';
  */
 function normalizeToolName(name: string): ToolName {
   const toolMap: Record<string, ToolName> = {
-    // Gemini CLI tools (observed in real transcripts)
+    // CLI format tools
     read: 'file_read',
     write: 'file_write',
     edit: 'file_edit',
     bash: 'shell',
     glob: 'glob',
 
-    // Possible alternative names
+    // Direct-API format tools
     read_file: 'file_read',
     write_file: 'file_write',
     list_directory: 'list_dir',
     run_shell_command: 'shell',
+
+    // Common aliases
     shell: 'shell',
     grep: 'grep',
     ls: 'list_dir',
@@ -70,6 +74,7 @@ function extractCommand(args: Record<string, unknown>): string | undefined {
 
 /**
  * Parse a single JSONL line from a Gemini transcript.
+ * Handles both CLI and direct-API formats.
  */
 function parseGeminiLine(line: string): TranscriptEvent[] {
   const events: TranscriptEvent[] = [];
@@ -77,74 +82,126 @@ function parseGeminiLine(line: string): TranscriptEvent[] {
   try {
     const data = JSON.parse(line);
     const eventType = data.type;
-    const part = data.part as Record<string, unknown> | undefined;
-    const state = part?.state as Record<string, unknown> | undefined;
 
-    switch (eventType) {
-      case 'tool_use': {
-        if (part && part.tool) {
-          const name = part.tool as string;
-          const args = (state?.input as Record<string, unknown>) || {};
-          const output = state?.output;
-          const status = state?.status as string | undefined;
+    // --- CLI format: tool_use with part.tool / part.state ---
+    if (eventType === 'tool_use' && data.part?.tool) {
+      const part = data.part as Record<string, unknown>;
+      const state = part.state as Record<string, unknown> | undefined;
+      const name = part.tool as string;
+      const args = (state?.input as Record<string, unknown>) || {};
+      const output = state?.output;
+      const status = state?.status as string | undefined;
 
-          events.push({
-            timestamp: toISO(data.timestamp),
-            type: 'tool_call',
-            tool: {
-              name: normalizeToolName(name),
-              originalName: name,
-              args,
-            },
-            raw: data,
-          });
+      events.push({
+        timestamp: toISO(data.timestamp),
+        type: 'tool_call',
+        tool: {
+          name: normalizeToolName(name),
+          originalName: name,
+          args,
+        },
+        raw: data,
+      });
 
-          if (status === 'completed' && output !== undefined) {
-            const metadata = state?.metadata as Record<string, unknown> | undefined;
-            const exitCode = metadata?.exit as number | undefined;
-            const isShell = normalizeToolName(name) === 'shell';
-            const success = isShell
-              ? exitCode === 0 || exitCode === undefined
-              : status === 'completed' && !state?.error;
+      if (status === 'completed' && output !== undefined) {
+        const metadata = state?.metadata as Record<string, unknown> | undefined;
+        const exitCode = metadata?.exit as number | undefined;
+        const isShell = normalizeToolName(name) === 'shell';
+        const success = isShell
+          ? exitCode === 0 || exitCode === undefined
+          : status === 'completed' && !state?.error;
 
-            events.push({
-              timestamp: toISO(data.timestamp),
-              type: 'tool_result',
-              tool: {
-                name: normalizeToolName(name),
-                originalName: name,
-                result: output,
-                success,
-              },
-              raw: state,
-            });
-          }
-        }
-        break;
+        events.push({
+          timestamp: toISO(data.timestamp),
+          type: 'tool_result',
+          tool: {
+            name: normalizeToolName(name),
+            originalName: name,
+            result: output,
+            success,
+          },
+          raw: state,
+        });
       }
-
-      case 'text': {
-        const text = (part?.text as string) || undefined;
-        if (text && text.trim()) {
-          events.push({
-            timestamp: toISO(data.timestamp),
-            type: 'message',
-            role: 'assistant',
-            content: text,
-            raw: data,
-          });
-        }
-        break;
-      }
-
-      // step_start / step_finish are metadata — skip
-      case 'step_start':
-      case 'step_finish':
-        break;
-
-      default:
-        break;
+      return events;
     }
+
+    // --- Direct-API format: tool_use with tool_name / parameters ---
+    if (eventType === 'tool_use' && data.tool_name) {
+      const name = data.tool_name as string;
+      const args = (data.parameters as Record<string, unknown>) || {};
+
+      events.push({
+        timestamp: toISO(data.timestamp),
+        type: 'tool_call',
+        tool: {
+          name: normalizeToolName(name),
+          originalName: name,
+          args,
+        },
+        raw: data,
+      });
+      return events;
+    }
+
+    // --- Direct-API format: separate tool_result event ---
+    if (eventType === 'tool_result') {
+      const toolId = data.tool_id as string | undefined;
+      // Infer original tool name from tool_id prefix (e.g. "read_file-1770...")
+      const originalName = toolId?.split('-')[0] || 'unknown';
+      const status = data.status as string | undefined;
+      const hasError = status === 'error' || !!data.error;
+
+      events.push({
+        timestamp: toISO(data.timestamp),
+        type: 'tool_result',
+        tool: {
+          name: normalizeToolName(originalName),
+          originalName,
+          result: data.output,
+          success: !hasError,
+        },
+        raw: data,
+      });
+      return events;
+    }
+
+    // --- CLI format: text with part.text ---
+    if (eventType === 'text' && data.part?.text) {
+      const text = data.part.text as string;
+      if (text.trim()) {
+        events.push({
+          timestamp: toISO(data.timestamp),
+          type: 'message',
+          role: 'assistant',
+          content: text,
+          raw: data,
+        });
+      }
+      return events;
+    }
+
+    // --- Direct-API format: message with role/content ---
+    if (eventType === 'message') {
+      // Skip delta messages to avoid inflating turn counts
+      if (data.delta) return events;
+
+      const role = data.role as string | undefined;
+      const content = data.content as string | undefined;
+      if (role && content && content.trim()) {
+        events.push({
+          timestamp: toISO(data.timestamp),
+          type: 'message',
+          role: role as 'user' | 'assistant' | 'system',
+          content,
+          raw: data,
+        });
+      }
+      return events;
+    }
+
+    // --- Metadata events — skip ---
+    // init, step_start, step_finish
   } catch {
     // Skip unparseable lines
   }
