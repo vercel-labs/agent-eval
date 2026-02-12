@@ -48,7 +48,7 @@ async function captureTranscript(sandbox: AnySandbox): Promise<string | undefine
 
     const transcriptPath = findResult.stdout.trim();
     const content = await sandbox.readFile(transcriptPath);
-    return content;
+    return content || undefined;
   } catch {
     // Transcript capture is best-effort
     return undefined;

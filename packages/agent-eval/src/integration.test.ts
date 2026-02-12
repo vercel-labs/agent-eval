@@ -42,6 +42,7 @@ const hasAiGatewayCredentials = !!process.env.AI_GATEWAY_API_KEY && hasSandbox;
 // Direct API credentials (need API key + sandbox)
 const hasAnthropicCredentials = !!process.env.ANTHROPIC_API_KEY && hasSandbox;
 const hasOpenAiCredentials = !!process.env.OPENAI_API_KEY && hasSandbox;
+const hasGeminiCredentials = !!process.env.GEMINI_API_KEY && hasSandbox;
 // OpenCode credentials (only supports AI Gateway)
 const hasOpenCodeCredentials = hasAiGatewayCredentials;
 
@@ -600,6 +601,155 @@ test('hello.ts exists', () => {
       expect(result).toHaveProperty('result');
       expect(result.result).toHaveProperty('status');
       expect(result.result).toHaveProperty('duration');
+    }, 300000); // 5 minute timeout
+  });
+
+  describe.skipIf(!hasGeminiCredentials)('Gemini CLI (Direct API) sandbox execution', () => {
+    it('can run a simple eval with Gemini CLI', async () => {
+      // Create a simple test fixture
+      const fixtureDir = join(TEST_DIR, 'simple-eval-gemini');
+      mkdirSync(join(fixtureDir, 'src'), { recursive: true });
+
+      writeFileSync(
+        join(fixtureDir, 'PROMPT.md'),
+        'Add a function called greet that returns "Hello from Gemini!"'
+      );
+      writeFileSync(
+        join(fixtureDir, 'EVAL.ts'),
+        `
+import { test, expect } from 'vitest';
+import { readFileSync } from 'fs';
+
+test('greet exists', () => {
+  const content = readFileSync('src/index.ts', 'utf-8');
+  expect(content).toContain('greet');
+});
+`
+      );
+      writeFileSync(
+        join(fixtureDir, 'package.json'),
+        JSON.stringify({
+          name: 'simple-eval-gemini',
+          type: 'module',
+          scripts: { build: 'tsc' },
+          devDependencies: { typescript: '^5.0.0', vitest: '^2.1.0' },
+        })
+      );
+      writeFileSync(
+        join(fixtureDir, 'tsconfig.json'),
+        JSON.stringify({
+          compilerOptions: {
+            target: 'ES2020',
+            module: 'ESNext',
+            moduleResolution: 'bundler',
+            outDir: 'dist',
+          },
+          include: ['src'],
+        })
+      );
+      writeFileSync(join(fixtureDir, 'src/index.ts'), '// TODO: implement');
+
+      const fixture = loadFixture(TEST_DIR, 'simple-eval-gemini');
+
+      const result = await runSingleEval(fixture, {
+        agent: 'gemini',
+        model: 'gemini-3-pro-preview',
+        timeout: 180,
+        apiKey: process.env.GEMINI_API_KEY!,
+        scripts: ['build'],
+      });
+
+      // Verify result structure
+      expect(result.result.duration).toBeGreaterThan(0);
+      expect(result.result.status).toBeDefined();
+      // Agent must actually succeed - not just return a result
+      if (result.result.status === 'failed') {
+        console.error('Agent failed with error:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
+
+      // Verify output content exists (if available)
+      if (result.outputContent) {
+        expect(typeof result.outputContent).toBe('object');
+      }
+    }, 300000); // 5 minute timeout
+
+    it('verifies Gemini CLI result output structure matches expected format', async () => {
+      // Create a simple test fixture
+      const fixtureDir = join(TEST_DIR, 'result-structure-gemini');
+      mkdirSync(join(fixtureDir, 'src'), { recursive: true });
+
+      writeFileSync(
+        join(fixtureDir, 'PROMPT.md'),
+        'Create a simple hello.ts file that exports a greeting constant.'
+      );
+      writeFileSync(
+        join(fixtureDir, 'EVAL.ts'),
+        `
+import { test, expect } from 'vitest';
+import { readFileSync, existsSync } from 'fs';
+
+test('hello.ts exists', () => {
+  expect(existsSync('src/hello.ts')).toBe(true);
+});
+
+test('contains greeting', () => {
+  const content = readFileSync('src/hello.ts', 'utf-8');
+  expect(content).toContain('greeting');
+});
+`
+      );
+      writeFileSync(
+        join(fixtureDir, 'package.json'),
+        JSON.stringify({
+          name: 'result-structure-gemini',
+          type: 'module',
+          scripts: { build: 'tsc' },
+          devDependencies: { typescript: '^5.0.0', vitest: '^2.1.0' },
+        })
+      );
+      writeFileSync(
+        join(fixtureDir, 'tsconfig.json'),
+        JSON.stringify({
+          compilerOptions: {
+            target: 'ES2020',
+            module: 'ESNext',
+            moduleResolution: 'bundler',
+            outDir: 'dist',
+          },
+          include: ['src'],
+        })
+      );
+
+      const fixture = loadFixture(TEST_DIR, 'result-structure-gemini');
+
+      const result = await runSingleEval(fixture, {
+        agent: 'gemini',
+        model: 'gemini-3-pro-preview',
+        timeout: 180,
+        apiKey: process.env.GEMINI_API_KEY!,
+        scripts: ['build'],
+      });
+
+      // Verify EvalRunData structure
+      expect(result).toHaveProperty('result');
+      expect(result.result).toHaveProperty('status');
+      expect(result.result).toHaveProperty('duration');
+
+      // Verify optional properties have correct types when present
+      if (result.result.error) {
+        expect(typeof result.result.error).toBe('string');
+      }
+
+      // Verify output content structure if present
+      if (result.outputContent) {
+        if (result.outputContent.eval) {
+          expect(typeof result.outputContent.eval).toBe('string');
+        }
+        if (result.outputContent.scripts?.build) {
+          expect(typeof result.outputContent.scripts.build).toBe('string');
+        }
+      }
     }, 300000); // 5 minute timeout
   });
 

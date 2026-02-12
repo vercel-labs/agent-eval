@@ -10,7 +10,8 @@ export type AgentType =
   | 'claude-code'
   | 'vercel-ai-gateway/codex'
   | 'codex'
-  | 'vercel-ai-gateway/opencode';
+  | 'vercel-ai-gateway/opencode'
+  | 'gemini';
 
 /**
  * Model identifier - any string accepted.

@@ -189,3 +189,10 @@ export const OPENAI_DIRECT = {
   baseUrl: 'https://api.openai.com/v1',
   apiKeyEnvVar: 'OPENAI_API_KEY',
 } as const;
+
+/**
+ * Direct API configuration for Google Gemini.
+ */
+export const GEMINI_DIRECT = {
+  apiKeyEnvVar: 'GEMINI_API_KEY',
+} as const;
