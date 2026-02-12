@@ -193,6 +193,7 @@ agent: 'vercel-ai-gateway/opencode'     // OpenCode via AI Gateway
 agent: 'claude-code'  // requires ANTHROPIC_API_KEY
 agent: 'codex'        // requires OPENAI_API_KEY
 agent: 'gemini'       // requires GEMINI_API_KEY
+agent: 'cursor'       // requires CURSOR_API_KEY
 ```
 
 ### Multi-model experiments

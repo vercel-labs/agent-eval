@@ -196,3 +196,10 @@ export const OPENAI_DIRECT = {
 export const GEMINI_DIRECT = {
   apiKeyEnvVar: 'GEMINI_API_KEY',
 } as const;
+
+/**
+ * Direct API configuration for Cursor.
+ */
+export const CURSOR_DIRECT = {
+  apiKeyEnvVar: 'CURSOR_API_KEY',
+} as const;

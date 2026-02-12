@@ -11,7 +11,8 @@ export type AgentType =
   | 'vercel-ai-gateway/codex'
   | 'codex'
   | 'vercel-ai-gateway/opencode'
-  | 'gemini';
+  | 'gemini'
+  | 'cursor';
 
 /**
  * Model identifier - any string accepted.

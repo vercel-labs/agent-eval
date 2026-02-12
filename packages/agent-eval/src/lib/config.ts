@@ -36,6 +36,7 @@ const experimentConfigSchema = z.object({
     'codex',
     'vercel-ai-gateway/opencode',
     'gemini',
+    'cursor',
   ]),
   model: z.union([z.string(), z.array(z.string())]).optional(),
   evals: z
