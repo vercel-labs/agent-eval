@@ -8,6 +8,8 @@ import type { Transcript } from './types.js';
 import { parseClaudeCodeTranscript } from './parsers/claude-code.js';
 import { parseCodexTranscript } from './parsers/codex.js';
 import { parseOpenCodeTranscript } from './parsers/opencode.js';
+import { parseGeminiTranscript } from './parsers/gemini.js';
+import { parseCursorTranscript } from './parsers/cursor.js';
 
 describe('o11y', () => {
   describe('parseTranscript', () => {
@@ -30,6 +32,12 @@ describe('o11y', () => {
 
       const opencodeResult = parseTranscript(claudeTranscript, 'vercel-ai-gateway/opencode');
       expect(opencodeResult.agent).toBe('vercel-ai-gateway/opencode');
+
+      const geminiResult = parseTranscript(claudeTranscript, 'gemini');
+      expect(geminiResult.agent).toBe('gemini');
+
+      const cursorResult = parseTranscript(claudeTranscript, 'cursor');
+      expect(cursorResult.agent).toBe('cursor');
     });
 
     it('returns parseSuccess: false for unsupported agents', () => {
@@ -39,7 +47,7 @@ describe('o11y', () => {
 
       expect(result.parseSuccess).toBe(false);
       expect(result.parseErrors).toContain(
-        'No parser available for agent: unsupported-agent. Supported agents: claude-code, codex, opencode'
+        'No parser available for agent: unsupported-agent. Supported agents: claude-code, codex, opencode, gemini, cursor'
       );
       expect(result.events).toEqual([]);
       expect(result.summary.totalToolCalls).toBe(0);
@@ -237,6 +245,339 @@ describe('o11y', () => {
       expect(events).toHaveLength(1);
       expect(events[0].type).toBe('tool_call');
       expect(events[0].tool?.name).toBe('file_read');
+    });
+  });
+
+  describe('Gemini parser', () => {
+    it('parses tool_use events', () => {
+      const transcript = JSON.stringify({
+        type: 'tool_use',
+        timestamp: 1770529147689,
+        part: {
+          type: 'tool',
+          tool: 'bash',
+          state: {
+            status: 'completed',
+            input: { command: 'ls -R' },
+            output: 'file1.ts\nfile2.ts',
+          },
+        },
+      });
+      const { events } = parseGeminiTranscript(transcript);
+
+      expect(events).toHaveLength(2); // tool_call + tool_result
+      expect(events[0].type).toBe('tool_call');
+      expect(events[0].tool?.name).toBe('shell');
+      expect(events[0].tool?.originalName).toBe('bash');
+      expect(events[1].type).toBe('tool_result');
+      expect(events[1].tool?.success).toBe(true);
+    });
+
+    it('parses text events as assistant messages', () => {
+      const transcript = JSON.stringify({
+        type: 'text',
+        timestamp: 1770529219539,
+        part: { type: 'text', text: 'I have completed the task.' },
+      });
+      const { events } = parseGeminiTranscript(transcript);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('message');
+      expect(events[0].role).toBe('assistant');
+      expect(events[0].content).toBe('I have completed the task.');
+    });
+
+    it('skips step_start and step_finish events', () => {
+      const transcript = [
+        JSON.stringify({ type: 'step_start', timestamp: 1770529147627 }),
+        JSON.stringify({ type: 'step_finish', timestamp: 1770529147699 }),
+      ].join('\n');
+      const { events } = parseGeminiTranscript(transcript);
+
+      expect(events).toHaveLength(0);
+    });
+
+    it('normalizes Gemini tool names', () => {
+      const tools = [
+        { name: 'read', expected: 'file_read' },
+        { name: 'write', expected: 'file_write' },
+        { name: 'edit', expected: 'file_edit' },
+        { name: 'bash', expected: 'shell' },
+        { name: 'glob', expected: 'glob' },
+        { name: 'list_directory', expected: 'list_dir' },
+        { name: 'unknown_tool', expected: 'unknown' },
+      ];
+
+      for (const { name, expected } of tools) {
+        const transcript = JSON.stringify({
+          type: 'tool_use',
+          timestamp: 1770529147689,
+          part: { type: 'tool', tool: name, state: { status: 'pending', input: {} } },
+        });
+        const { events } = parseGeminiTranscript(transcript);
+        expect(events[0].tool?.name).toBe(expected);
+      }
+    });
+
+    it('converts epoch ms timestamps to ISO strings', () => {
+      const transcript = JSON.stringify({
+        type: 'text',
+        timestamp: 1770529219539,
+        part: { type: 'text', text: 'Hello' },
+      });
+      const { events } = parseGeminiTranscript(transcript);
+
+      expect(events[0].timestamp).toBe(new Date(1770529219539).toISOString());
+    });
+
+    it('extracts file paths from tool args', () => {
+      const transcript = JSON.stringify({
+        type: 'tool_use',
+        timestamp: 1770529147689,
+        part: {
+          type: 'tool',
+          tool: 'read',
+          state: { status: 'pending', input: { path: 'src/index.ts' } },
+        },
+      });
+      const { events } = parseGeminiTranscript(transcript);
+
+      expect(events[0].tool?.args?._extractedPath).toBe('src/index.ts');
+    });
+
+    it('extracts commands from shell tool args', () => {
+      const transcript = JSON.stringify({
+        type: 'tool_use',
+        timestamp: 1770529147689,
+        part: {
+          type: 'tool',
+          tool: 'bash',
+          state: { status: 'pending', input: { command: 'npm test' } },
+        },
+      });
+      const { events } = parseGeminiTranscript(transcript);
+
+      expect(events[0].tool?.args?._extractedCommand).toBe('npm test');
+    });
+
+    it('detects shell command failure via exit code', () => {
+      const transcript = JSON.stringify({
+        type: 'tool_use',
+        timestamp: 1770529147689,
+        part: {
+          type: 'tool',
+          tool: 'bash',
+          state: {
+            status: 'completed',
+            input: { command: 'exit 1' },
+            output: '',
+            metadata: { exit: 1 },
+          },
+        },
+      });
+      const { events } = parseGeminiTranscript(transcript);
+
+      const result = events.find((e) => e.type === 'tool_result');
+      expect(result?.tool?.success).toBe(false);
+    });
+  });
+
+  describe('Cursor parser', () => {
+    it('parses tool_call started events', () => {
+      const transcript = JSON.stringify({
+        type: 'tool_call',
+        subtype: 'started',
+        call_id: 'tool_123',
+        tool_call: {
+          readToolCall: {
+            args: { path: 'src/index.ts' },
+          },
+        },
+        timestamp_ms: 1770927682606,
+      });
+      const { events } = parseCursorTranscript(transcript);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('tool_call');
+      expect(events[0].tool?.name).toBe('file_read');
+      expect(events[0].tool?.originalName).toBe('readToolCall');
+    });
+
+    it('parses tool_call completed events as tool_result', () => {
+      const transcript = JSON.stringify({
+        type: 'tool_call',
+        subtype: 'completed',
+        call_id: 'tool_123',
+        tool_call: {
+          readToolCall: {
+            args: { path: 'src/index.ts' },
+            result: { success: { content: 'file contents' } },
+          },
+        },
+        timestamp_ms: 1770927682700,
+      });
+      const { events } = parseCursorTranscript(transcript);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('tool_result');
+      expect(events[0].tool?.success).toBe(true);
+    });
+
+    it('parses assistant messages from content array', () => {
+      const transcript = JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Let me help you.' }],
+        },
+        timestamp_ms: 1770927682606,
+      });
+      const { events } = parseCursorTranscript(transcript);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('message');
+      expect(events[0].role).toBe('assistant');
+      expect(events[0].content).toBe('Let me help you.');
+    });
+
+    it('parses user messages', () => {
+      const transcript = JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Migrate this project.' }],
+        },
+      });
+      const { events } = parseCursorTranscript(transcript);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('message');
+      expect(events[0].role).toBe('user');
+      expect(events[0].content).toBe('Migrate this project.');
+    });
+
+    it('emits thinking only for completed subtype', () => {
+      const transcript = [
+        JSON.stringify({
+          type: 'thinking',
+          subtype: 'delta',
+          text: 'partial thought...',
+          timestamp_ms: 1770927682138,
+        }),
+        JSON.stringify({
+          type: 'thinking',
+          subtype: 'completed',
+          text: 'full thought',
+          timestamp_ms: 1770927682577,
+        }),
+      ].join('\n');
+      const { events } = parseCursorTranscript(transcript);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('thinking');
+    });
+
+    it('skips system and result events', () => {
+      const transcript = [
+        JSON.stringify({ type: 'system', subtype: 'init', model: 'Composer 1.5' }),
+        JSON.stringify({ type: 'result', subtype: 'success', duration_ms: 40784 }),
+      ].join('\n');
+      const { events } = parseCursorTranscript(transcript);
+
+      expect(events).toHaveLength(0);
+    });
+
+    it('normalizes Cursor tool call keys', () => {
+      const tools = [
+        { key: 'readToolCall', expected: 'file_read' },
+        { key: 'editToolCall', expected: 'file_edit' },
+        { key: 'deleteToolCall', expected: 'file_write' },
+        { key: 'lsToolCall', expected: 'list_dir' },
+        { key: 'globToolCall', expected: 'glob' },
+        { key: 'shellToolCall', expected: 'shell' },
+        { key: 'readLintsToolCall', expected: 'unknown' },
+        { key: 'updateTodosToolCall', expected: 'agent_task' },
+      ];
+
+      for (const { key, expected } of tools) {
+        const transcript = JSON.stringify({
+          type: 'tool_call',
+          subtype: 'started',
+          tool_call: { [key]: { args: {} } },
+          timestamp_ms: 1770927682606,
+        });
+        const { events } = parseCursorTranscript(transcript);
+        expect(events[0].tool?.name).toBe(expected);
+      }
+    });
+
+    it('converts timestamp_ms to ISO strings', () => {
+      const transcript = JSON.stringify({
+        type: 'assistant',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'Hi' }] },
+        timestamp_ms: 1770927682606,
+      });
+      const { events } = parseCursorTranscript(transcript);
+
+      expect(events[0].timestamp).toBe(new Date(1770927682606).toISOString());
+    });
+
+    it('extracts file paths from tool args', () => {
+      const transcript = JSON.stringify({
+        type: 'tool_call',
+        subtype: 'started',
+        tool_call: { readToolCall: { args: { path: 'src/utils.ts' } } },
+        timestamp_ms: 1770927682606,
+      });
+      const { events } = parseCursorTranscript(transcript);
+
+      expect(events[0].tool?.args?._extractedPath).toBe('src/utils.ts');
+    });
+
+    it('extracts commands from shell tool args', () => {
+      const transcript = JSON.stringify({
+        type: 'tool_call',
+        subtype: 'started',
+        tool_call: { shellToolCall: { args: { command: 'npm install' } } },
+        timestamp_ms: 1770927682606,
+      });
+      const { events } = parseCursorTranscript(transcript);
+
+      expect(events[0].tool?.args?._extractedCommand).toBe('npm install');
+    });
+
+    it('handles multiline transcripts with mixed events', () => {
+      const transcript = [
+        JSON.stringify({
+          type: 'user',
+          message: { role: 'user', content: [{ type: 'text', text: 'Do something' }] },
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'OK' }] },
+          timestamp_ms: 1770927682606,
+        }),
+        JSON.stringify({
+          type: 'tool_call',
+          subtype: 'started',
+          tool_call: { readToolCall: { args: { path: 'a.ts' } } },
+          timestamp_ms: 1770927682700,
+        }),
+        JSON.stringify({
+          type: 'tool_call',
+          subtype: 'completed',
+          tool_call: { readToolCall: { args: { path: 'a.ts' }, result: { success: {} } } },
+          timestamp_ms: 1770927682800,
+        }),
+      ].join('\n');
+
+      const result = parseTranscript(transcript, 'cursor');
+
+      expect(result.parseSuccess).toBe(true);
+      expect(result.summary.totalTurns).toBe(1);
+      expect(result.summary.toolCalls.file_read).toBe(1);
+      expect(result.summary.totalToolCalls).toBe(1);
+      expect(result.summary.filesRead).toContain('a.ts');
     });
   });
 

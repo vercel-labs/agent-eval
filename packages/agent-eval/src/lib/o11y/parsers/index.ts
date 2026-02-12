@@ -14,6 +14,8 @@ import type {
 import { parseClaudeCodeTranscript } from './claude-code.js';
 import { parseCodexTranscript } from './codex.js';
 import { parseOpenCodeTranscript } from './opencode.js';
+import { parseGeminiTranscript } from './gemini.js';
+import { parseCursorTranscript } from './cursor.js';
 
 /**
  * Supported agent types for parsing.
@@ -23,7 +25,9 @@ export type ParseableAgent =
   | 'claude-code'
   | 'vercel-ai-gateway/codex'
   | 'codex'
-  | 'vercel-ai-gateway/opencode';
+  | 'vercel-ai-gateway/opencode'
+  | 'gemini'
+  | 'cursor';
 
 /**
  * Parser registry mapping agent key patterns to their parsers.
@@ -32,6 +36,8 @@ const AGENT_PARSERS = {
   'claude-code': parseClaudeCodeTranscript,
   'codex': parseCodexTranscript,
   'opencode': parseOpenCodeTranscript,
+  'gemini': parseGeminiTranscript,
+  'cursor': parseCursorTranscript,
 } as const;
 
 /**

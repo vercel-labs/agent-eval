@@ -21,6 +21,22 @@ Configuration should be done through the experiment config file, not environment
 - Do not create standalone test scripts in `/tmp` - they won't have proper module resolution
 - Run integration tests with: `INTEGRATION_TEST=1 npx vitest run src/integration.test.ts --testNamePattern="<pattern>"`
 
+### Adding a New Agent
+
+When adding a new agent to the framework, follow this checklist:
+
+- [ ] Agent implementation in `src/lib/agents/`
+- [ ] Register in `src/lib/agents/index.ts`
+- [ ] Add to `AgentType` in `src/lib/types.ts`
+- [ ] Add to config schema in `src/lib/config.ts`
+- [ ] Add API key config in `src/lib/agents/shared.ts`
+- [ ] Add transcript parser in `src/lib/o11y/parsers/`
+- [ ] Register parser in `src/lib/o11y/parsers/index.ts`
+- [ ] Export parser from `src/lib/o11y/index.ts`
+- [ ] Add parser tests in `src/lib/o11y/o11y.test.ts`
+- [ ] Add integration tests in `src/integration.test.ts`
+- [ ] Update README.md
+
 ### Pull Requests
 
 - Every PR that changes user-facing behavior should update the README
