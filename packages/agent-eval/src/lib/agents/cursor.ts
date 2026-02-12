@@ -25,27 +25,26 @@ import {
 type AnySandbox = SandboxManager | DockerSandboxManager;
 
 /**
- * Extract transcript from Cursor CLI output.
- * Cursor outputs structured information to stdout.
+ * Extract transcript from Cursor CLI stream-json output.
+ * When run with --output-format stream-json, Cursor outputs JSONL (newline-delimited JSON).
  */
 function extractTranscriptFromOutput(output: string): string | undefined {
   if (!output || !output.trim()) {
     return undefined;
   }
 
-  // Cursor CLI output may contain JSON-formatted events
-  // Filter to lines that look like JSON objects
+  // The --output-format stream-json output contains JSON events, one per line
+  // Filter to only include lines that look like JSON objects
   const lines = output.split('\n').filter(line => {
     const trimmed = line.trim();
     return trimmed.startsWith('{') && trimmed.endsWith('}');
   });
 
-  if (lines.length > 0) {
-    return lines.join('\n');
+  if (lines.length === 0) {
+    return undefined;
   }
 
-  // If no JSON output, return the raw output as transcript
-  return output;
+  return lines.join('\n');
 }
 
 /**
@@ -157,13 +156,19 @@ export function createCursorAgent(): Agent {
         await verifyNoTestFiles(sandbox);
 
         // Run Cursor CLI with direct API access
-        // Using --print flag for non-interactive mode (prints to stdout instead of interactive UI)
+        // --print: non-interactive mode (required for scripts/headless)
+        // --force: auto-approve all tool operations
+        // --output-format stream-json: structured JSONL transcript (only works with --print)
         const cursorResult = await sandbox.runCommand(
           'agent',
           [
             options.prompt,
             '--print',
             '--force',
+            '--model',
+            options.model,
+            '--output-format',
+            'stream-json',
           ],
           {
             env: {

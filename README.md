@@ -405,13 +405,15 @@ After each experiment completes, the framework automatically:
 
 Every run requires an API key for the agent and a token for the sandbox. Classifier is optional.
 
-| Variable | Required when | Description |
-|---|---|---|
+| Variable             | Required when                          | Description                                                                                  |
+|----------------------|----------------------------------------|----------------------------------------------------------------------------------------------|
 | `AI_GATEWAY_API_KEY` | `vercel-ai-gateway/` agents or classifier | Vercel AI Gateway key -- required for `vercel-ai-gateway/` agents and failure classification |
-| `ANTHROPIC_API_KEY` | `agent: 'claude-code'` | Direct Anthropic API key |
-| `OPENAI_API_KEY` | `agent: 'codex'` | Direct OpenAI API key |
-| `VERCEL_TOKEN` | Always (pick one) | Vercel personal access token -- for local dev |
-| `VERCEL_OIDC_TOKEN` | Always (pick one) OR for classifier | Vercel OIDC token -- for CI/CD pipelines, or enables classifier without `AI_GATEWAY_API_KEY` |
+| `ANTHROPIC_API_KEY`  | `agent: 'claude-code'`                 | Direct Anthropic API key                                                                     |
+| `OPENAI_API_KEY`     | `agent: 'codex'`                       | Direct OpenAI API key                                                                        |
+| `GEMINI_API_KEY`     | `agent: 'gemini'`                      | Direct Google Gemini API key                                                                 |
+| `CURSOR_API_KEY`     | `agent: 'cursor'`                      | Direct Cursor API key                                                                        |
+| `VERCEL_TOKEN`       | Always (pick one)                      | Vercel personal access token -- for local dev                                                |
+| `VERCEL_OIDC_TOKEN`  | Always (pick one) OR for classifier    | Vercel OIDC token -- for CI/CD pipelines, or enables classifier without `AI_GATEWAY_API_KEY` |
 
 The **classifier is optional**: if neither `AI_GATEWAY_API_KEY` nor `VERCEL_OIDC_TOKEN` is set, failure classification is skipped and all results are preserved as-is. Set either key to enable the classifier, which automatically identifies and removes non-model failures (infrastructure errors, rate limits, timeouts).
 
