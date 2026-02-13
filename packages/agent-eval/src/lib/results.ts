@@ -273,13 +273,6 @@ export function saveResults(
 				Object.keys(runData.generatedFiles).length > 0;
 			const hasDeletedFiles =
 				runData.deletedFiles && runData.deletedFiles.length > 0;
-			console.log({
-				copyFiles,
-				hasGeneratedFiles,
-				hasDeletedFiles,
-				options,
-				runData,
-			});
 			if (
 				copyFiles &&
 				copyFiles !== 'none' &&
