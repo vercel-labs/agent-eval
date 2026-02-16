@@ -1,6 +1,6 @@
 /**
  * Experiment runner - orchestrates running evals against agent.
- * All evals and attempts run concurrently for maximum throughput.
+ * All attempts run concurrently with per-attempt retry on 429 rate limiting.
  * With earlyExit, in-flight attempts are aborted when one passes.
  */
 
@@ -192,8 +192,32 @@ export async function runExperiment(
     };
   };
 
-  // Run all attempts concurrently
-  const results = await Promise.all(attempts.map(runAttempt));
+  // Retry wrapper: if an attempt fails due to 429 rate limiting, retry with exponential backoff
+  const MAX_RETRIES = 5;
+  const INITIAL_BACKOFF_MS = 5_000;
+
+  const runAttemptWithRetry = async (attempt: EvalAttempt): Promise<AttemptResult> => {
+    for (let retry = 0; ; retry++) {
+      const result = await runAttempt(attempt);
+
+      const is429 =
+        !result.aborted &&
+        result.runData.result.status === 'failed' &&
+        result.runData.result.error &&
+        /429|too many requests|rate limit/i.test(result.runData.result.error);
+
+      if (!is429 || retry >= MAX_RETRIES) {
+        return result;
+      }
+
+      const backoff = INITIAL_BACKOFF_MS * Math.pow(2, retry);
+      const jitter = Math.random() * backoff * 0.5;
+      await new Promise((resolve) => setTimeout(resolve, backoff + jitter));
+    }
+  };
+
+  // Run all attempts concurrently — 429s are handled by per-attempt retry with backoff
+  const results = await Promise.all(attempts.map(runAttemptWithRetry));
 
   // Group results by fixture, excluding aborted results
   const resultsByFixture = new Map<string, AttemptResult[]>();
