@@ -1,6 +1,7 @@
 /**
  * Experiment runner - orchestrates running evals against agent.
- * All attempts run concurrently with per-attempt retry on 429 rate limiting.
+ * Concurrency is controlled via an optional ConcurrencyLimiter shared across experiments.
+ * 429 rate-limit errors are retried with exponential backoff.
  * With earlyExit, in-flight attempts are aborted when one passes.
  */
 
@@ -20,6 +21,54 @@ import {
   createExperimentResults,
   saveResults,
 } from './results.js';
+
+/**
+ * Rate-limits how many operations can START within a time window.
+ * Once started, operations run freely with no concurrency limit.
+ * Create one instance and share it across experiments to control global start rate.
+ */
+export class StartRateLimiter {
+  private queue: (() => void)[] = [];
+  private started = 0;
+  private timer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(
+    private readonly startsPerWindow: number,
+    private readonly windowMs: number,
+  ) {}
+
+  /**
+   * Wait for permission to start, then return immediately.
+   * The operation runs freely after this resolves.
+   */
+  async waitToStart(): Promise<void> {
+    if (this.started < this.startsPerWindow) {
+      this.started++;
+      this.ensureTimer();
+      return;
+    }
+    return new Promise<void>((resolve) => {
+      this.queue.push(resolve);
+    });
+  }
+
+  private ensureTimer(): void {
+    if (this.timer) return;
+    this.timer = setInterval(() => {
+      this.started = 0;
+      // Drain as many queued starters as the window allows
+      while (this.queue.length > 0 && this.started < this.startsPerWindow) {
+        this.started++;
+        this.queue.shift()!();
+      }
+      // Stop the timer if nothing is waiting
+      if (this.queue.length === 0) {
+        clearInterval(this.timer!);
+        this.timer = null;
+      }
+    }, this.windowMs);
+  }
+}
 
 /**
  * Options for running an experiment.
@@ -43,6 +92,8 @@ export interface RunExperimentOptions {
   verbose?: boolean;
   /** Whether this is a smoke test run */
   smoke?: boolean;
+  /** Shared rate limiter to control how many sandbox runs start per time window */
+  rateLimiter?: StartRateLimiter;
 }
 
 /**
@@ -70,7 +121,7 @@ interface AttemptResult {
 export async function runExperiment(
   options: RunExperimentOptions
 ): Promise<ExperimentResults> {
-  const { config, fixtures, apiKey, resultsDir, experimentName, fingerprints, onProgress, smoke } = options;
+  const { config, fixtures, apiKey, resultsDir, experimentName, fingerprints, onProgress, smoke, rateLimiter } = options;
   const startedAt = new Date();
 
   // Get the agent from registry
@@ -114,8 +165,6 @@ export async function runExperiment(
         aborted: true,
       };
     }
-
-    emit({ type: 'eval:start', evalName: fixture.name, runNumber: runIndex + 1, totalRuns: config.runs });
 
     const timeoutMs = config.timeout * 1000;
     const startTime = Date.now();
@@ -177,14 +226,6 @@ export async function runExperiment(
 
     const runData = agentResultToEvalRunData(agentResult);
 
-    emit({ type: 'eval:complete', evalName: fixture.name, runNumber: runIndex + 1, totalRuns: config.runs, result: runData.result });
-
-    // If this attempt passed and earlyExit is enabled, abort remaining attempts
-    if (config.earlyExit && runData.result.status === 'passed') {
-      emit({ type: 'experiment:earlyExit', evalName: fixture.name, runNumber: runIndex + 1 });
-      controller.abort();
-    }
-
     return {
       fixtureName: fixture.name,
       runIndex,
@@ -192,21 +233,22 @@ export async function runExperiment(
     };
   };
 
-  // Retry wrapper: if an attempt fails due to 429 rate limiting, retry with exponential backoff
+  // Retry wrapper: if an attempt fails suspiciously fast (< 5s), it's likely an infra issue (429, etc.)
+  // Real evals take minutes, so a sub-5s failure is always anomalous.
   const MAX_RETRIES = 5;
   const INITIAL_BACKOFF_MS = 5_000;
+  const ANOMALY_THRESHOLD_S = 5;
 
   const runAttemptWithRetry = async (attempt: EvalAttempt): Promise<AttemptResult> => {
     for (let retry = 0; ; retry++) {
       const result = await runAttempt(attempt);
 
-      const is429 =
+      const isSuspiciouslyFast =
         !result.aborted &&
         result.runData.result.status === 'failed' &&
-        result.runData.result.error &&
-        /429|too many requests|rate limit/i.test(result.runData.result.error);
+        result.runData.result.duration < ANOMALY_THRESHOLD_S;
 
-      if (!is429 || retry >= MAX_RETRIES) {
+      if (!isSuspiciouslyFast || retry >= MAX_RETRIES) {
         return result;
       }
 
@@ -216,8 +258,31 @@ export async function runExperiment(
     }
   };
 
-  // Run all attempts concurrently — 429s are handled by per-attempt retry with backoff
-  const results = await Promise.all(attempts.map(runAttemptWithRetry));
+  // Run all attempts with rate-limited starts, 429 retry, and progress events
+  const runOne = async (attempt: EvalAttempt): Promise<AttemptResult> => {
+    // Wait for rate limiter before starting (if provided)
+    if (rateLimiter) {
+      await rateLimiter.waitToStart();
+    }
+
+    emit({ type: 'eval:start', evalName: attempt.fixture.name, runNumber: attempt.runIndex + 1, totalRuns: config.runs });
+
+    const result = await runAttemptWithRetry(attempt);
+
+    if (!result.aborted) {
+      emit({ type: 'eval:complete', evalName: attempt.fixture.name, runNumber: attempt.runIndex + 1, totalRuns: config.runs, result: result.runData.result });
+
+      // If this attempt passed and earlyExit is enabled, abort remaining attempts
+      if (config.earlyExit && result.runData.result.status === 'passed') {
+        emit({ type: 'experiment:earlyExit', evalName: attempt.fixture.name, runNumber: attempt.runIndex + 1 });
+        abortControllers.get(attempt.fixture.name)!.abort();
+      }
+    }
+
+    return result;
+  };
+
+  const results = await Promise.all(attempts.map(runOne));
 
   // Group results by fixture, excluding aborted results
   const resultsByFixture = new Map<string, AttemptResult[]>();

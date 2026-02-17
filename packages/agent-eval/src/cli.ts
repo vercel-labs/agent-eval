@@ -12,7 +12,7 @@ import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 import { loadConfig, resolveEvalNames } from './lib/config.js';
 import { loadAllFixtures } from './lib/fixture.js';
-import { runExperiment } from './lib/runner.js';
+import { runExperiment, StartRateLimiter } from './lib/runner.js';
 import { Dashboard, createConsoleProgressHandler } from './lib/dashboard.js';
 import type { ProgressEvent, Classification } from './lib/types.js';
 import { initProject, getPostInitInstructions } from './lib/init.js';
@@ -439,6 +439,9 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
         );
       }
 
+      // Rate-limit sandbox starts across all experiments to avoid 429s (20 starts per 2 seconds)
+      const rateLimiter = new StartRateLimiter(20, 2_000);
+
       let allPassed = true;
       const experimentPromises = selectedFiles.map(async (file) => {
         const configPath = resolve(experimentsDir, file);
@@ -528,6 +531,7 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
               fingerprints,
               smoke: options.smoke,
               onProgress,
+              rateLimiter,
             });
 
             // Classify failures (only if classifier is enabled)

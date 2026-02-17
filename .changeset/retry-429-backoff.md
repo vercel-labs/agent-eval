@@ -2,4 +2,4 @@
 "@vercel/agent-eval": patch
 ---
 
-Retry eval attempts on 429 rate limiting with exponential backoff
+Add StartRateLimiter to throttle sandbox starts and retry anomalously fast failures with exponential backoff

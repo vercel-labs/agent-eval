@@ -108,7 +108,7 @@ export { housekeep } from './lib/housekeeping.js';
 
 // Re-export runner utilities
 export type { RunExperimentOptions } from './lib/runner.js';
-export { runExperiment, runSingleEval } from './lib/runner.js';
+export { runExperiment, runSingleEval, StartRateLimiter } from './lib/runner.js';
 
 // Re-export dashboard utilities
 export { Dashboard, createConsoleProgressHandler } from './lib/dashboard.js';
