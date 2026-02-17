@@ -55,6 +55,22 @@ describe('isNonModelFailure', () => {
     expect(isNonModelFailure(tempDir)).toBe(false);
   });
 
+  it('returns true for eval failure', () => {
+    writeFileSync(
+      join(tempDir, 'classification.json'),
+      JSON.stringify({ failureType: 'eval', failureReason: 'Flaky assertions' })
+    );
+    expect(isNonModelFailure(tempDir)).toBe(true);
+  });
+
+  it('returns false for acknowledged eval failure', () => {
+    writeFileSync(
+      join(tempDir, 'classification.json'),
+      JSON.stringify({ failureType: 'eval', failureReason: 'Flaky assertions', acknowledged: true })
+    );
+    expect(isNonModelFailure(tempDir)).toBe(false);
+  });
+
   it('returns false when no classification.json exists', () => {
     expect(isNonModelFailure(tempDir)).toBe(false);
   });

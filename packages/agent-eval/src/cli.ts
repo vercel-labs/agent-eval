@@ -558,7 +558,7 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
                     classifications.set(evalSummary.name, classification);
 
                     if (!dashboard) {
-                      const icon = { model: '  ', infra: '  ', timeout: '  ' }[classification.failureType];
+                      const icon = { model: '  ', infra: '  ', timeout: '  ', eval: '  ' }[classification.failureType];
                       console.log(chalk.gray(`  ${icon} ${evalSummary.name}: ${classification.failureType} — ${classification.failureReason}`));
                     }
 
