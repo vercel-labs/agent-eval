@@ -246,7 +246,8 @@ export async function runExperiment(
       const isSuspiciouslyFast =
         !result.aborted &&
         result.runData.result.status === 'failed' &&
-        result.runData.result.duration < ANOMALY_THRESHOLD_S;
+        result.runData.result.duration < ANOMALY_THRESHOLD_S &&
+        !result.runData.result.error?.includes('timed out');
 
       if (!isSuspiciouslyFast || retry >= MAX_RETRIES) {
         return result;

@@ -172,7 +172,7 @@ describe('runExperiment', () => {
         run: vi.fn().mockResolvedValue({
           success: false,
           output: 'Agent output',
-          duration: 1000,
+          duration: 6000,
           error: 'Test failed',
           testResult: { success: false, output: 'Test failed' },
           scriptsResults: {},
@@ -433,7 +433,7 @@ describe('runExperiment', () => {
             return {
               success: true,
               output: 'Agent output',
-              duration: 1000,
+              duration: 6000,
               testResult: { success: true, output: 'Test passed' },
               scriptsResults: {},
             };
@@ -442,7 +442,7 @@ describe('runExperiment', () => {
             return {
               success,
               output: 'Agent output',
-              duration: 1000,
+              duration: 6000,
               error: success ? undefined : 'Test failed',
               testResult: { success, output: success ? 'Test passed' : 'Test failed' },
               scriptsResults: {},
