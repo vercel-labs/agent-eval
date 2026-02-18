@@ -552,9 +552,6 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
                 let classifyingDone = 0;
                 const classifyingTotal = failedEvals.length;
 
-                if (dashboard) {
-                  dashboard.setClassifyingProgress(experimentName, 0, classifyingTotal);
-                }
 
                 await Promise.all(
                   failedEvals.map((evalSummary) =>
@@ -575,7 +572,7 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
                         classifications.set(evalSummary.name, classification);
 
                         if (!dashboard) {
-                          const icon = { model: '  ', infra: '  ', timeout: '  ', eval: '  ' }[classification.failureType];
+                          const icon = { model: '  ', infra: '  ', timeout: '  ' }[classification.failureType];
                           console.log(chalk.gray(`  ${icon} ${evalSummary.name}: ${classification.failureType} — ${classification.failureReason}`));
                         }
 

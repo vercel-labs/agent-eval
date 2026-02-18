@@ -382,7 +382,6 @@ When evals fail, the framework optionally classifies each failure as one of:
 - **model** -- the agent tried but wrote incorrect code
 - **infra** -- infrastructure broke (API errors, rate limits, crashes)
 - **timeout** -- the run hit its time limit
-- **eval** -- the eval test itself is flawed (wrong assertions, overly brittle checks) and the model's code was reasonable
 
 Classification uses Claude Sonnet 4.5 via the Vercel AI Gateway with sandboxed read-only tools to inspect result files. This requires `AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN` to be set.
 
@@ -393,7 +392,7 @@ Classification uses Claude Sonnet 4.5 via the Vercel AI Gateway with sandboxed r
 
 ### Auto-retry
 
-When the classifier is enabled and ALL runs of an eval fail with non-model failures (infra, timeout, or eval), the framework automatically retries once. This handles transient issues like rate limits or API outages without wasting retries on genuine model failures.
+When the classifier is enabled and ALL runs of an eval fail with non-model failures (infra or timeout), the framework automatically retries once. This handles transient issues like rate limits or API outages without wasting retries on genuine model failures.
 
 ## Housekeeping
 

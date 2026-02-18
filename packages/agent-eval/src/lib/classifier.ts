@@ -5,7 +5,6 @@
  * - "model" — the model tried but wrote incorrect code
  * - "infra" — infrastructure broke (API errors, rate limits, crashes)
  * - "timeout" — the run hit its time limit
- * - "eval" — the eval test itself is flawed
  *
  * Uses AI classification via the Vercel AI Gateway. Requires AI_GATEWAY_API_KEY or VERCEL_OIDC_TOKEN.
  */
@@ -33,7 +32,6 @@ Classify into one of:
 - "model" — the model tried but wrote incorrect code
 - "infra" — infrastructure broke (API errors, rate limits, crashes) and the model never got to do real work
 - "timeout" — the run hit its time limit
-- "eval" — the eval test itself is flawed (wrong assertions, doesn't account for valid solutions, overly brittle checks) and the model's code was reasonable
 
 The eval result directory contains run-1/ through run-N/ subdirectories (one per attempt, N depends on config), plus a summary.json. Each run directory has:
 - result.json — status, error, duration
@@ -220,7 +218,7 @@ export async function classifyWithAI(
       description: 'Submit your final classification. Call this once you have enough evidence.',
       inputSchema: z.object({
         failureType: z
-          .enum(['model', 'infra', 'timeout', 'eval'])
+          .enum(['model', 'infra', 'timeout'])
           .describe('The failure category'),
         failureReason: z
           .string()

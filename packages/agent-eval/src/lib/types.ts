@@ -228,7 +228,7 @@ export interface EvalSummary {
 /**
  * Failure classification for a failed eval run.
  */
-export type FailureType = 'model' | 'infra' | 'timeout' | 'eval';
+export type FailureType = 'model' | 'infra' | 'timeout';
 
 /**
  * Classification result for a failed eval.
