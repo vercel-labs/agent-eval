@@ -235,7 +235,7 @@ export async function classifyWithAI(
 
   try {
     await generateText({
-      model: gateway('anthropic/claude-sonnet-4-5'),
+      model: gateway('anthropic/claude-sonnet-4-6'),
       system: CLASSIFIER_SYSTEM_PROMPT,
       prompt: `Classify the failure for eval "${evalName}" (experiment: ${experimentName}). Use the exploration tools to investigate, then call classify() with your verdict.`,
       tools: allTools,
