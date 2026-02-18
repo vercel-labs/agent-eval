@@ -1,5 +1,17 @@
 # @vercel/agent-eval
 
+## 0.8.0
+
+### Minor Changes
+
+- [#81](https://github.com/vercel-labs/agent-eval/pull/81) [`330ec5e`](https://github.com/vercel-labs/agent-eval/commit/330ec5e8b727086cac1bc44c990ab25f6a905b31) Thanks [@gaojude](https://github.com/gaojude)! - Switch classifier model to Claude Haiku 4.5 and parallelize classification with p-limit (concurrency 4)
+
+### Patch Changes
+
+- [#80](https://github.com/vercel-labs/agent-eval/pull/80) [`620fb47`](https://github.com/vercel-labs/agent-eval/commit/620fb473ade4ca354c06f51f93d3b13f2fff32af) Thanks [@gaojude](https://github.com/gaojude)! - Fix `run-all` subcommand options (`--dry`, `--force`, `--smoke`, `--ack-failures`) being silently intercepted by the parent Commander.js program
+
+- [#77](https://github.com/vercel-labs/agent-eval/pull/77) [`c8bcde3`](https://github.com/vercel-labs/agent-eval/commit/c8bcde36d11fa7f2f9999de72b47d6d83eaf42c3) Thanks [@gaojude](https://github.com/gaojude)! - Add StartRateLimiter to throttle sandbox starts and retry anomalously fast failures with exponential backoff
+
 ## 0.7.1
 
 ### Patch Changes
