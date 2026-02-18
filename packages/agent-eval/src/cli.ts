@@ -34,6 +34,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-8'));
 
 const program = new Command();
+program.enablePositionalOptions();
 
 program
   .name('@vercel/agent-eval')
