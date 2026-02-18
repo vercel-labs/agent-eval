@@ -24,6 +24,7 @@ import { isClassifierEnabled, classifyFailure } from './lib/classifier.js';
 import { housekeep } from './lib/housekeeping.js';
 import { spawnSync } from 'child_process';
 import { minimatch } from 'minimatch';
+import pLimit from 'p-limit';
 
 // Load environment variables (.env.local first, then .env as fallback)
 dotenvConfig({ path: '.env.local' });
@@ -547,40 +548,57 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
 
               if (failedEvals.length > 0 && !options.smoke) {
                 const timestamp = results.startedAt.replace(/:/g, '-');
+                const classifyLimit = pLimit(4);
+                let classifyingDone = 0;
+                const classifyingTotal = failedEvals.length;
 
-                for (const evalSummary of failedEvals) {
-                  const evalResultDir = resolve(resultsDir, experimentName, timestamp, evalSummary.name);
-                  const classification = await classifyFailure(
-                    evalResultDir,
-                    evalSummary.name,
-                    experimentName
-                  );
-                  if (classification) {
-                    classifications.set(evalSummary.name, classification);
-
-                    if (!dashboard) {
-                      const icon = { model: '  ', infra: '  ', timeout: '  ', eval: '  ' }[classification.failureType];
-                      console.log(chalk.gray(`  ${icon} ${evalSummary.name}: ${classification.failureType} — ${classification.failureReason}`));
-                    }
-
-                    if (classification.failureType !== 'model') {
-                      if (options.ackFailures) {
-                        classification.acknowledged = true;
-                        const classificationPath = resolve(evalResultDir, 'classification.json');
-                        writeFileSync(classificationPath, JSON.stringify(classification, null, 2));
-                        if (!dashboard) {
-                          console.log(chalk.yellow(`  ✓ Acknowledged ${evalSummary.name} (${classification.failureType} failure — kept as final result)`));
-                        }
-                      } else {
-                        rmSync(evalResultDir, { recursive: true });
-                        if (!dashboard) {
-                          console.log(chalk.gray(`  🗑️  Removed ${evalSummary.name} (${classification.failureType} failure)`));
-                        }
-                        hasNonModelFailures = true;
-                      }
-                    }
-                  }
+                if (dashboard) {
+                  dashboard.setClassifyingProgress(experimentName, 0, classifyingTotal);
                 }
+
+                await Promise.all(
+                  failedEvals.map((evalSummary) =>
+                    classifyLimit(async () => {
+                      const evalResultDir = resolve(resultsDir, experimentName, timestamp, evalSummary.name);
+                      const classification = await classifyFailure(
+                        evalResultDir,
+                        evalSummary.name,
+                        experimentName
+                      );
+
+                      classifyingDone++;
+                      if (dashboard) {
+                        dashboard.setClassifyingProgress(experimentName, classifyingDone, classifyingTotal);
+                      }
+
+                      if (classification) {
+                        classifications.set(evalSummary.name, classification);
+
+                        if (!dashboard) {
+                          const icon = { model: '  ', infra: '  ', timeout: '  ', eval: '  ' }[classification.failureType];
+                          console.log(chalk.gray(`  ${icon} ${evalSummary.name}: ${classification.failureType} — ${classification.failureReason}`));
+                        }
+
+                        if (classification.failureType !== 'model') {
+                          if (options.ackFailures) {
+                            classification.acknowledged = true;
+                            const classificationPath = resolve(evalResultDir, 'classification.json');
+                            writeFileSync(classificationPath, JSON.stringify(classification, null, 2));
+                            if (!dashboard) {
+                              console.log(chalk.yellow(`  ✓ Acknowledged ${evalSummary.name} (${classification.failureType} failure — kept as final result)`));
+                            }
+                          } else {
+                            rmSync(evalResultDir, { recursive: true });
+                            if (!dashboard) {
+                              console.log(chalk.gray(`  🗑️  Removed ${evalSummary.name} (${classification.failureType} failure)`));
+                            }
+                            hasNonModelFailures = true;
+                          }
+                        }
+                      }
+                    })
+                  )
+                );
 
                 if (hasNonModelFailures && !dashboard) {
                   console.log(chalk.yellow(`\n  To keep non-model failures as final results, re-run with --ack-failures`));

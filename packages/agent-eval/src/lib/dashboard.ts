@@ -36,6 +36,9 @@ interface ExperimentState {
   activeEvals: Set<string>;
   /** Recently completed eval results (kept for display, max 3) */
   recentResults: Array<{ name: string; status: 'passed' | 'failed' }>;
+  /** Classification progress counters */
+  classifyingDone: number;
+  classifyingTotal: number;
 }
 
 /**
@@ -60,6 +63,8 @@ export class Dashboard {
       phase: 'waiting',
       activeEvals: new Set(),
       recentResults: [],
+      classifyingDone: 0,
+      classifyingTotal: 0,
     };
     this.experiments.set(name, state);
     this.experimentOrder.push(name);
@@ -96,6 +101,14 @@ export class Dashboard {
     const state = this.experiments.get(experimentName);
     if (state) {
       state.phase = phase;
+    }
+  }
+
+  setClassifyingProgress(experimentName: string, done: number, total: number) {
+    const state = this.experiments.get(experimentName);
+    if (state) {
+      state.classifyingDone = done;
+      state.classifyingTotal = total;
     }
   }
 
@@ -179,7 +192,10 @@ function renderExperimentLine(state: ExperimentState, nameWidth: number): string
   if (state.phase === 'classifying') {
     const bar = renderBar(state.totalEvals, state.totalEvals);
     const stats = renderStats(state);
-    return ` ${chalk.cyan(nameCol)} ${bar}  ${stats} ${chalk.cyan('\u00b7')} ${chalk.cyan('classifying\u2026')}`;
+    const classifyLabel = state.classifyingTotal > 0
+      ? `classifying ${state.classifyingDone}/${state.classifyingTotal}\u2026`
+      : 'classifying\u2026';
+    return ` ${chalk.cyan(nameCol)} ${bar}  ${stats} ${chalk.cyan('\u00b7')} ${chalk.cyan(classifyLabel)}`;
   }
 
   const bar = renderBar(state.completedEvals, state.totalEvals);

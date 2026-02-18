@@ -1,5 +1,5 @@
 ---
-"@vercel/agent-eval": patch
+"@vercel/agent-eval": minor
 ---
 
-Upgrade classifier model from Claude Sonnet 4.5 to Claude Sonnet 4.6
+Upgrade classifier model to Claude Sonnet 4.6 and parallelize classification with p-limit (concurrency 4)
