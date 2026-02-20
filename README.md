@@ -55,8 +55,9 @@ The argument is the experiment filename without `.ts`. This resolves to `experim
 
 | Flag | Description |
 |------|-------------|
+| `--dir <path>` | Directory where to look for evals (default: `evals/` relative to project). |
 | `--dry` | Preview what would run without executing. No API calls, no cost. |
-| `--smoke` | Quick setup verification. Picks the first eval alphabetically, runs once per model. |
+| `--smoke [name]` | Quick setup verification: run one eval, one run per model. Optionally specify eval folder name (default: first alphabetically). |
 | `--force` | Ignore cached fingerprints and re-run everything. Only applies when running all experiments. |
 
 Flags work with both modes:
@@ -64,8 +65,9 @@ Flags work with both modes:
 ```bash
 npx @vercel/agent-eval --dry          # preview all experiments
 npx @vercel/agent-eval cc --dry       # preview a single experiment
-npx @vercel/agent-eval --smoke        # smoke test all experiments
-npx @vercel/agent-eval cc --smoke     # smoke test one experiment
+npx @vercel/agent-eval --smoke        # smoke test all experiments (first eval alphabetically)
+npx @vercel/agent-eval cc --smoke=my-eval   # smoke test using a specific eval folder
+npx @vercel/agent-eval cc --dir my-evals     # run using evals from my-evals/ instead of evals/
 ```
 
 ### Other commands

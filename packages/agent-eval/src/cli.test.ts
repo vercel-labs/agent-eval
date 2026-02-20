@@ -134,6 +134,77 @@ describe('CLI', () => {
       expect(result.exitCode).toBe(0);
     });
 
+    it('--smoke=name runs the specified eval folder', () => {
+      const projectDir = join(TEST_DIR, 'smoke-name-project');
+      const experimentsDir = join(projectDir, 'experiments');
+      mkdirSync(experimentsDir, { recursive: true });
+
+      const configContent = `export default { agent: 'claude-code' };`;
+      writeFileSync(join(experimentsDir, 'cc.ts'), configContent);
+
+      const evalsDir = join(projectDir, 'evals');
+      mkdirSync(evalsDir);
+
+      for (const evalName of ['beta-eval', 'alpha-eval']) {
+        const fixture = join(evalsDir, evalName);
+        mkdirSync(fixture);
+        writeFileSync(join(fixture, 'PROMPT.md'), 'Test task');
+        writeFileSync(join(fixture, 'EVAL.ts'), 'test code');
+        writeFileSync(join(fixture, 'package.json'), JSON.stringify({ type: 'module' }));
+      }
+
+      const result = runCli(['cc', '--smoke=beta-eval', '--dry'], projectDir);
+      expect(result.stdout).toContain('SMOKE TEST');
+      expect(result.stdout).toContain('beta-eval');
+      expect(result.stdout).not.toContain('alpha-eval');
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('--smoke=invalid-name exits with error', () => {
+      const projectDir = join(TEST_DIR, 'smoke-invalid-project');
+      const experimentsDir = join(projectDir, 'experiments');
+      mkdirSync(experimentsDir, { recursive: true });
+
+      writeFileSync(join(experimentsDir, 'cc.ts'), `export default { agent: 'claude-code' };`);
+
+      const evalsDir = join(projectDir, 'evals');
+      mkdirSync(evalsDir);
+      const fixture = join(evalsDir, 'only-eval');
+      mkdirSync(fixture);
+      writeFileSync(join(fixture, 'PROMPT.md'), 'Test');
+      writeFileSync(join(fixture, 'EVAL.ts'), 'test');
+      writeFileSync(join(fixture, 'package.json'), JSON.stringify({ type: 'module' }));
+
+      const result = runCli(['cc', '--smoke=no-such-eval', '--dry'], projectDir);
+      expect(result.stderr).toContain('not found');
+      expect(result.stderr).toContain('no-such-eval');
+      expect(result.exitCode).toBe(1);
+    });
+
+    it('--dir uses custom evals directory', () => {
+      const projectDir = join(TEST_DIR, 'dir-project');
+      const experimentsDir = join(projectDir, 'experiments');
+      mkdirSync(experimentsDir, { recursive: true });
+
+      const configContent = `export default { agent: 'claude-code' };`;
+      writeFileSync(join(experimentsDir, 'cc.ts'), configContent);
+
+      // Custom evals location (not the default evals/)
+      const customEvalsDir = join(projectDir, 'my-evals');
+      mkdirSync(customEvalsDir);
+      const fixture = join(customEvalsDir, 'custom-eval');
+      mkdirSync(fixture);
+      writeFileSync(join(fixture, 'PROMPT.md'), 'Test task');
+      writeFileSync(join(fixture, 'EVAL.ts'), 'test code');
+      writeFileSync(join(fixture, 'package.json'), JSON.stringify({ type: 'module' }));
+
+      const result = runCli(['cc', '--dir', 'my-evals', '--dry'], projectDir);
+      expect(result.stdout).toContain('Discovering evals in');
+      expect(result.stdout).toContain('my-evals');
+      expect(result.stdout).toContain('custom-eval');
+      expect(result.exitCode).toBe(0);
+    });
+
     it('shows error when no valid fixtures found', () => {
       // Create project structure matching convention
       const projectDir = join(TEST_DIR, 'empty-project');

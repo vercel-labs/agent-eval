@@ -59,7 +59,10 @@ function resolveConfigPath(input: string): string {
 /**
  * Run experiment command handler
  */
-async function runExperimentCommand(configInput: string, options: { dry?: boolean; smoke?: boolean }) {
+async function runExperimentCommand(
+  configInput: string,
+  options: { dry?: boolean; smoke?: boolean | string; dir?: string }
+) {
   try {
     const configPath = resolveConfigPath(configInput);
     const absoluteConfigPath = resolve(process.cwd(), configPath);
@@ -72,10 +75,10 @@ async function runExperimentCommand(configInput: string, options: { dry?: boolea
     console.log(chalk.blue(`Loading config from ${configPath}...`));
     const config = await loadConfig(absoluteConfigPath);
 
-    // Discover evals - infer from config file location
+    // Discover evals - use --dir if provided, else infer from config file location
     // Config at project/experiments/foo.ts -> evals at project/evals/
     const projectDir = dirname(dirname(absoluteConfigPath));
-    const evalsDir = resolve(projectDir, 'evals');
+    const evalsDir = options.dir ? resolve(process.cwd(), options.dir) : resolve(projectDir, 'evals');
     if (!existsSync(evalsDir)) {
       console.error(chalk.red(`Evals directory not found: ${evalsDir}`));
       console.error(chalk.gray(`Expected evals/ to be sibling to experiments/ directory`));
@@ -106,8 +109,18 @@ async function runExperimentCommand(configInput: string, options: { dry?: boolea
       process.exit(1);
     }
 
-    // Smoke mode: pick first eval alphabetically, override runs to 1
-    const smokeEvalNames = options.smoke ? [evalNames.sort()[0]] : evalNames;
+    // Smoke mode: use --smoke=name if provided, else first eval alphabetically; override runs to 1
+    const smokeEvalNames = options.smoke
+      ? typeof options.smoke === 'string'
+        ? (() => {
+            if (!availableNames.includes(options.smoke)) {
+              console.error(chalk.red(`Eval "${options.smoke}" not found. Available: ${availableNames.join(', ')}`));
+              process.exit(1);
+            }
+            return [options.smoke];
+          })()
+        : [evalNames.sort()[0]]
+      : evalNames;
     const smokeRuns = options.smoke ? 1 : config.runs;
 
     if (options.smoke) {
@@ -278,11 +291,14 @@ program
  * and classification. Used by both `run-all` subcommand and the default
  * (no-args) invocation.
  */
-async function runAllCommand(experimentArgs: string[], options: { dry?: boolean; force?: boolean; smoke?: boolean; ackFailures?: boolean }) {
+async function runAllCommand(
+  experimentArgs: string[],
+  options: { dry?: boolean; force?: boolean; smoke?: boolean | string; ackFailures?: boolean; dir?: string }
+) {
     try {
       const projectDir = process.cwd();
       const experimentsDir = resolve(projectDir, 'experiments');
-      const evalsDir = resolve(projectDir, 'evals');
+      const evalsDir = options.dir ? resolve(projectDir, options.dir) : resolve(projectDir, 'evals');
       const resultsDir = resolve(projectDir, 'results');
 
       if (!existsSync(experimentsDir)) {
@@ -332,6 +348,12 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
         process.exit(1);
       }
 
+      const availableNames = fixtures.map((f) => f.name);
+      if (options.smoke && typeof options.smoke === 'string' && !availableNames.includes(options.smoke)) {
+        console.error(chalk.red(`Eval "${options.smoke}" not found. Available: ${availableNames.join(', ')}`));
+        process.exit(1);
+      }
+
       // --- Dry run: collect info and print a single summary table ---
       if (options.dry) {
         interface DryRunInfo { name: string; toRun: string[]; cached: number; total: number }
@@ -350,7 +372,6 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
           }
 
           const models = Array.isArray(config.model) ? config.model : [config.model];
-          const availableNames = fixtures.map((f) => f.name);
           let evalNames: string[];
           try {
             evalNames = resolveEvalNames(config.evals, availableNames);
@@ -359,7 +380,7 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
           }
 
           if (options.smoke) {
-            evalNames = [evalNames.sort()[0]];
+            evalNames = typeof options.smoke === 'string' ? [options.smoke] : [evalNames.sort()[0]];
           }
 
           for (const model of models) {
@@ -458,7 +479,6 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
         }
 
         const models = Array.isArray(config.model) ? config.model : [config.model];
-        const availableNames = fixtures.map((f) => f.name);
         let evalNames: string[];
         try {
           evalNames = resolveEvalNames(config.evals, availableNames);
@@ -467,7 +487,7 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
         }
 
         if (options.smoke) {
-          evalNames = [evalNames.sort()[0]];
+          evalNames = typeof options.smoke === 'string' ? [options.smoke] : [evalNames.sort()[0]];
         }
 
         const agent = getAgent(config.agent);
@@ -654,9 +674,10 @@ program
   .command('run-all')
   .description('Discover and run all experiments with fingerprint reuse and classification')
   .argument('[experiments...]', 'Experiment names or glob patterns (default: all)')
+  .option('--dir <path>', 'Directory where to look for evals (default: evals/ relative to project)')
   .option('--dry', 'Preview what would run without executing')
   .option('--force', 'Ignore fingerprints, re-run everything')
-  .option('--smoke', 'Run 1 eval per experiment for sanity checking')
+  .option('--smoke [name]', 'Run 1 eval per experiment for sanity checking; optionally specify eval folder name')
   .option('--ack-failures', 'Keep non-model failures (infra/timeout) as final results instead of deleting them')
   .action(runAllCommand);
 
@@ -669,11 +690,12 @@ program
  */
 program
   .argument('[config]', 'Experiment name (e.g., "cc") or path. Omit to run all experiments.')
+  .option('--dir <path>', 'Directory where to look for evals (default: evals/ relative to project)')
   .option('--dry', 'Preview what would run without executing')
-  .option('--smoke', 'Run a single eval to verify setup (API keys, model IDs, sandbox)')
+  .option('--smoke [name]', 'Run a single eval to verify setup; optionally specify eval folder name (default: first alphabetically)')
   .option('--force', 'Ignore fingerprints, re-run everything (only applies when running all)')
   .option('--ack-failures', 'Keep non-model failures (infra/timeout) as final results instead of deleting them')
-  .action(async (configInput: string | undefined, options: { dry?: boolean; smoke?: boolean; force?: boolean; ackFailures?: boolean }) => {
+  .action(async (configInput: string | undefined, options: { dir?: string; dry?: boolean; smoke?: boolean | string; force?: boolean; ackFailures?: boolean }) => {
     if (!configInput) {
       await runAllCommand([], options);
       return;
