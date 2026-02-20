@@ -61,7 +61,7 @@ function resolveConfigPath(input: string): string {
  */
 async function runExperimentCommand(
   configInput: string,
-  options: { dry?: boolean; smoke?: boolean | string; dir?: string }
+  options: { dry?: boolean; smoke?: boolean | string }
 ) {
   try {
     const configPath = resolveConfigPath(configInput);
@@ -75,10 +75,8 @@ async function runExperimentCommand(
     console.log(chalk.blue(`Loading config from ${configPath}...`));
     const config = await loadConfig(absoluteConfigPath);
 
-    // Discover evals - use --dir if provided, else infer from config file location
-    // Config at project/experiments/foo.ts -> evals at project/evals/
     const projectDir = dirname(dirname(absoluteConfigPath));
-    const evalsDir = options.dir ? resolve(process.cwd(), options.dir) : resolve(projectDir, 'evals');
+    const evalsDir = resolve(projectDir, 'evals');
     if (!existsSync(evalsDir)) {
       console.error(chalk.red(`Evals directory not found: ${evalsDir}`));
       console.error(chalk.gray(`Expected evals/ to be sibling to experiments/ directory`));
@@ -194,7 +192,7 @@ async function runExperimentCommand(
         apiKey,
         resultsDir,
         experimentName,
-        smoke: options.smoke,
+        smoke: !!options.smoke,
         onProgress: createConsoleProgressHandler({
           experimentName,
           model,
@@ -293,12 +291,12 @@ program
  */
 async function runAllCommand(
   experimentArgs: string[],
-  options: { dry?: boolean; force?: boolean; smoke?: boolean | string; ackFailures?: boolean; dir?: string }
+  options: { dry?: boolean; force?: boolean; smoke?: boolean | string; ackFailures?: boolean }
 ) {
     try {
       const projectDir = process.cwd();
       const experimentsDir = resolve(projectDir, 'experiments');
-      const evalsDir = options.dir ? resolve(projectDir, options.dir) : resolve(projectDir, 'evals');
+      const evalsDir = resolve(projectDir, 'evals');
       const resultsDir = resolve(projectDir, 'results');
 
       if (!existsSync(experimentsDir)) {
@@ -306,7 +304,7 @@ async function runAllCommand(
         process.exit(1);
       }
       if (!existsSync(evalsDir)) {
-        console.error(chalk.red('evals/ directory not found'));
+        console.error(chalk.red(`Evals directory not found: ${evalsDir}`));
         process.exit(1);
       }
 
@@ -551,7 +549,7 @@ async function runAllCommand(
               resultsDir,
               experimentName,
               fingerprints,
-              smoke: options.smoke,
+              smoke: !!options.smoke,
               onProgress,
               rateLimiter,
             });
@@ -674,7 +672,6 @@ program
   .command('run-all')
   .description('Discover and run all experiments with fingerprint reuse and classification')
   .argument('[experiments...]', 'Experiment names or glob patterns (default: all)')
-  .option('--dir <path>', 'Directory where to look for evals (default: evals/ relative to project)')
   .option('--dry', 'Preview what would run without executing')
   .option('--force', 'Ignore fingerprints, re-run everything')
   .option('--smoke [name]', 'Run 1 eval per experiment for sanity checking; optionally specify eval folder name')
@@ -690,12 +687,11 @@ program
  */
 program
   .argument('[config]', 'Experiment name (e.g., "cc") or path. Omit to run all experiments.')
-  .option('--dir <path>', 'Directory where to look for evals (default: evals/ relative to project)')
   .option('--dry', 'Preview what would run without executing')
   .option('--smoke [name]', 'Run a single eval to verify setup; optionally specify eval folder name (default: first alphabetically)')
   .option('--force', 'Ignore fingerprints, re-run everything (only applies when running all)')
   .option('--ack-failures', 'Keep non-model failures (infra/timeout) as final results instead of deleting them')
-  .action(async (configInput: string | undefined, options: { dir?: string; dry?: boolean; smoke?: boolean | string; force?: boolean; ackFailures?: boolean }) => {
+  .action(async (configInput: string | undefined, options: { dry?: boolean; smoke?: boolean | string; force?: boolean; ackFailures?: boolean }) => {
     if (!configInput) {
       await runAllCommand([], options);
       return;

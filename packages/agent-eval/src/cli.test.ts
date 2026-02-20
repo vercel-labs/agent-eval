@@ -181,30 +181,6 @@ describe('CLI', () => {
       expect(result.exitCode).toBe(1);
     });
 
-    it('--dir uses custom evals directory', () => {
-      const projectDir = join(TEST_DIR, 'dir-project');
-      const experimentsDir = join(projectDir, 'experiments');
-      mkdirSync(experimentsDir, { recursive: true });
-
-      const configContent = `export default { agent: 'claude-code' };`;
-      writeFileSync(join(experimentsDir, 'cc.ts'), configContent);
-
-      // Custom evals location (not the default evals/)
-      const customEvalsDir = join(projectDir, 'my-evals');
-      mkdirSync(customEvalsDir);
-      const fixture = join(customEvalsDir, 'custom-eval');
-      mkdirSync(fixture);
-      writeFileSync(join(fixture, 'PROMPT.md'), 'Test task');
-      writeFileSync(join(fixture, 'EVAL.ts'), 'test code');
-      writeFileSync(join(fixture, 'package.json'), JSON.stringify({ type: 'module' }));
-
-      const result = runCli(['cc', '--dir', 'my-evals', '--dry'], projectDir);
-      expect(result.stdout).toContain('Discovering evals in');
-      expect(result.stdout).toContain('my-evals');
-      expect(result.stdout).toContain('custom-eval');
-      expect(result.exitCode).toBe(0);
-    });
-
     it('shows error when no valid fixtures found', () => {
       // Create project structure matching convention
       const projectDir = join(TEST_DIR, 'empty-project');
