@@ -24,6 +24,8 @@ export interface AgentRunOptions {
   signal?: AbortSignal;
   /** Sandbox backend to use */
   sandbox?: SandboxBackend | 'auto';
+  /** Called when each expensive phase completes, with its duration in ms */
+  onPhase?: (phase: string, durationMs: number) => void;
 }
 
 /**

@@ -306,6 +306,11 @@ export function createConsoleProgressHandler(context: {
           createProgressDisplay(event.evalName, event.runNumber, event.totalRuns, context)
         );
         break;
+      case 'eval:phase':
+        console.log(
+          chalk.gray(`  ... ${event.phase} (${(event.durationMs / 1000).toFixed(1)}s)`)
+        );
+        break;
       case 'eval:complete':
         console.log(
           formatRunResult(event.evalName, event.runNumber, event.totalRuns, event.result, context)
