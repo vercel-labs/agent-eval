@@ -189,6 +189,15 @@ export async function runExperiment(
         scripts: config.scripts,
         signal: attemptController.signal,
         sandbox: config.sandbox,
+        onPhase: (phase, durationMs) =>
+          emit({
+            type: 'eval:phase',
+            evalName: fixture.name,
+            runNumber: runIndex + 1,
+            totalRuns: config.runs,
+            phase,
+            durationMs,
+          }),
       }),
       new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {

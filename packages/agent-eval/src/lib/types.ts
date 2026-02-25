@@ -247,6 +247,7 @@ export interface Classification {
 export type ProgressEvent =
   | { type: 'experiment:start'; totalAttempts: number; totalEvals: number; totalRuns: number }
   | { type: 'eval:start'; evalName: string; runNumber: number; totalRuns: number }
+  | { type: 'eval:phase'; evalName: string; runNumber: number; totalRuns: number; phase: string; durationMs: number }
   | { type: 'eval:complete'; evalName: string; runNumber: number; totalRuns: number; result: EvalRunResult }
   | { type: 'eval:abort'; evalName: string; runNumber: number }
   | { type: 'experiment:earlyExit'; evalName: string; runNumber: number }

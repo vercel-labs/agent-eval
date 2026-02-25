@@ -115,12 +115,14 @@ export function createClaudeCodeAgent({ useVercelAiGateway }: { useVercelAiGatew
         };
       }
 
+      let phaseStart = Date.now();
       // Create sandbox
       sandbox = await createSandbox({
         timeout: options.timeout,
         runtime: 'node24',
         backend: options.sandbox,
       });
+      options.onPhase?.('Creating sandbox', Date.now() - phaseStart);
 
       // Check for abort after sandbox creation (abort may have fired during create)
       if (aborted) {
@@ -133,16 +135,23 @@ export function createClaudeCodeAgent({ useVercelAiGateway }: { useVercelAiGatew
         };
       }
 
+      phaseStart = Date.now();
       // Upload workspace files (excluding tests)
       await sandbox.uploadFiles(workspaceFiles);
-	  
-	  await initGitAndCommit(sandbox);
+      options.onPhase?.('Uploading files', Date.now() - phaseStart);
+
+      phaseStart = Date.now();
+      await initGitAndCommit(sandbox);
+      options.onPhase?.('Initializing git', Date.now() - phaseStart);
 
       // Run setup function if provided
       if (options.setup) {
+        phaseStart = Date.now();
         await options.setup(sandbox);
+        options.onPhase?.('Running setup', Date.now() - phaseStart);
       }
 
+      phaseStart = Date.now();
       // Install dependencies
       let installResult = await sandbox.runCommand('npm', ['install']);
       if (installResult.exitCode !== 0) {
@@ -162,10 +171,12 @@ export function createClaudeCodeAgent({ useVercelAiGateway }: { useVercelAiGatew
       if (cliInstall.exitCode !== 0) {
         throw new Error(`Claude Code install failed: ${cliInstall.stderr}`);
       }
+      options.onPhase?.('Installing dependencies', Date.now() - phaseStart);
 
       // Verify no test files in sandbox
       await verifyNoTestFiles(sandbox);
 
+      phaseStart = Date.now();
       // Run Claude Code with appropriate authentication
       const claudeResult = await sandbox.runCommand(
         'claude',
@@ -185,6 +196,7 @@ export function createClaudeCodeAgent({ useVercelAiGateway }: { useVercelAiGatew
         }
       );
 
+      options.onPhase?.('Running agent', Date.now() - phaseStart);
       agentOutput = claudeResult.stdout + claudeResult.stderr;
 
       if (claudeResult.exitCode !== 0) {
