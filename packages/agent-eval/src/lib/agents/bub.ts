@@ -157,7 +157,14 @@ export function createBubAgent(): Agent {
         const bubInstall = await sandbox.runShell(
           [
             'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"',
-            'curl -LsSf https://astral.sh/uv/install.sh | sh',
+            `node -e ${shellQuote(
+              "fetch('https://astral.sh/uv/install.sh').then(async (res) => {" +
+              "if (!res.ok) throw new Error(`Failed to fetch uv installer: ${res.status}`);" +
+              "const fs = await import('node:fs/promises');" +
+              "await fs.writeFile('/tmp/uv-install.sh', await res.text());" +
+              "}).catch((err) => { console.error(err); process.exit(1); });"
+            )}`,
+            'sh /tmp/uv-install.sh',
             'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"',
             'uv tool install --from git+https://github.com/bubbuild/bub.git bub',
           ].join(' && ')
