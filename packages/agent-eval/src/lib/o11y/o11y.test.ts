@@ -10,6 +10,7 @@ import { parseCodexTranscript } from './parsers/codex.js';
 import { parseOpenCodeTranscript } from './parsers/opencode.js';
 import { parseGeminiTranscript } from './parsers/gemini.js';
 import { parseCursorTranscript } from './parsers/cursor.js';
+import { parseBubTranscript } from './parsers/bub.js';
 
 describe('o11y', () => {
   describe('parseTranscript', () => {
@@ -38,6 +39,9 @@ describe('o11y', () => {
 
       const cursorResult = parseTranscript(claudeTranscript, 'cursor');
       expect(cursorResult.agent).toBe('cursor');
+
+      const bubResult = parseTranscript(claudeTranscript, 'bub');
+      expect(bubResult.agent).toBe('bub');
     });
 
     it('returns parseSuccess: false for unsupported agents', () => {
@@ -47,7 +51,7 @@ describe('o11y', () => {
 
       expect(result.parseSuccess).toBe(false);
       expect(result.parseErrors).toContain(
-        'No parser available for agent: unsupported-agent. Supported agents: claude-code, codex, opencode, gemini, cursor'
+        'No parser available for agent: unsupported-agent. Supported agents: claude-code, codex, opencode, gemini, cursor, bub'
       );
       expect(result.events).toEqual([]);
       expect(result.summary.totalToolCalls).toBe(0);
@@ -734,6 +738,184 @@ describe('o11y', () => {
       expect(result.summary.toolCalls.file_read).toBe(1);
       expect(result.summary.totalToolCalls).toBe(1);
       expect(result.summary.filesRead).toContain('a.ts');
+    });
+  });
+
+  describe('parseBubTranscript', () => {
+    it('parses basic message events', () => {
+      const transcript = JSON.stringify({
+        type: 'message',
+        role: 'assistant',
+        content: 'Hello from Bub',
+        timestamp: '2024-01-01T00:00:00Z',
+      });
+
+      const { events } = parseBubTranscript(transcript);
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        type: 'message',
+        role: 'assistant',
+        content: 'Hello from Bub',
+        timestamp: '2024-01-01T00:00:00Z',
+      });
+    });
+
+    it('parses tool call events', () => {
+      const transcript = JSON.stringify({
+        type: 'tool_call',
+        tool_name: 'fs.read',
+        args: { path: 'test.ts' },
+        timestamp: '2024-01-01T00:00:00Z',
+      });
+
+      const { events } = parseBubTranscript(transcript);
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        type: 'tool_call',
+        tool: {
+          name: 'file_read',
+          originalName: 'fs.read',
+          args: {
+            path: 'test.ts',
+            _extractedPath: 'test.ts',
+          },
+        },
+        timestamp: '2024-01-01T00:00:00Z',
+      });
+    });
+
+    it('parses tool result events', () => {
+      const transcript = JSON.stringify({
+        type: 'tool_result',
+        success: true,
+        result: 'File content here',
+        timestamp: '2024-01-01T00:00:00Z',
+      });
+
+      const { events } = parseBubTranscript(transcript);
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        type: 'tool_result',
+        tool: {
+          name: 'unknown',
+          originalName: 'unknown',
+          success: true,
+          result: 'File content here',
+        },
+        timestamp: '2024-01-01T00:00:00Z',
+      });
+    });
+
+    it('parses error events', () => {
+      const transcript = JSON.stringify({
+        type: 'error',
+        message: 'Something went wrong',
+        timestamp: '2024-01-01T00:00:00Z',
+      });
+
+      const { events } = parseBubTranscript(transcript);
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        type: 'error',
+        content: 'Something went wrong',
+        timestamp: '2024-01-01T00:00:00Z',
+      });
+    });
+
+    it('maps Bub tool names to standard names', () => {
+      const transcript = [
+        JSON.stringify({ type: 'tool_call', tool_name: 'fs.write', args: { path: 'a.ts' } }),
+        JSON.stringify({ type: 'tool_call', tool_name: 'shell', args: { command: 'ls' } }),
+        JSON.stringify({ type: 'tool_call', tool_name: 'web.fetch', args: { url: 'http://example.com' } }),
+        JSON.stringify({ type: 'tool_call', tool_name: 'unknown_tool', args: {} }),
+      ].join('\n');
+
+      const { events } = parseBubTranscript(transcript);
+
+      expect(events[0].tool?.name).toBe('file_write');
+      expect(events[1].tool?.name).toBe('shell');
+      expect(events[2].tool?.name).toBe('web_fetch');
+      expect(events[3].tool?.name).toBe('unknown');
+    });
+
+    it('handles multiline transcripts', () => {
+      const transcript = [
+        JSON.stringify({ type: 'message', role: 'user', content: 'Do something' }),
+        JSON.stringify({ type: 'message', role: 'assistant', content: 'OK' }),
+        JSON.stringify({ type: 'tool_call', tool_name: 'fs.read', args: { path: 'a.ts' } }),
+        JSON.stringify({ type: 'tool_result', success: true, result: 'content' }),
+      ].join('\n');
+
+      const result = parseTranscript(transcript, 'bub');
+
+      expect(result.parseSuccess).toBe(true);
+      expect(result.summary.totalTurns).toBe(1);
+      expect(result.summary.toolCalls.file_read).toBe(1);
+      expect(result.summary.totalToolCalls).toBe(1);
+      expect(result.summary.filesRead).toContain('a.ts');
+    });
+
+    it('parses Bub tape tool calls', () => {
+      const transcript = [
+        JSON.stringify({
+          id: 1,
+          kind: 'tool_call',
+          payload: {
+            calls: [
+              {
+                function: {
+                  name: 'bash',
+                  arguments: '{"cmd":"npm test"}',
+                },
+              },
+            ],
+          },
+          timestamp: 1772758779.1400378,
+        }),
+        JSON.stringify({
+          id: 2,
+          kind: 'tool_result',
+          payload: {
+            results: [{ exitCode: 0, stdout: 'ok' }],
+          },
+          timestamp: 1772758779.140388,
+        }),
+      ].join('\n');
+
+      const result = parseTranscript(transcript, 'bub');
+
+      expect(result.parseSuccess).toBe(true);
+      expect(result.summary.toolCalls.shell).toBe(1);
+      expect(result.summary.shellCommands[0]?.command).toBe('npm test');
+      expect(result.summary.shellCommands[0]?.exitCode).toBe(0);
+    });
+
+    it('parses Bub tape message entries', () => {
+      const transcript = [
+        JSON.stringify({
+          id: 1,
+          kind: 'message',
+          payload: { role: 'user', content: 'Implement feature' },
+          timestamp: 1772758779.1400099,
+        }),
+        JSON.stringify({
+          id: 2,
+          kind: 'message',
+          payload: { role: 'assistant', content: 'Done' },
+          timestamp: 1772758779.140484,
+        }),
+      ].join('\n');
+
+      const { events } = parseBubTranscript(transcript);
+
+      expect(events).toHaveLength(2);
+      expect(events[0].type).toBe('message');
+      expect(events[0].role).toBe('user');
+      expect(events[1].role).toBe('assistant');
     });
   });
 

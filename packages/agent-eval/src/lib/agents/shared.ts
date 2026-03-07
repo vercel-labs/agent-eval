@@ -243,3 +243,10 @@ export const GEMINI_DIRECT = {
 export const CURSOR_DIRECT = {
   apiKeyEnvVar: 'CURSOR_API_KEY',
 } as const;
+
+/**
+ * Direct API configuration for Bub.
+ */
+export const BUB_DIRECT = {
+  apiKeyEnvVar: 'BUB_API_KEY',
+} as const;
