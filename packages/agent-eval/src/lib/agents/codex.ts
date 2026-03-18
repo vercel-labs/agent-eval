@@ -95,16 +95,10 @@ model_provider = "vercel"
 model = "${fullModel}"
 `;
   } else {
-    // Direct OpenAI API uses unprefixed model names like "gpt-5.2-codex"
+    // Direct OpenAI API — use the built-in "openai" provider (no custom provider needed)
     const directModel = model.includes('/') ? model.split('/').pop()! : model;
     return `# Direct OpenAI API configuration
 profile = "default"
-
-[model_providers.openai]
-name = "OpenAI"
-base_url = "${OPENAI_DIRECT.baseUrl}"
-env_key = "${OPENAI_DIRECT.apiKeyEnvVar}"
-wire_api = "responses"
 
 [profiles.default]
 model_provider = "openai"
