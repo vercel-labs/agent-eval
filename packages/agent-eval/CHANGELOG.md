@@ -1,5 +1,13 @@
 # @vercel/agent-eval
 
+## 0.9.3
+
+### Patch Changes
+
+- [#95](https://github.com/vercel-labs/agent-eval/pull/95) [`6ced2ea`](https://github.com/vercel-labs/agent-eval/commit/6ced2ea189a24a64552f10f670c58083840be905) Thanks [@gaojude](https://github.com/gaojude)! - Use the built-in `openai` provider in Codex config instead of re-declaring a custom OpenAI provider block.
+
+- [#55](https://github.com/vercel-labs/agent-eval/pull/55) [`0f9ba7a`](https://github.com/vercel-labs/agent-eval/commit/0f9ba7ad7e5ae8aa312380eac789198c4f16e80c) Thanks [@hyf0](https://github.com/hyf0)! - Support `CLAUDE_CODE_OAUTH_TOKEN` for Claude Code agent authentication. When set, the OAuth token is used instead of `ANTHROPIC_API_KEY`, enabling Claude Pro/Max subscription users to run evals without a separate API key.
+
 ## 0.9.2
 
 ### Patch Changes
