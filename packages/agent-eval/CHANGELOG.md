@@ -1,5 +1,11 @@
 # @vercel/agent-eval
 
+## 0.9.4
+
+### Patch Changes
+
+- [#97](https://github.com/vercel-labs/agent-eval/pull/97) [`4815bab`](https://github.com/vercel-labs/agent-eval/commit/4815babe1753d82edd925574bfb7b014d1097b5d) Thanks [@gaojude](https://github.com/gaojude)! - Bump minimatch to 10.2.4 to fix ReDoS vulnerability (GHSA-3ppc-4f35-3m26)
+
 ## 0.9.3
 
 ### Patch Changes
