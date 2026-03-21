@@ -27,8 +27,8 @@ import { minimatch } from 'minimatch';
 import pLimit from 'p-limit';
 
 // Load environment variables (.env.local first, then .env as fallback)
-dotenvConfig({ path: '.env.local' });
-dotenvConfig();
+dotenvConfig({ path: '.env.local', override: true });
+dotenvConfig({ override: true });
 
 // Read version from package.json
 const __dirname = dirname(fileURLToPath(import.meta.url));
