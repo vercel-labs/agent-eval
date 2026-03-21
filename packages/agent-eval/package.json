@@ -1,6 +1,6 @@
 {
   "name": "@vercel/agent-eval",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "description": "Framework for testing AI coding agents in isolated sandboxes",
   "repository": {
     "type": "git",

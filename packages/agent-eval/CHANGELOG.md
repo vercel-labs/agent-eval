@@ -1,5 +1,11 @@
 # @vercel/agent-eval
 
+## 0.9.5
+
+### Patch Changes
+
+- [#99](https://github.com/vercel-labs/agent-eval/pull/99) [`ec11c4a`](https://github.com/vercel-labs/agent-eval/commit/ec11c4a6b5003748b2c145b167f7d4d38051c0b1) Thanks [@gaojude](https://github.com/gaojude)! - Add `override: true` to dotenv config so `.env.local` and `.env` values consistently take precedence over pre-existing shell environment variables.
+
 ## 0.9.4
 
 ### Patch Changes
