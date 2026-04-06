@@ -59,7 +59,7 @@ function resolveConfigPath(input: string): string {
 /**
  * Run experiment command handler
  */
-async function runExperimentCommand(configInput: string, options: { dry?: boolean; smoke?: boolean }) {
+async function runExperimentCommand(configInput: string, options: { dry?: boolean; smoke?: boolean; concurrency?: number }) {
   try {
     const configPath = resolveConfigPath(configInput);
     const absoluteConfigPath = resolve(process.cwd(), configPath);
@@ -182,6 +182,7 @@ async function runExperimentCommand(configInput: string, options: { dry?: boolea
         resultsDir,
         experimentName,
         smoke: options.smoke,
+        concurrency: options.concurrency,
         onProgress: createConsoleProgressHandler({
           experimentName,
           model,
@@ -278,7 +279,7 @@ program
  * and classification. Used by both `run-all` subcommand and the default
  * (no-args) invocation.
  */
-async function runAllCommand(experimentArgs: string[], options: { dry?: boolean; force?: boolean; smoke?: boolean; ackFailures?: boolean }) {
+async function runAllCommand(experimentArgs: string[], options: { dry?: boolean; force?: boolean; smoke?: boolean; concurrency?: number; ackFailures?: boolean }) {
     try {
       const projectDir = process.cwd();
       const experimentsDir = resolve(projectDir, 'experiments');
@@ -532,6 +533,7 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
               experimentName,
               fingerprints,
               smoke: options.smoke,
+              concurrency: options.concurrency,
               onProgress,
               rateLimiter,
             });
@@ -657,6 +659,7 @@ program
   .option('--dry', 'Preview what would run without executing')
   .option('--force', 'Ignore fingerprints, re-run everything')
   .option('--smoke', 'Run 1 eval per experiment for sanity checking')
+  .option('--concurrency <number>', 'Maximum number of eval runs in-flight at once (default: unlimited)', parseInt)
   .option('--ack-failures', 'Keep non-model failures (infra/timeout) as final results instead of deleting them')
   .action(runAllCommand);
 
@@ -672,8 +675,9 @@ program
   .option('--dry', 'Preview what would run without executing')
   .option('--smoke', 'Run a single eval to verify setup (API keys, model IDs, sandbox)')
   .option('--force', 'Ignore fingerprints, re-run everything (only applies when running all)')
+  .option('--concurrency <number>', 'Maximum number of eval runs in-flight at once (default: unlimited)', parseInt)
   .option('--ack-failures', 'Keep non-model failures (infra/timeout) as final results instead of deleting them')
-  .action(async (configInput: string | undefined, options: { dry?: boolean; smoke?: boolean; force?: boolean; ackFailures?: boolean }) => {
+  .action(async (configInput: string | undefined, options: { dry?: boolean; smoke?: boolean; force?: boolean; concurrency?: number; ackFailures?: boolean }) => {
     if (!configInput) {
       await runAllCommand([], options);
       return;

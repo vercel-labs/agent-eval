@@ -94,6 +94,8 @@ export interface RunExperimentOptions {
   smoke?: boolean;
   /** Shared rate limiter to control how many sandbox runs start per time window */
   rateLimiter?: StartRateLimiter;
+  /** Maximum number of eval runs in-flight at once. Useful for providers with limited capacity. */
+  concurrency?: number;
 }
 
 /**
@@ -283,7 +285,22 @@ export async function runExperiment(
     return result;
   };
 
-  const results = await Promise.all(attempts.map(runOne));
+  let results: AttemptResult[];
+  if (options.concurrency && options.concurrency < attempts.length) {
+    // Concurrency-limited execution
+    const limit = options.concurrency;
+    results = new Array(attempts.length);
+    let idx = 0;
+    const next = async () => {
+      while (idx < attempts.length) {
+        const i = idx++;
+        results[i] = await runOne(attempts[i]);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, attempts.length) }, () => next()));
+  } else {
+    results = await Promise.all(attempts.map(runOne));
+  }
 
   // Group results by fixture, excluding aborted results
   const resultsByFixture = new Map<string, AttemptResult[]>();
