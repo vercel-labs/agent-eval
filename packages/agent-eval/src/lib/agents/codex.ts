@@ -221,7 +221,7 @@ export function createCodexAgent({ useVercelAiGateway }: { useVercelAiGateway: b
       // Create Codex config directory and config file
       await sandbox.runShell('mkdir -p ~/.codex');
       const configContent = generateCodexConfig(baseModel, useVercelAiGateway);
-      await sandbox.runShell(`cat > ~/.codex/config.toml << 'EOF'
+      await sandbox.runShell(`cat >> ~/.codex/config.toml << 'EOF'
 ${configContent}
 EOF`);
 
