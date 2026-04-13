@@ -98,6 +98,10 @@ export interface ExperimentConfig {
    * - 'all': Original project files + agent changes overlaid on top
    * @default 'none' */
   copyFiles?: 'none' | 'changed' | 'all';
+
+  /** Agent-specific options passed at runtime (e.g., binaryUrl, extraProviders for opencode).
+   * These are forwarded to the agent's run() method. @default undefined */
+  agentOptions?: Record<string, unknown>;
 }
 
 /**
@@ -115,6 +119,7 @@ export interface ResolvedExperimentConfig {
   sandbox: SandboxBackend | 'auto';
   editPrompt?: (prompt: string) => string;
   copyFiles: 'none' | 'changed' | 'all';
+  agentOptions?: Record<string, unknown>;
 }
 
 /**
@@ -132,6 +137,7 @@ export interface RunnableExperimentConfig {
   sandbox: SandboxBackend | 'auto';
   editPrompt?: (prompt: string) => string;
   copyFiles: 'none' | 'changed' | 'all';
+  agentOptions?: Record<string, unknown>;
 }
 
 /**

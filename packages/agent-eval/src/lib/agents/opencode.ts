@@ -207,11 +207,15 @@ export function createOpenCodeAgent(agentOptions?: OpenCodeAgentOptions): Agent 
         }
 
         // Install OpenCode CLI
-        if (agentOptions?.binaryUrl) {
+        // Options can come from runtime agentOptions (experiment config) or closure agentOptions (registration)
+        const binaryUrl = (options.agentOptions?.binaryUrl ?? agentOptions?.binaryUrl) as string | undefined;
+        const extraProviders = (options.agentOptions?.extraProviders ?? agentOptions?.extraProviders) as Record<string, OpenCodeProviderConfig> | undefined;
+
+        if (binaryUrl) {
           // Download custom binary (e.g., patched build for unreleased models)
           const cliInstall = await sandbox.runCommand('bash', [
             '-c',
-            `curl -sL "${agentOptions.binaryUrl}" -o /usr/local/bin/opencode && chmod +x /usr/local/bin/opencode`,
+            `curl -sL "${binaryUrl}" -o /usr/local/bin/opencode && chmod +x /usr/local/bin/opencode`,
           ]);
           if (cliInstall.exitCode !== 0) {
             throw new Error(`OpenCode CLI install failed: ${cliInstall.stdout} ${cliInstall.stderr}`);
@@ -228,7 +232,7 @@ export function createOpenCodeAgent(agentOptions?: OpenCodeAgentOptions): Agent 
         }
 
         // Create OpenCode config file in the project directory
-        const configContent = generateOpenCodeConfig(agentOptions?.extraProviders);
+        const configContent = generateOpenCodeConfig(extraProviders);
         await sandbox.writeFiles({
           'opencode.json': configContent,
         });
