@@ -24,6 +24,8 @@ export interface AgentRunOptions {
   signal?: AbortSignal;
   /** Sandbox backend to use */
   sandbox?: SandboxBackend | 'auto';
+  /** Agent-specific options (e.g., binaryUrl, extraProviders for opencode) */
+  agentOptions?: Record<string, unknown>;
 }
 
 /**

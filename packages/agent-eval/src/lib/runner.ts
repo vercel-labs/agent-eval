@@ -189,6 +189,7 @@ export async function runExperiment(
         scripts: config.scripts,
         signal: attemptController.signal,
         sandbox: config.sandbox,
+        agentOptions: config.agentOptions,
       }),
       new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {

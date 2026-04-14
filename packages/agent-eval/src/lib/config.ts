@@ -50,6 +50,7 @@ const experimentConfigSchema = z.object({
   sandbox: z.enum(['vercel', 'docker', 'auto']).optional(),
   editPrompt: z.function().args(z.string()).returns(z.string()).optional(),
   copyFiles: z.enum(['none', 'changed', 'all']).optional(),
+  agentOptions: z.record(z.unknown()).optional(),
 });
 
 /**
@@ -91,6 +92,7 @@ export function resolveConfig(config: ExperimentConfig): ResolvedExperimentConfi
     sandbox: config.sandbox ?? CONFIG_DEFAULTS.sandbox,
     editPrompt: config.editPrompt,
     copyFiles: config.copyFiles ?? CONFIG_DEFAULTS.copyFiles,
+    agentOptions: config.agentOptions,
   };
 }
 

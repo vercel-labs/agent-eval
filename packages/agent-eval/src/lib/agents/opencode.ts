@@ -49,25 +49,45 @@ function extractTranscriptFromOutput(output: string): string | undefined {
 }
 
 /**
- * Generate OpenCode config file content.
- * Configures the Vercel AI Gateway provider.
+ * Additional provider configuration for models not yet available in the
+ * default Vercel AI Gateway (e.g., early access / unreleased models).
  */
-function generateOpenCodeConfig(): string {
-  return `{
-  "$schema": "https://opencode.ai/config.json",
-  "provider": {
-    "vercel": {
-      "options": {
-        "apiKey": "{env:AI_GATEWAY_API_KEY}"
-      }
-    }
-  },
-  "permission": {
-    "write": "allow",
-    "edit": "allow",
-    "bash": "allow"
-  }
-}`;
+export interface OpenCodeProviderConfig {
+  npm?: string;
+  options?: Record<string, unknown>;
+  models?: Record<string, {
+    name?: string;
+    tool_call?: boolean;
+    reasoning?: boolean;
+    attachment?: boolean;
+    temperature?: boolean;
+    limit?: { context: number; output: number };
+  }>;
+}
+
+/**
+ * Generate OpenCode config file content.
+ * Configures the Vercel AI Gateway provider, plus any additional providers.
+ */
+function generateOpenCodeConfig(extraProviders?: Record<string, OpenCodeProviderConfig>): string {
+  const providers: Record<string, unknown> = {
+    vercel: {
+      options: {
+        apiKey: '{env:AI_GATEWAY_API_KEY}',
+      },
+    },
+    ...extraProviders,
+  };
+
+  return JSON.stringify({
+    $schema: 'https://opencode.ai/config.json',
+    provider: providers,
+    permission: {
+      write: 'allow',
+      edit: 'allow',
+      bash: 'allow',
+    },
+  }, null, 2);
 }
 
 /**
@@ -169,18 +189,32 @@ export function createOpenCodeAgent(): Agent {
           throw new Error(`npm install failed (exit code ${installResult.exitCode}):\n${output}`);
         }
 
-        // Install OpenCode CLI globally
-        const cliInstall = await sandbox.runCommand('npm', [
-          'install',
-          '-g',
-          'opencode-ai',
-        ]);
-        if (cliInstall.exitCode !== 0) {
-          throw new Error(`OpenCode CLI install failed: ${cliInstall.stderr}`);
+        // Install OpenCode CLI
+        const binaryUrl = options.agentOptions?.binaryUrl as string | undefined;
+        const extraProviders = options.agentOptions?.extraProviders as Record<string, OpenCodeProviderConfig> | undefined;
+
+        if (binaryUrl) {
+          // Download custom binary (e.g., patched build for unreleased models)
+          const cliInstall = await sandbox.runCommand('bash', [
+            '-c',
+            `curl -sL "${binaryUrl}" -o /usr/local/bin/opencode && chmod +x /usr/local/bin/opencode`,
+          ]);
+          if (cliInstall.exitCode !== 0) {
+            throw new Error(`OpenCode CLI install failed: ${cliInstall.stdout} ${cliInstall.stderr}`);
+          }
+        } else {
+          const cliInstall = await sandbox.runCommand('npm', [
+            'install',
+            '-g',
+            'opencode-ai',
+          ]);
+          if (cliInstall.exitCode !== 0) {
+            throw new Error(`OpenCode CLI install failed: ${cliInstall.stderr}`);
+          }
         }
 
         // Create OpenCode config file in the project directory
-        const configContent = generateOpenCodeConfig();
+        const configContent = generateOpenCodeConfig(extraProviders);
         await sandbox.writeFiles({
           'opencode.json': configContent,
         });
