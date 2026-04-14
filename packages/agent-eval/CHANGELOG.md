@@ -1,5 +1,15 @@
 # @vercel/agent-eval
 
+## 0.10.0
+
+### Minor Changes
+
+- [#106](https://github.com/vercel-labs/agent-eval/pull/106) [`8d138a2`](https://github.com/vercel-labs/agent-eval/commit/8d138a28e7855ef5218c8cf1301064c6caca8e1f) Thanks [@jerilynzheng](https://github.com/jerilynzheng)! - Add `agentOptions` field to `ExperimentConfig` for passing agent-specific options (like `binaryUrl` and `extraProviders`) at runtime. This enables replicable eval configs for unreleased models that require patched agent binaries.
+
+### Patch Changes
+
+- [#104](https://github.com/vercel-labs/agent-eval/pull/104) [`df0dfb6`](https://github.com/vercel-labs/agent-eval/commit/df0dfb66572da228ae7f0797c7a1cdad545dbc52) Thanks [@runeb](https://github.com/runeb)! - Fix Codex agent to append to config.toml instead of overwriting it, preserving any config written by the experiment's setup function.
+
 ## 0.9.5
 
 ### Patch Changes
