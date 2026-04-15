@@ -69,10 +69,11 @@ export interface OpenCodeProviderConfig {
  * Generate OpenCode config file content.
  * Configures the Vercel AI Gateway provider, plus any additional providers.
  */
-function generateOpenCodeConfig(extraProviders?: Record<string, OpenCodeProviderConfig>, apiKey?: string): string {
+function generateOpenCodeConfig(extraProviders?: Record<string, OpenCodeProviderConfig>, apiKey?: string, timeoutMs?: number): string {
   const vercelBase: Record<string, unknown> = {
     options: {
       apiKey: apiKey || '{env:AI_GATEWAY_API_KEY}',
+      ...(timeoutMs ? { timeout: timeoutMs } : {}),
     },
   };
   const { vercel: vercelExtra, ...otherProviders } = extraProviders || {};
@@ -221,7 +222,7 @@ export function createOpenCodeAgent(): Agent {
         }
 
         // Create OpenCode config file in the project directory
-        const configContent = generateOpenCodeConfig(extraProviders, options.apiKey);
+        const configContent = generateOpenCodeConfig(extraProviders, options.apiKey, options.timeout);
         await sandbox.writeFiles({
           'opencode.json': configContent,
         });
