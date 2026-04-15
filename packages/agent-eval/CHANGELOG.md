@@ -1,5 +1,11 @@
 # @vercel/agent-eval
 
+## 0.10.1
+
+### Patch Changes
+
+- [#108](https://github.com/vercel-labs/agent-eval/pull/108) [`5185640`](https://github.com/vercel-labs/agent-eval/commit/5185640dde9c0b77a474d29e7736b994a45eb9cf) Thanks [@gaojude](https://github.com/gaojude)! - Deep-merge vercel provider config in OpenCode agent and use user-space binary install path
+
 ## 0.10.0
 
 ### Minor Changes
