@@ -69,14 +69,21 @@ export interface OpenCodeProviderConfig {
  * Generate OpenCode config file content.
  * Configures the Vercel AI Gateway provider, plus any additional providers.
  */
-function generateOpenCodeConfig(extraProviders?: Record<string, OpenCodeProviderConfig>): string {
+function generateOpenCodeConfig(extraProviders?: Record<string, OpenCodeProviderConfig>, apiKey?: string): string {
+  const vercelBase: Record<string, unknown> = {
+    options: {
+      apiKey: apiKey || '{env:AI_GATEWAY_API_KEY}',
+    },
+  };
+  const { vercel: vercelExtra, ...otherProviders } = extraProviders || {};
+
   const providers: Record<string, unknown> = {
     vercel: {
-      options: {
-        apiKey: '{env:AI_GATEWAY_API_KEY}',
-      },
+      ...vercelBase,
+      ...vercelExtra,
+      options: { ...(vercelBase.options as Record<string, unknown>), ...vercelExtra?.options },
     },
-    ...extraProviders,
+    ...otherProviders,
   };
 
   return JSON.stringify({
@@ -197,7 +204,7 @@ export function createOpenCodeAgent(): Agent {
           // Download custom binary (e.g., patched build for unreleased models)
           const cliInstall = await sandbox.runCommand('bash', [
             '-c',
-            `curl -sL "${binaryUrl}" -o /usr/local/bin/opencode && chmod +x /usr/local/bin/opencode`,
+            `mkdir -p $HOME/.local/bin && curl -fsSL "${binaryUrl}" -o $HOME/.local/bin/opencode && chmod +x $HOME/.local/bin/opencode`,
           ]);
           if (cliInstall.exitCode !== 0) {
             throw new Error(`OpenCode CLI install failed: ${cliInstall.stdout} ${cliInstall.stderr}`);
@@ -214,7 +221,7 @@ export function createOpenCodeAgent(): Agent {
         }
 
         // Create OpenCode config file in the project directory
-        const configContent = generateOpenCodeConfig(extraProviders);
+        const configContent = generateOpenCodeConfig(extraProviders, options.apiKey);
         await sandbox.writeFiles({
           'opencode.json': configContent,
         });
