@@ -1,5 +1,15 @@
 # @vercel/agent-eval
 
+## 0.11.0
+
+### Minor Changes
+
+- [#110](https://github.com/vercel-labs/agent-eval/pull/110) [`481637d`](https://github.com/vercel-labs/agent-eval/commit/481637dd6e5ea26465cae864a850880a42647209) Thanks [@gaojude](https://github.com/gaojude)! - Auto-retry non-model failures up to 5 rounds by default, then auto-acknowledge remaining. Control with `--max-retries <n>` or `--ack-failures`.
+
+### Patch Changes
+
+- [#112](https://github.com/vercel-labs/agent-eval/pull/112) [`f838bd7`](https://github.com/vercel-labs/agent-eval/commit/f838bd7363d51108952008bd54645a871efa709f) Thanks [@gaojude](https://github.com/gaojude)! - Pass experiment timeout to OpenCode provider config so the Vercel AI Gateway has a request-level timeout.
+
 ## 0.10.1
 
 ### Patch Changes
