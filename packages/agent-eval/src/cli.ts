@@ -278,7 +278,7 @@ program
  * and classification. Used by both `run-all` subcommand and the default
  * (no-args) invocation.
  */
-async function runAllCommand(experimentArgs: string[], options: { dry?: boolean; force?: boolean; smoke?: boolean; ackFailures?: boolean }) {
+async function runAllCommand(experimentArgs: string[], options: { dry?: boolean; force?: boolean; smoke?: boolean; ackFailures?: boolean; maxRetries?: number }) {
     try {
       const projectDir = process.cwd();
       const experimentsDir = resolve(projectDir, 'experiments');
@@ -495,138 +495,173 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
             fingerprints[fixture.name] = computeFingerprint(fixture.path, modelConfig);
           }
 
-          let fixturesToRun = selectedFixtures;
-          if (!options.force && !options.smoke) {
-            const reusable = scanReusableResults(resultsDir, experimentName, fingerprints);
-            if (reusable.size > 0) {
-              fixturesToRun = selectedFixtures.filter((f) => !reusable.has(f.name));
-            }
-          }
+          // Auto-retry non-model failures (infra/timeout) up to maxRetries rounds.
+          // After retries are exhausted, remaining non-model failures are auto-acknowledged.
+          const classifierOn = isClassifierEnabled();
+          const maxRetries = options.ackFailures ? 0 : (options.maxRetries ?? 5);
+          const shouldRetry = classifierOn && !options.smoke && maxRetries > 0;
 
-          if (fixturesToRun.length === 0) {
-            continue;
-          }
+          for (let retryRound = 0; retryRound <= maxRetries; retryRound++) {
+            const isLastRetry = retryRound === maxRetries;
 
-          // Register with dashboard or log to console
-          if (dashboard) {
-            dashboard.addExperiment(experimentName, {
-              agent: config.agent,
-              model,
-              totalEvals: fixturesToRun.length,
-            });
-          } else {
-            console.log(chalk.blue(`\nRunning ${experimentName}: ${fixturesToRun.length} eval(s)`));
-          }
-
-          // Build the progress handler
-          const onProgress: (event: ProgressEvent) => void = dashboard
-            ? (event) => dashboard.handleEvent(experimentName, event)
-            : createConsoleProgressHandler({ experimentName, model, agent: config.agent });
-
-          try {
-            const results = await runExperiment({
-              config: modelConfig,
-              fixtures: fixturesToRun,
-              apiKey: apiKey!,
-              resultsDir,
-              experimentName,
-              fingerprints,
-              smoke: options.smoke,
-              onProgress,
-              rateLimiter,
-            });
-
-            // Classify failures (only if classifier is enabled)
-            const failedEvals = results.evals.filter((e) => e.passedRuns === 0);
-            const classifications = new Map<string, Classification>();
-            let hasNonModelFailures = false;
-
-            if (isClassifierEnabled()) {
-              if (dashboard) {
-                dashboard.setPhase(experimentName, 'classifying');
+            // Scan for reusable results (respect --force only on first round)
+            let fixturesToRun = selectedFixtures;
+            if ((!options.force || retryRound > 0) && !options.smoke) {
+              const reusable = scanReusableResults(resultsDir, experimentName, fingerprints);
+              if (reusable.size > 0) {
+                fixturesToRun = selectedFixtures.filter((f) => !reusable.has(f.name));
               }
+            }
 
-              if (failedEvals.length > 0 && !options.smoke) {
-                const timestamp = results.startedAt.replace(/:/g, '-');
-                const classifyLimit = pLimit(4);
-                let classifyingDone = 0;
-                const classifyingTotal = failedEvals.length;
+            if (fixturesToRun.length === 0) break;
 
+            // Dashboard / console logging
+            const dashboardName = retryRound === 0
+              ? experimentName
+              : `${experimentName} (retry ${retryRound})`;
 
-                await Promise.all(
-                  failedEvals.map((evalSummary) =>
-                    classifyLimit(async () => {
-                      const evalResultDir = resolve(resultsDir, experimentName, timestamp, evalSummary.name);
-                      const classification = await classifyFailure(
-                        evalResultDir,
-                        evalSummary.name,
-                        experimentName
-                      );
+            if (retryRound > 0 && !dashboard) {
+              console.log(chalk.yellow(`\n  Retrying ${fixturesToRun.length} non-model failure(s) (retry ${retryRound}/${maxRetries})...`));
+            }
 
-                      classifyingDone++;
-                      if (dashboard) {
-                        dashboard.setClassifyingProgress(experimentName, classifyingDone, classifyingTotal);
-                      }
+            if (dashboard) {
+              dashboard.addExperiment(dashboardName, {
+                agent: config.agent,
+                model,
+                totalEvals: fixturesToRun.length,
+              });
+            } else if (retryRound === 0) {
+              console.log(chalk.blue(`\nRunning ${experimentName}: ${fixturesToRun.length} eval(s)`));
+            }
 
-                      if (classification) {
-                        classifications.set(evalSummary.name, classification);
+            // Build the progress handler
+            const onProgress: (event: ProgressEvent) => void = dashboard
+              ? (event) => dashboard.handleEvent(dashboardName, event)
+              : createConsoleProgressHandler({ experimentName, model, agent: config.agent });
 
-                        if (!dashboard) {
-                          const icon = { model: '  ', infra: '  ', timeout: '  ' }[classification.failureType];
-                          console.log(chalk.gray(`  ${icon} ${evalSummary.name}: ${classification.failureType} — ${classification.failureReason}`));
+            let hasRetryableFailures = false;
+            const retryingEvals = new Set<string>();
+
+            try {
+              const results = await runExperiment({
+                config: modelConfig,
+                fixtures: fixturesToRun,
+                apiKey: apiKey!,
+                resultsDir,
+                experimentName,
+                fingerprints,
+                smoke: options.smoke,
+                onProgress,
+                rateLimiter,
+              });
+
+              // Classify failures (only if classifier is enabled)
+              const failedEvals = results.evals.filter((e) => e.passedRuns === 0);
+              const classifications = new Map<string, Classification>();
+
+              if (classifierOn) {
+                if (dashboard) {
+                  dashboard.setPhase(dashboardName, 'classifying');
+                }
+
+                if (failedEvals.length > 0 && !options.smoke) {
+                  const timestamp = results.startedAt.replace(/:/g, '-');
+                  const classifyLimit = pLimit(4);
+                  let classifyingDone = 0;
+                  const classifyingTotal = failedEvals.length;
+
+                  await Promise.all(
+                    failedEvals.map((evalSummary) =>
+                      classifyLimit(async () => {
+                        const evalResultDir = resolve(resultsDir, experimentName, timestamp, evalSummary.name);
+                        const classification = await classifyFailure(
+                          evalResultDir,
+                          evalSummary.name,
+                          experimentName
+                        );
+
+                        classifyingDone++;
+                        if (dashboard) {
+                          dashboard.setClassifyingProgress(dashboardName, classifyingDone, classifyingTotal);
                         }
 
-                        if (classification.failureType !== 'model') {
-                          if (options.ackFailures) {
-                            classification.acknowledged = true;
-                            const classificationPath = resolve(evalResultDir, 'classification.json');
-                            writeFileSync(classificationPath, JSON.stringify(classification, null, 2));
-                            if (!dashboard) {
-                              console.log(chalk.yellow(`  ✓ Acknowledged ${evalSummary.name} (${classification.failureType} failure — kept as final result)`));
+                        if (classification) {
+                          classifications.set(evalSummary.name, classification);
+
+                          if (!dashboard) {
+                            const icon = { model: '  ', infra: '  ', timeout: '  ' }[classification.failureType];
+                            console.log(chalk.gray(`  ${icon} ${evalSummary.name}: ${classification.failureType} — ${classification.failureReason}`));
+                          }
+
+                          if (classification.failureType !== 'model') {
+                            const shouldAck = options.ackFailures || (shouldRetry && isLastRetry);
+                            if (shouldAck) {
+                              classification.acknowledged = true;
+                              const classificationPath = resolve(evalResultDir, 'classification.json');
+                              writeFileSync(classificationPath, JSON.stringify(classification, null, 2));
+                              if (!dashboard) {
+                                console.log(chalk.yellow(`  ✓ Acknowledged ${evalSummary.name} (${classification.failureType} failure — kept as final result)`));
+                              }
+                            } else if (shouldRetry) {
+                              rmSync(evalResultDir, { recursive: true });
+                              if (!dashboard) {
+                                console.log(chalk.gray(`  ↻ Will retry ${evalSummary.name} (${classification.failureType} failure)`));
+                              }
+                              hasRetryableFailures = true;
+                              retryingEvals.add(evalSummary.name);
+                            } else {
+                              rmSync(evalResultDir, { recursive: true });
+                              if (!dashboard) {
+                                console.log(chalk.gray(`  🗑️  Removed ${evalSummary.name} (${classification.failureType} failure)`));
+                              }
+                              hasRetryableFailures = true;
                             }
-                          } else {
-                            rmSync(evalResultDir, { recursive: true });
-                            if (!dashboard) {
-                              console.log(chalk.gray(`  🗑️  Removed ${evalSummary.name} (${classification.failureType} failure)`));
-                            }
-                            hasNonModelFailures = true;
                           }
                         }
-                      }
-                    })
-                  )
-                );
+                      })
+                    )
+                  );
 
-                if (hasNonModelFailures && !dashboard) {
-                  console.log(chalk.yellow(`\n  To keep non-model failures as final results, re-run with --ack-failures`));
+                  if (hasRetryableFailures && !shouldRetry && !options.ackFailures && !dashboard) {
+                    console.log(chalk.yellow(`\n  To keep non-model failures as final results, re-run with --ack-failures`));
+                  }
                 }
               }
+
+              // Complete the experiment in the dashboard
+              if (dashboard) {
+                dashboard.completeExperiment(dashboardName, results, classifications, retryingEvals.size > 0 ? retryingEvals : undefined);
+              }
+            } catch (err) {
+              console.error(chalk.red(`  Error running ${experimentName}: ${err instanceof Error ? err.message : err}`));
+              allPassed = false;
+              if (dashboard) {
+                dashboard.setPhase(dashboardName, 'done');
+              }
+              break; // Don't retry on framework errors
             }
 
-            // Complete the experiment in the dashboard (prints permanent block)
-            if (dashboard) {
-              dashboard.completeExperiment(experimentName, results, classifications);
+            // Housekeeping after each round
+            const stats = housekeep(resultsDir, experimentName);
+            if (stats.removedDuplicates + stats.removedIncomplete + stats.removedNonModelFailures > 0) {
+              console.log(
+                chalk.gray(
+                  `  Housekeeping: removed ${stats.removedDuplicates} duplicate(s), ${stats.removedIncomplete} incomplete, ${stats.removedNonModelFailures} non-model failure(s)`
+                )
+              );
             }
 
-            const experimentPassed = results.evals.every((e) => e.passedRuns > 0);
-            if (!experimentPassed) allPassed = false;
-          } catch (err) {
-            console.error(chalk.red(`  Error running ${experimentName}: ${err instanceof Error ? err.message : err}`));
-            allPassed = false;
-            if (dashboard) {
-              dashboard.setPhase(experimentName, 'done');
-            }
+            // Continue retrying if there are retryable failures
+            if (!hasRetryableFailures || !shouldRetry) break;
           }
 
-          // Housekeeping after each experiment
-          const stats = housekeep(resultsDir, experimentName);
-          if (stats.removedDuplicates + stats.removedIncomplete + stats.removedNonModelFailures > 0) {
-            console.log(
-              chalk.gray(
-                `  Housekeeping: removed ${stats.removedDuplicates} duplicate(s), ${stats.removedIncomplete} incomplete, ${stats.removedNonModelFailures} non-model failure(s)`
-              )
-            );
-          }
+          // Determine final pass/fail for this experiment+model
+          const finalReusable = scanReusableResults(resultsDir, experimentName, fingerprints);
+          const experimentPassed = selectedFixtures.every((f) => {
+            const r = finalReusable.get(f.name);
+            return r != null && r.passRate !== '0%';
+          });
+          if (!experimentPassed) allPassed = false;
         }
       });
 
@@ -658,6 +693,7 @@ program
   .option('--force', 'Ignore fingerprints, re-run everything')
   .option('--smoke', 'Run 1 eval per experiment for sanity checking')
   .option('--ack-failures', 'Keep non-model failures (infra/timeout) as final results instead of deleting them')
+  .option('--max-retries <n>', 'Maximum retry rounds for non-model failures (default: 5)', parseInt)
   .action(runAllCommand);
 
 /**
@@ -673,7 +709,8 @@ program
   .option('--smoke', 'Run a single eval to verify setup (API keys, model IDs, sandbox)')
   .option('--force', 'Ignore fingerprints, re-run everything (only applies when running all)')
   .option('--ack-failures', 'Keep non-model failures (infra/timeout) as final results instead of deleting them')
-  .action(async (configInput: string | undefined, options: { dry?: boolean; smoke?: boolean; force?: boolean; ackFailures?: boolean }) => {
+  .option('--max-retries <n>', 'Maximum retry rounds for non-model failures (default: 5)', parseInt)
+  .action(async (configInput: string | undefined, options: { dry?: boolean; smoke?: boolean; force?: boolean; ackFailures?: boolean; maxRetries?: number }) => {
     if (!configInput) {
       await runAllCommand([], options);
       return;

@@ -53,11 +53,13 @@ The argument is the experiment filename without `.ts`. This resolves to `experim
 
 ### Flags
 
-| Flag | Description |
-|------|-------------|
-| `--dry` | Preview what would run without executing. No API calls, no cost. |
-| `--smoke` | Quick setup verification. Picks the first eval alphabetically, runs once per model. |
-| `--force` | Ignore cached fingerprints and re-run everything. Only applies when running all experiments. |
+| Flag                 | Description                                                                                |
+|----------------------|--------------------------------------------------------------------------------------------|
+| `--dry`              | Preview what would run without executing. No API calls, no cost.                           |
+| `--smoke`            | Quick setup verification. Picks the first eval alphabetically, runs once per model.        |
+| `--force`            | Ignore cached fingerprints and re-run everything. Only applies when running all.           |
+| `--ack-failures`     | Keep non-model failures as final results instead of retrying or deleting them.             |
+| `--max-retries <n>`  | Maximum retry rounds for non-model failures (default: 5). Set to 0 to disable retries.    |
 
 Flags work with both modes:
 
@@ -426,9 +428,9 @@ Classification uses Claude Sonnet 4.5 via the Vercel AI Gateway with sandboxed r
 - **Enabled** (with `AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN`): Classifications are cached in `classification.json`. Non-model failures are automatically removed during housekeeping (unless `--ack-failures` is used). The auto-retry feature helps handle transient issues.
 - **Disabled** (without keys): The classifier is skipped. All results are preserved as-is. Housekeeping will not remove non-model failures (only incomplete and duplicate results). Add `AI_GATEWAY_API_KEY` to `.env` to enable the classifier.
 
-### Auto-retry
+### Auto-retry (deflake)
 
-When the classifier is enabled and ALL runs of an eval fail with non-model failures (infra or timeout), the framework automatically retries once. This handles transient issues like rate limits or API outages without wasting retries on genuine model failures.
+When the classifier is enabled, the framework automatically retries evals that fail with non-model failures (infra or timeout) — up to 5 rounds by default. Evals that passed or were classified as model failures are cached and skipped on retries. After exhausting retries, remaining non-model failures are auto-acknowledged as final results. Control with `--max-retries <n>` (0 to disable) or `--ack-failures` to skip retries and accept immediately.
 
 ## Housekeeping
 
