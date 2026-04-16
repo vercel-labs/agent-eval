@@ -3,7 +3,7 @@
  * Supports both Vercel Sandbox and Docker backends.
  */
 
-import { Sandbox as VercelSandbox } from '@vercel/sandbox';
+import { Sandbox as VercelSandbox, type Command } from '@vercel/sandbox';
 import type { Sandbox } from './types.js';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -93,6 +93,48 @@ export interface SandboxFile {
 }
 
 /**
+ * Vercel's edge infrastructure cuts long streaming HTTP responses at ~5-6 min,
+ * surfacing as `TypeError: terminated` from undici. Commands are started detached
+ * and waited on with reconnect loops so no single HTTP request needs to outlive
+ * that cutoff — only the in-sandbox process lifetime (bounded by sandbox timeout).
+ */
+function isStreamTerminated(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (err.name === 'TypeError' && err.message === 'terminated') return true;
+  const cause = (err as { cause?: { code?: string } }).cause;
+  const code = (err as { code?: string }).code ?? cause?.code;
+  return code === 'UND_ERR_SOCKET' || code === 'ECONNRESET';
+}
+
+async function waitForDetachedCommand(cmd: Command): Promise<CommandResult> {
+  let finished;
+  while (true) {
+    try {
+      finished = await cmd.wait();
+      break;
+    } catch (err) {
+      if (!isStreamTerminated(err)) throw err;
+    }
+  }
+
+  const readOutput = async (read: () => Promise<string>) => {
+    while (true) {
+      try {
+        return await read();
+      } catch (err) {
+        if (!isStreamTerminated(err)) throw err;
+      }
+    }
+  };
+
+  return {
+    stdout: await readOutput(() => finished.stdout()),
+    stderr: await readOutput(() => finished.stderr()),
+    exitCode: finished.exitCode,
+  };
+}
+
+/**
  * Wrapper around Vercel Sandbox providing a cleaner API.
  */
 export class SandboxManager implements Sandbox {
@@ -134,34 +176,28 @@ export class SandboxManager implements Sandbox {
     args: string[] = [],
     options: { env?: Record<string, string> } = {}
   ): Promise<CommandResult> {
-    const result = await this.sandbox.runCommand({
-      cmd: command,
-      args,
-      env: options.env,
-    });
-
-    return {
-      stdout: await result.stdout(),
-      stderr: await result.stderr(),
-      exitCode: result.exitCode,
-    };
+    return waitForDetachedCommand(
+      await this.sandbox.runCommand({
+        cmd: command,
+        args,
+        env: options.env,
+        detached: true,
+      })
+    );
   }
 
   /**
    * Run a shell command (through bash).
    */
   async runShell(command: string, env?: Record<string, string>): Promise<CommandResult> {
-    const result = await this.sandbox.runCommand({
-      cmd: 'bash',
-      args: ['-c', command],
-      env,
-    });
-
-    return {
-      stdout: await result.stdout(),
-      stderr: await result.stderr(),
-      exitCode: result.exitCode,
-    };
+    return waitForDetachedCommand(
+      await this.sandbox.runCommand({
+        cmd: 'bash',
+        args: ['-c', command],
+        env,
+        detached: true,
+      })
+    );
   }
 
   /**
