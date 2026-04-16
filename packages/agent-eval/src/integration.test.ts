@@ -235,6 +235,74 @@ test('greet exists', () => {
         expect(typeof result.outputContent).toBe('object');
       }
     }, 300000); // 5 minute timeout
+
+    it('can run a smoke test with Claude Code + opus 4.7', async () => {
+      const fixtureDir = join(TEST_DIR, 'smoke-claude-opus-47');
+      mkdirSync(join(fixtureDir, 'src'), { recursive: true });
+
+      writeFileSync(
+        join(fixtureDir, 'PROMPT.md'),
+        'Add a function called greet that returns "Hello!"'
+      );
+      writeFileSync(
+        join(fixtureDir, 'EVAL.ts'),
+        `
+import { test, expect } from 'vitest';
+import { readFileSync } from 'fs';
+
+test('greet exists', () => {
+  const content = readFileSync('src/index.ts', 'utf-8');
+  expect(content).toContain('greet');
+});
+`
+      );
+      writeFileSync(
+        join(fixtureDir, 'package.json'),
+        JSON.stringify({
+          name: 'smoke-claude-opus-47',
+          type: 'module',
+          scripts: { build: 'tsc' },
+          devDependencies: { typescript: '^5.0.0', vitest: '^2.1.0' },
+        })
+      );
+      writeFileSync(
+        join(fixtureDir, 'tsconfig.json'),
+        JSON.stringify({
+          compilerOptions: {
+            target: 'ES2020',
+            module: 'ESNext',
+            moduleResolution: 'bundler',
+            outDir: 'dist',
+          },
+          include: ['src'],
+        })
+      );
+      writeFileSync(join(fixtureDir, 'src/index.ts'), '// TODO: implement');
+
+      const fixture = loadFixture(TEST_DIR, 'smoke-claude-opus-47');
+
+      const result = await runSingleEval(fixture, {
+        agent: 'vercel-ai-gateway/claude-code',
+        model: 'claude-opus-4-7',
+        timeout: 300,
+        apiKey: process.env.AI_GATEWAY_API_KEY!,
+        scripts: ['build'],
+        agentOptions: {
+          cliPackage: '@anthropic-ai/claude-code@next',
+          effort: 'high',
+        },
+      });
+
+      expect(result.result.duration).toBeGreaterThan(0);
+      if (result.result.status === 'failed') {
+        console.error('Agent failed with error:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
+
+      if (result.outputContent) {
+        expect(typeof result.outputContent).toBe('object');
+      }
+    }, 600000); // 10 minute timeout
   });
 
   describe.skipIf(!hasAnthropicCredentials)('Claude Code (Direct API) sandbox execution', () => {

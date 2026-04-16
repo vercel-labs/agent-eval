@@ -357,6 +357,7 @@ export async function runSingleEval<T extends ResolvedExperimentConfig['model']>
     sandbox?: ResolvedExperimentConfig['sandbox'];
     editPrompt?: (prompt: string) => string;
     verbose?: boolean;
+    agentOptions?: ResolvedExperimentConfig['agentOptions'];
   }
 ): Promise<T extends Array<unknown> ? EvalRunData[] : EvalRunData> {
   const agent = getAgent(options.agent ?? 'vercel-ai-gateway/claude-code');
@@ -376,6 +377,7 @@ export async function runSingleEval<T extends ResolvedExperimentConfig['model']>
 		setup: options.setup,
 		scripts: options.scripts,
 		sandbox: options.sandbox,
+		agentOptions: options.agentOptions,
 	});
 
     results.push(agentResultToEvalRunData(agentResult));

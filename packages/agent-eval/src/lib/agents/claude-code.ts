@@ -166,10 +166,11 @@ export function createClaudeCodeAgent({ useVercelAiGateway }: { useVercelAiGatew
       }
 
       // Install Claude Code CLI globally
+      const cliPackage = (options.agentOptions?.cliPackage as string) || '@anthropic-ai/claude-code';
       const cliInstall = await sandbox.runCommand('npm', [
         'install',
         '-g',
-        '@anthropic-ai/claude-code',
+        cliPackage,
       ]);
       if (cliInstall.exitCode !== 0) {
         throw new Error(`Claude Code install failed: ${cliInstall.stderr}`);
@@ -198,10 +199,18 @@ export function createClaudeCodeAgent({ useVercelAiGateway }: { useVercelAiGatew
         };
       }
 
+      // Build CLI arguments
+      const cliArgs = ['--print', '--model', options.model, '--dangerously-skip-permissions'];
+      const effort = options.agentOptions?.effort as string | undefined;
+      if (effort) {
+        cliArgs.push('--effort', effort);
+      }
+      cliArgs.push(options.prompt);
+
       // Run Claude Code with appropriate authentication
       const claudeResult = await sandbox.runCommand(
         'claude',
-        ['--print', '--model', options.model, '--dangerously-skip-permissions', options.prompt],
+        cliArgs,
         {
           env: claudeEnv,
         }
