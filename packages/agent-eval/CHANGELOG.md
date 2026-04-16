@@ -1,5 +1,11 @@
 # @vercel/agent-eval
 
+## 0.12.1
+
+### Patch Changes
+
+- [#115](https://github.com/vercel-labs/agent-eval/pull/115) [`a3c2136`](https://github.com/vercel-labs/agent-eval/commit/a3c2136f035071f4274ab7f4200fb81d1776a7ad) Thanks [@gaojude](https://github.com/gaojude)! - Reconnect on terminated HTTP streams in `SandboxManager.runCommand`/`runShell` so in-sandbox commands exceeding ~5 min don't fail spuriously with `error: "terminated"`.
+
 ## 0.12.0
 
 ### Minor Changes
