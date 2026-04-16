@@ -1,5 +1,11 @@
 # @vercel/agent-eval
 
+## 0.12.0
+
+### Minor Changes
+
+- [#113](https://github.com/vercel-labs/agent-eval/pull/113) [`a209ae0`](https://github.com/vercel-labs/agent-eval/commit/a209ae099fd27048ee37de207d07a30c64e7431c) Thanks [@gaojude](https://github.com/gaojude)! - Add `cliPackage` and `effort` `agentOptions` for Claude Code. Lets users override the installed npm package (e.g. `@anthropic-ai/claude-code@next`) and pass `--effort <level>`, which is required by models that use the new `thinking.type.adaptive` API such as Opus 4.7.
+
 ## 0.11.0
 
 ### Minor Changes
