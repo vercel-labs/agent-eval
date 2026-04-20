@@ -226,12 +226,14 @@ export default config;
 agent: 'vercel-ai-gateway/claude-code'  // Claude Code via AI Gateway
 agent: 'vercel-ai-gateway/codex'        // OpenAI Codex via AI Gateway
 agent: 'vercel-ai-gateway/opencode'     // OpenCode via AI Gateway
+agent: 'vercel-ai-gateway/kimi'         // Kimi CLI via AI Gateway (no Moonshot account required)
 
 // Direct API (uses provider keys directly)
 agent: 'claude-code'  // requires ANTHROPIC_API_KEY
 agent: 'codex'        // requires OPENAI_API_KEY
 agent: 'gemini'       // requires GEMINI_API_KEY
 agent: 'cursor'       // requires CURSOR_API_KEY
+agent: 'kimi'         // requires MOONSHOT_API_KEY
 ```
 
 ### Multi-model experiments
@@ -258,6 +260,22 @@ model: 'vercel/minimax/minimax-m2.1'
 ```
 
 The `vercel/` prefix is required. Using `anthropic/claude-sonnet-4` (without `vercel/`) will fail with a "provider not found" error.
+
+### Kimi CLI model format
+
+Kimi CLI is installed in the sandbox via [`uv tool install kimi-cli`](https://pypi.org/project/kimi-cli/) and invoked in `--print --output-format stream-json` mode. When routed through the Vercel AI Gateway, pass the gateway's model id directly (no prefix). The sandbox writes a `kimi-config.toml` that wires an `openai_legacy` provider to the gateway's OpenAI-compatible endpoint.
+
+```typescript
+// Via AI Gateway — no Moonshot account required
+agent: 'vercel-ai-gateway/kimi'
+model: 'moonshotai/kimi-k2-0905'         // default
+model: 'moonshotai/kimi-k2-thinking'
+model: 'moonshotai/kimi-k2-5'
+
+// Direct Moonshot API
+agent: 'kimi'
+model: 'kimi-k2-0905-preview'            // default
+```
 
 ## A/B Testing
 
@@ -450,6 +468,7 @@ Every run requires an API key for the agent and a token for the sandbox. Classif
 | `OPENAI_API_KEY`     | `agent: 'codex'`                       | Direct OpenAI API key                                                                        |
 | `GEMINI_API_KEY`     | `agent: 'gemini'`                      | Direct Google Gemini API key                                                                 |
 | `CURSOR_API_KEY`     | `agent: 'cursor'`                      | Direct Cursor API key                                                                        |
+| `MOONSHOT_API_KEY`   | `agent: 'kimi'`                        | Direct Moonshot API key (not required for `vercel-ai-gateway/kimi`)                          |
 | `VERCEL_TOKEN`       | Always (pick one)                      | Vercel personal access token -- for local dev                                                |
 | `VERCEL_OIDC_TOKEN`  | Always (pick one) OR for classifier    | Vercel OIDC token -- for CI/CD pipelines, or enables classifier without `AI_GATEWAY_API_KEY` |
 

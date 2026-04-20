@@ -10,6 +10,7 @@ import { parseCodexTranscript } from './parsers/codex.js';
 import { parseOpenCodeTranscript } from './parsers/opencode.js';
 import { parseGeminiTranscript } from './parsers/gemini.js';
 import { parseCursorTranscript } from './parsers/cursor.js';
+import { parseKimiTranscript } from './parsers/kimi.js';
 
 describe('o11y', () => {
   describe('parseTranscript', () => {
@@ -47,7 +48,7 @@ describe('o11y', () => {
 
       expect(result.parseSuccess).toBe(false);
       expect(result.parseErrors).toContain(
-        'No parser available for agent: unsupported-agent. Supported agents: claude-code, codex, opencode, gemini, cursor'
+        'No parser available for agent: unsupported-agent. Supported agents: claude-code, codex, opencode, gemini, cursor, kimi'
       );
       expect(result.events).toEqual([]);
       expect(result.summary.totalToolCalls).toBe(0);
@@ -734,6 +735,143 @@ describe('o11y', () => {
       expect(result.summary.toolCalls.file_read).toBe(1);
       expect(result.summary.totalToolCalls).toBe(1);
       expect(result.summary.filesRead).toContain('a.ts');
+    });
+  });
+
+  describe('Kimi parser', () => {
+    it('parses assistant message with tool_calls', () => {
+      const line = JSON.stringify({
+        role: 'assistant',
+        content: "I'll write the file.",
+        tool_calls: [
+          {
+            id: 'functions.WriteFile:0',
+            type: 'function',
+            function: {
+              name: 'WriteFile',
+              arguments: JSON.stringify({ path: 'hello.txt', content: 'hi' }),
+            },
+          },
+        ],
+      });
+
+      const { events } = parseKimiTranscript(line);
+
+      expect(events).toHaveLength(2);
+      expect(events[0].type).toBe('message');
+      expect(events[0].role).toBe('assistant');
+      expect(events[1].type).toBe('tool_call');
+      expect(events[1].tool?.name).toBe('file_write');
+      expect(events[1].tool?.originalName).toBe('WriteFile');
+      expect(events[1].tool?.args?._extractedPath).toBe('hello.txt');
+    });
+
+    it('parses tool result and pairs it with pending call', () => {
+      const transcript = [
+        JSON.stringify({
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'ReadFile', arguments: JSON.stringify({ path: 'a.ts' }) },
+            },
+          ],
+        }),
+        JSON.stringify({
+          role: 'tool',
+          content: 'file contents',
+          tool_call_id: 'call_1',
+        }),
+      ].join('\n');
+
+      const { events } = parseKimiTranscript(transcript);
+
+      const result = events.find((e) => e.type === 'tool_result');
+      expect(result).toBeDefined();
+      expect(result?.tool?.name).toBe('file_read');
+      expect(result?.tool?.originalName).toBe('ReadFile');
+      expect(result?.tool?.success).toBe(true);
+    });
+
+    it('marks tool_result as failed when content mentions error', () => {
+      const transcript = [
+        JSON.stringify({
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: 'c1',
+              type: 'function',
+              function: { name: 'Shell', arguments: JSON.stringify({ command: 'false' }) },
+            },
+          ],
+        }),
+        JSON.stringify({
+          role: 'tool',
+          content: '<system>Command failed with exit code 1.</system>',
+          tool_call_id: 'c1',
+        }),
+      ].join('\n');
+
+      const { events } = parseKimiTranscript(transcript);
+      const result = events.find((e) => e.type === 'tool_result');
+      expect(result?.tool?.success).toBe(false);
+    });
+
+    it('strips functions. prefix from tool names', () => {
+      const line = JSON.stringify({
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'x',
+            type: 'function',
+            function: { name: 'functions.Shell', arguments: JSON.stringify({ command: 'ls' }) },
+          },
+        ],
+      });
+
+      const { events } = parseKimiTranscript(line);
+      const call = events.find((e) => e.type === 'tool_call');
+      expect(call?.tool?.name).toBe('shell');
+      expect(call?.tool?.args?._extractedCommand).toBe('ls');
+    });
+
+    it('produces a full summary from a realistic transcript', () => {
+      const transcript = [
+        JSON.stringify({
+          role: 'assistant',
+          content: "I'll create the file.",
+          tool_calls: [
+            {
+              id: 'c1',
+              type: 'function',
+              function: {
+                name: 'WriteFile',
+                arguments: JSON.stringify({ path: 'hello.txt', content: 'hi' }),
+              },
+            },
+          ],
+        }),
+        JSON.stringify({
+          role: 'tool',
+          content: '<system>File successfully overwritten. Current size: 2 bytes.</system>',
+          tool_call_id: 'c1',
+        }),
+        JSON.stringify({
+          role: 'assistant',
+          content: 'Done.',
+        }),
+      ].join('\n');
+
+      const result = parseTranscript(transcript, 'kimi');
+
+      expect(result.parseSuccess).toBe(true);
+      expect(result.summary.totalTurns).toBe(2);
+      expect(result.summary.toolCalls.file_write).toBe(1);
+      expect(result.summary.filesModified).toContain('hello.txt');
     });
   });
 

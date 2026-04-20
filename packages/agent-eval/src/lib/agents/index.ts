@@ -8,6 +8,7 @@ import { createCodexAgent } from './codex.js';
 import { createOpenCodeAgent } from './opencode.js';
 import { createGeminiAgent } from './gemini.js';
 import { createCursorAgent } from './cursor.js';
+import { createKimiAgent } from './kimi.js';
 
 // Register all agent variants (Vercel AI Gateway + Direct API)
 registerAgent(createClaudeCodeAgent({ useVercelAiGateway: true }));   // vercel-ai-gateway/claude-code
@@ -15,6 +16,8 @@ registerAgent(createClaudeCodeAgent({ useVercelAiGateway: false }));  // claude-
 registerAgent(createCodexAgent({ useVercelAiGateway: true }));        // vercel-ai-gateway/codex
 registerAgent(createCodexAgent({ useVercelAiGateway: false }));       // codex
 registerAgent(createOpenCodeAgent());                                 // vercel-ai-gateway/opencode
+registerAgent(createKimiAgent({ useVercelAiGateway: true }));         // vercel-ai-gateway/kimi
+registerAgent(createKimiAgent({ useVercelAiGateway: false }));        // kimi
 registerAgent(createGeminiAgent());                                   // gemini
 registerAgent(createCursorAgent());                                   // cursor
 

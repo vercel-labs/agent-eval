@@ -243,3 +243,11 @@ export const GEMINI_DIRECT = {
 export const CURSOR_DIRECT = {
   apiKeyEnvVar: 'CURSOR_API_KEY',
 } as const;
+
+/**
+ * Direct API configuration for Moonshot AI (Kimi).
+ */
+export const MOONSHOT_DIRECT = {
+  baseUrl: 'https://api.moonshot.ai/v1',
+  apiKeyEnvVar: 'MOONSHOT_API_KEY',
+} as const;

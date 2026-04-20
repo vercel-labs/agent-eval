@@ -46,6 +46,8 @@ const hasGeminiCredentials = !!process.env.GEMINI_API_KEY && hasSandbox;
 const hasCursorCredentials = !!process.env.CURSOR_API_KEY && hasSandbox;
 // OpenCode credentials (only supports AI Gateway)
 const hasOpenCodeCredentials = hasAiGatewayCredentials;
+// Kimi via AI Gateway: no Moonshot account required.
+const hasKimiGatewayCredentials = hasAiGatewayCredentials;
 
 describe.skipIf(!process.env.INTEGRATION_TEST)('integration tests', () => {
   beforeAll(() => {
@@ -968,6 +970,70 @@ test('contains greeting', () => {
         }
       }
     }, 300000); // 5 minute timeout
+  });
+
+  describe.skipIf(!hasKimiGatewayCredentials)('Kimi CLI (Vercel AI Gateway) sandbox execution', () => {
+    it('can run a simple eval with Kimi CLI via AI Gateway', async () => {
+      const fixtureDir = join(TEST_DIR, 'simple-eval-kimi');
+      mkdirSync(join(fixtureDir, 'src'), { recursive: true });
+
+      writeFileSync(
+        join(fixtureDir, 'PROMPT.md'),
+        'Add a function called greet in src/index.ts that returns "Hello from Kimi!"'
+      );
+      writeFileSync(
+        join(fixtureDir, 'EVAL.ts'),
+        `
+import { test, expect } from 'vitest';
+import { readFileSync } from 'fs';
+
+test('greet exists', () => {
+  const content = readFileSync('src/index.ts', 'utf-8');
+  expect(content).toContain('greet');
+});
+`
+      );
+      writeFileSync(
+        join(fixtureDir, 'package.json'),
+        JSON.stringify({
+          name: 'simple-eval-kimi',
+          type: 'module',
+          scripts: { build: 'tsc' },
+          devDependencies: { typescript: '^5.0.0', vitest: '^2.1.0' },
+        })
+      );
+      writeFileSync(
+        join(fixtureDir, 'tsconfig.json'),
+        JSON.stringify({
+          compilerOptions: {
+            target: 'ES2020',
+            module: 'ESNext',
+            moduleResolution: 'bundler',
+            outDir: 'dist',
+          },
+          include: ['src'],
+        })
+      );
+
+      const fixture = loadFixture(TEST_DIR, 'simple-eval-kimi');
+
+      const result = await runSingleEval(fixture, {
+        agent: 'vercel-ai-gateway/kimi',
+        model: 'moonshotai/kimi-k2-0905',
+        timeout: 240,
+        apiKey: process.env.AI_GATEWAY_API_KEY!,
+        scripts: ['build'],
+      });
+
+      expect(result.result.duration).toBeGreaterThan(0);
+      expect(result.result.status).toBeDefined();
+      if (result.result.status === 'failed') {
+        console.error('Kimi agent failed with error:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
+      // Verify transcript was captured and parsed successfully.
+      expect(result.transcript).toBeTruthy();
+    }, 420000); // 7 minute timeout — uv install + first Kimi run can be slow.
   });
 
   describe.skipIf(!hasOpenCodeCredentials)('OpenCode (Vercel AI Gateway) sandbox execution', () => {

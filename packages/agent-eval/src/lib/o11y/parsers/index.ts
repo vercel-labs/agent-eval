@@ -16,6 +16,7 @@ import { parseCodexTranscript } from './codex.js';
 import { parseOpenCodeTranscript } from './opencode.js';
 import { parseGeminiTranscript } from './gemini.js';
 import { parseCursorTranscript } from './cursor.js';
+import { parseKimiTranscript } from './kimi.js';
 
 /**
  * Supported agent types for parsing.
@@ -26,6 +27,8 @@ export type ParseableAgent =
   | 'vercel-ai-gateway/codex'
   | 'codex'
   | 'vercel-ai-gateway/opencode'
+  | 'vercel-ai-gateway/kimi'
+  | 'kimi'
   | 'gemini'
   | 'cursor';
 
@@ -38,6 +41,7 @@ const AGENT_PARSERS = {
   'opencode': parseOpenCodeTranscript,
   'gemini': parseGeminiTranscript,
   'cursor': parseCursorTranscript,
+  'kimi': parseKimiTranscript,
 } as const;
 
 /**
