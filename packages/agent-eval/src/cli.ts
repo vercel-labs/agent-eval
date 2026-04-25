@@ -278,7 +278,7 @@ program
  * and classification. Used by both `run-all` subcommand and the default
  * (no-args) invocation.
  */
-async function runAllCommand(experimentArgs: string[], options: { dry?: boolean; force?: boolean; smoke?: boolean; ackFailures?: boolean; maxRetries?: number }) {
+async function runAllCommand(experimentArgs: string[], options: { dry?: boolean; force?: boolean; smoke?: boolean; ackFailures?: boolean }) {
     try {
       const projectDir = process.cwd();
       const experimentsDir = resolve(projectDir, 'experiments');
@@ -495,52 +495,31 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
             fingerprints[fixture.name] = computeFingerprint(fixture.path, modelConfig);
           }
 
-          // Auto-retry non-model failures (infra/timeout) up to maxRetries rounds.
-          // After retries are exhausted, remaining non-model failures are auto-acknowledged.
           const classifierOn = isClassifierEnabled();
-          const maxRetries = options.ackFailures ? 0 : (options.maxRetries ?? 5);
-          const shouldRetry = classifierOn && !options.smoke && maxRetries > 0;
 
-          for (let retryRound = 0; retryRound <= maxRetries; retryRound++) {
-            const isLastRetry = retryRound === maxRetries;
-
-            // Scan for reusable results (respect --force only on first round)
-            let fixturesToRun = selectedFixtures;
-            if ((!options.force || retryRound > 0) && !options.smoke) {
-              const reusable = scanReusableResults(resultsDir, experimentName, fingerprints);
-              if (reusable.size > 0) {
-                fixturesToRun = selectedFixtures.filter((f) => !reusable.has(f.name));
-              }
+          // Scan for reusable results
+          let fixturesToRun = selectedFixtures;
+          if (!options.force && !options.smoke) {
+            const reusable = scanReusableResults(resultsDir, experimentName, fingerprints);
+            if (reusable.size > 0) {
+              fixturesToRun = selectedFixtures.filter((f) => !reusable.has(f.name));
             }
+          }
 
-            if (fixturesToRun.length === 0) break;
-
-            // Dashboard / console logging
-            const dashboardName = retryRound === 0
-              ? experimentName
-              : `${experimentName} (retry ${retryRound})`;
-
-            if (retryRound > 0 && !dashboard) {
-              console.log(chalk.yellow(`\n  Retrying ${fixturesToRun.length} non-model failure(s) (retry ${retryRound}/${maxRetries})...`));
-            }
-
+          if (fixturesToRun.length > 0) {
             if (dashboard) {
-              dashboard.addExperiment(dashboardName, {
+              dashboard.addExperiment(experimentName, {
                 agent: config.agent,
                 model,
                 totalEvals: fixturesToRun.length,
               });
-            } else if (retryRound === 0) {
+            } else {
               console.log(chalk.blue(`\nRunning ${experimentName}: ${fixturesToRun.length} eval(s)`));
             }
 
-            // Build the progress handler
             const onProgress: (event: ProgressEvent) => void = dashboard
-              ? (event) => dashboard.handleEvent(dashboardName, event)
+              ? (event) => dashboard.handleEvent(experimentName, event)
               : createConsoleProgressHandler({ experimentName, model, agent: config.agent });
-
-            let hasRetryableFailures = false;
-            const retryingEvals = new Set<string>();
 
             try {
               const results = await runExperiment({
@@ -561,7 +540,7 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
 
               if (classifierOn) {
                 if (dashboard) {
-                  dashboard.setPhase(dashboardName, 'classifying');
+                  dashboard.setPhase(experimentName, 'classifying');
                 }
 
                 if (failedEvals.length > 0 && !options.smoke) {
@@ -569,6 +548,7 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
                   const classifyLimit = pLimit(4);
                   let classifyingDone = 0;
                   const classifyingTotal = failedEvals.length;
+                  let hasNonModelFailures = false;
 
                   await Promise.all(
                     failedEvals.map((evalSummary) =>
@@ -582,7 +562,7 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
 
                         classifyingDone++;
                         if (dashboard) {
-                          dashboard.setClassifyingProgress(dashboardName, classifyingDone, classifyingTotal);
+                          dashboard.setClassifyingProgress(experimentName, classifyingDone, classifyingTotal);
                         }
 
                         if (classification) {
@@ -594,27 +574,19 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
                           }
 
                           if (classification.failureType !== 'model') {
-                            const shouldAck = options.ackFailures || (shouldRetry && isLastRetry);
-                            if (shouldAck) {
+                            hasNonModelFailures = true;
+                            if (options.ackFailures) {
                               classification.acknowledged = true;
                               const classificationPath = resolve(evalResultDir, 'classification.json');
                               writeFileSync(classificationPath, JSON.stringify(classification, null, 2));
                               if (!dashboard) {
                                 console.log(chalk.yellow(`  ✓ Acknowledged ${evalSummary.name} (${classification.failureType} failure — kept as final result)`));
                               }
-                            } else if (shouldRetry) {
-                              rmSync(evalResultDir, { recursive: true });
-                              if (!dashboard) {
-                                console.log(chalk.gray(`  ↻ Will retry ${evalSummary.name} (${classification.failureType} failure)`));
-                              }
-                              hasRetryableFailures = true;
-                              retryingEvals.add(evalSummary.name);
                             } else {
                               rmSync(evalResultDir, { recursive: true });
                               if (!dashboard) {
                                 console.log(chalk.gray(`  🗑️  Removed ${evalSummary.name} (${classification.failureType} failure)`));
                               }
-                              hasRetryableFailures = true;
                             }
                           }
                         }
@@ -622,26 +594,23 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
                     )
                   );
 
-                  if (hasRetryableFailures && !shouldRetry && !options.ackFailures && !dashboard) {
+                  if (hasNonModelFailures && !options.ackFailures && !dashboard) {
                     console.log(chalk.yellow(`\n  To keep non-model failures as final results, re-run with --ack-failures`));
                   }
                 }
               }
 
-              // Complete the experiment in the dashboard
               if (dashboard) {
-                dashboard.completeExperiment(dashboardName, results, classifications, retryingEvals.size > 0 ? retryingEvals : undefined);
+                dashboard.completeExperiment(experimentName, results, classifications);
               }
             } catch (err) {
               console.error(chalk.red(`  Error running ${experimentName}: ${err instanceof Error ? err.message : err}`));
               allPassed = false;
               if (dashboard) {
-                dashboard.setPhase(dashboardName, 'done');
+                dashboard.setPhase(experimentName, 'done');
               }
-              break; // Don't retry on framework errors
             }
 
-            // Housekeeping after each round
             const stats = housekeep(resultsDir, experimentName);
             if (stats.removedDuplicates + stats.removedIncomplete + stats.removedNonModelFailures > 0) {
               console.log(
@@ -650,9 +619,6 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
                 )
               );
             }
-
-            // Continue retrying if there are retryable failures
-            if (!hasRetryableFailures || !shouldRetry) break;
           }
 
           // Determine final pass/fail for this experiment+model
@@ -693,7 +659,6 @@ program
   .option('--force', 'Ignore fingerprints, re-run everything')
   .option('--smoke', 'Run 1 eval per experiment for sanity checking')
   .option('--ack-failures', 'Keep non-model failures (infra/timeout) as final results instead of deleting them')
-  .option('--max-retries <n>', 'Maximum retry rounds for non-model failures (default: 5)', parseInt)
   .action(runAllCommand);
 
 /**
@@ -709,8 +674,7 @@ program
   .option('--smoke', 'Run a single eval to verify setup (API keys, model IDs, sandbox)')
   .option('--force', 'Ignore fingerprints, re-run everything (only applies when running all)')
   .option('--ack-failures', 'Keep non-model failures (infra/timeout) as final results instead of deleting them')
-  .option('--max-retries <n>', 'Maximum retry rounds for non-model failures (default: 5)', parseInt)
-  .action(async (configInput: string | undefined, options: { dry?: boolean; smoke?: boolean; force?: boolean; ackFailures?: boolean; maxRetries?: number }) => {
+  .action(async (configInput: string | undefined, options: { dry?: boolean; smoke?: boolean; force?: boolean; ackFailures?: boolean }) => {
     if (!configInput) {
       await runAllCommand([], options);
       return;

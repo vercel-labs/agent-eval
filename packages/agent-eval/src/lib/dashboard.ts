@@ -115,8 +115,7 @@ export class Dashboard {
   completeExperiment(
     experimentName: string,
     results: ExperimentResults,
-    classifications: Map<string, Classification>,
-    retrying?: Set<string>
+    classifications: Map<string, Classification>
   ) {
     const state = this.experiments.get(experimentName);
     if (!state) return;
@@ -124,7 +123,7 @@ export class Dashboard {
     state.phase = 'done';
 
     logUpdate.clear();
-    console.log(renderCompletedBlock(experimentName, state, results, classifications, retrying));
+    console.log(renderCompletedBlock(experimentName, state, results, classifications));
     this.render();
   }
 
@@ -241,8 +240,7 @@ export function renderCompletedBlock(
   experimentName: string,
   _state: ExperimentState,
   results: ExperimentResults,
-  classifications: Map<string, Classification>,
-  retrying?: Set<string>
+  classifications: Map<string, Classification>
 ): string {
   const lines: string[] = [];
   const width = Math.min(process.stdout.columns || 80, 80);
@@ -277,7 +275,7 @@ export function renderCompletedBlock(
       const c = classifications.get(evalSummary.name);
       if (c) {
         const suffix = c.failureType !== 'model'
-          ? chalk.gray(retrying?.has(evalSummary.name) ? ' (retrying)' : c.acknowledged ? ' (kept)' : ' (removed)')
+          ? chalk.gray(c.acknowledged ? ' (kept)' : ' (removed)')
           : '';
         lines.push(chalk.gray(`   ${evalSummary.name}: ${c.failureType} \u2014 ${c.failureReason}${suffix}`));
       }
