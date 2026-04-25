@@ -1,5 +1,11 @@
 # @vercel/agent-eval
 
+## 0.13.0
+
+### Minor Changes
+
+- [#118](https://github.com/vercel-labs/agent-eval/pull/118) [`660ea3e`](https://github.com/vercel-labs/agent-eval/commit/660ea3ea201307f4f8a42efa2f4f4da396a545e4) Thanks [@gaojude](https://github.com/gaojude)! - Remove auto-retry of non-model failures. The `--max-retries` flag is gone; non-model failures are now removed by default (re-run to retry) or kept with `--ack-failures`.
+
 ## 0.12.1
 
 ### Patch Changes
