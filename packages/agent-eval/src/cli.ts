@@ -549,16 +549,22 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
                   let classifyingDone = 0;
                   const classifyingTotal = failedEvals.length;
                   let hasNonModelFailures = false;
+                  const classifierErrors: { evalName: string; error: unknown }[] = [];
 
                   await Promise.all(
                     failedEvals.map((evalSummary) =>
                       classifyLimit(async () => {
                         const evalResultDir = resolve(resultsDir, experimentName, timestamp, evalSummary.name);
-                        const classification = await classifyFailure(
-                          evalResultDir,
-                          evalSummary.name,
-                          experimentName
-                        );
+                        let classification: Classification | null = null;
+                        try {
+                          classification = await classifyFailure(
+                            evalResultDir,
+                            evalSummary.name,
+                            experimentName
+                          );
+                        } catch (err) {
+                          classifierErrors.push({ evalName: evalSummary.name, error: err });
+                        }
 
                         classifyingDone++;
                         if (dashboard) {
@@ -593,6 +599,37 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
                       })
                     )
                   );
+
+                  if (classifierErrors.length > 0) {
+                    // Surface classifier failures loudly. Without classification.json,
+                    // the cache reuse logic in scanReusableResults will force these
+                    // failures to re-run on every subsequent invocation. The user
+                    // needs to know exactly why classification failed (e.g. AI gateway
+                    // billing, network) so they can fix the root cause.
+                    console.error(
+                      chalk.red(
+                        `\n  ⚠️  Classifier failed for ${classifierErrors.length}/${classifyingTotal} eval(s):`
+                      )
+                    );
+                    const seen = new Set<string>();
+                    for (const { evalName, error } of classifierErrors) {
+                      const msg = error instanceof Error ? error.message : String(error);
+                      console.error(chalk.red(`     - ${evalName}: ${msg.split('\n')[0]}`));
+                      seen.add(msg.split('\n')[0]);
+                    }
+                    console.error(
+                      chalk.gray(
+                        `     These failures have no classification.json and will re-run next invocation.`
+                      )
+                    );
+                    if (seen.size === 1 && [...seen][0].toLowerCase().includes('insufficient funds')) {
+                      console.error(
+                        chalk.gray(
+                          `     Top up your AI Gateway credits at https://vercel.com/dashboard → AI to fix.`
+                        )
+                      );
+                    }
+                  }
 
                   if (hasNonModelFailures && !options.ackFailures && !dashboard) {
                     console.log(chalk.yellow(`\n  To keep non-model failures as final results, re-run with --ack-failures`));

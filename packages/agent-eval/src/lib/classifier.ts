@@ -199,6 +199,10 @@ export function createClassifierTools(evalResultDir: string) {
 /**
  * Classify a failure using AI via the Vercel AI Gateway.
  * Requires AI_GATEWAY_API_KEY in the environment.
+ *
+ * Throws on AI gateway / network errors so the caller can surface them.
+ * Returns null only when the model itself failed to call classify() within
+ * its tool budget — a soft, semantic miss.
  */
 export async function classifyWithAI(
   evalResultDir: string,
@@ -231,19 +235,15 @@ export async function classifyWithAI(
     }),
   };
 
-  try {
-    await generateText({
-      model: gateway('anthropic/claude-haiku-4-5-20251001'),
-      system: CLASSIFIER_SYSTEM_PROMPT,
-      prompt: `Classify the failure for eval "${evalName}" (experiment: ${experimentName}). Use the exploration tools to investigate, then call classify() with your verdict.`,
-      tools: allTools,
-      stopWhen: hasToolCall('classify'),
-    });
+  await generateText({
+    model: gateway('anthropic/claude-haiku-4-5-20251001'),
+    system: CLASSIFIER_SYSTEM_PROMPT,
+    prompt: `Classify the failure for eval "${evalName}" (experiment: ${experimentName}). Use the exploration tools to investigate, then call classify() with your verdict.`,
+    tools: allTools,
+    stopWhen: hasToolCall('classify'),
+  });
 
-    return classification;
-  } catch {
-    return null;
-  }
+  return classification;
 }
 
 /**
@@ -251,6 +251,7 @@ export async function classifyWithAI(
  * Requires AI_GATEWAY_API_KEY in the environment.
  *
  * Caches results in classification.json within the eval result directory.
+ * Throws if the AI gateway call itself fails — callers must handle.
  */
 export async function classifyFailure(
   evalResultDir: string,
@@ -268,7 +269,7 @@ export async function classifyFailure(
     // No cache
   }
 
-  // Classify with AI
+  // Classify with AI — let errors propagate so the caller can report them.
   const classification = await classifyWithAI(evalResultDir, evalName, experimentName);
 
   // Cache the result
