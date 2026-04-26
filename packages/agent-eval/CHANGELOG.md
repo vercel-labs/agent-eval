@@ -1,5 +1,11 @@
 # @vercel/agent-eval
 
+## 0.13.1
+
+### Patch Changes
+
+- [#121](https://github.com/vercel-labs/agent-eval/pull/121) [`384133b`](https://github.com/vercel-labs/agent-eval/commit/384133b9823107d14659f78a6af98cbd37949a14) Thanks [@gaojude](https://github.com/gaojude)! - Surface AI Gateway errors during classification instead of swallowing them. `classifyWithAI` and `classifyFailure` now throw on gateway/network failures, and `runAllCommand` collects per-eval classifier errors and prints them at the end of the classify phase. Previously a 402 (insufficient funds), network blip, or any other gateway error would silently leave failures with no `classification.json`, which the cache reuse path then refuses to reuse — causing those evals to re-run on every subsequent invocation.
+
 ## 0.13.0
 
 ### Minor Changes
