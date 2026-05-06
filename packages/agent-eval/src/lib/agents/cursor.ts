@@ -20,6 +20,7 @@ import {
   CURSOR_DIRECT,
   initGitAndCommit,
   injectTranscriptContext,
+  installDependenciesIfPackageJsonExists,
 } from './shared.js';
 
 /** Union type for sandbox implementations */
@@ -136,15 +137,7 @@ export function createCursorAgent(): Agent {
           await options.setup(sandbox);
         }
 
-        // Install dependencies
-        let installResult = await sandbox.runCommand('npm', ['install']);
-        if (installResult.exitCode !== 0) {
-          installResult = await sandbox.runCommand('npm', ['install']);
-        }
-        if (installResult.exitCode !== 0) {
-          const output = (installResult.stdout + installResult.stderr).trim().split('\n').slice(-10).join('\n');
-          throw new Error(`npm install failed (exit code ${installResult.exitCode}):\n${output}`);
-        }
+        await installDependenciesIfPackageJsonExists(sandbox);
 
         // Install Cursor CLI globally using official installation script
         const cliInstall = await sandbox.runShell(
