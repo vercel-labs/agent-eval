@@ -106,6 +106,21 @@ export async function runValidation(
   return results;
 }
 
+export async function installDependenciesIfPackageJsonExists(sandbox: AnySandbox): Promise<void> {
+  if (!(await sandbox.fileExists('package.json'))) {
+    return;
+  }
+
+  let installResult = await sandbox.runCommand('npm', ['install']);
+  if (installResult.exitCode !== 0) {
+    installResult = await sandbox.runCommand('npm', ['install']);
+  }
+  if (installResult.exitCode !== 0) {
+    const output = (installResult.stdout + installResult.stderr).trim().split('\n').slice(-10).join('\n');
+    throw new Error(`npm install failed (exit code ${installResult.exitCode}):\n${output}`);
+  }
+}
+
 export async function initGitAndCommit(sandbox: AnySandbox): Promise<void> {
   await sandbox.writeFiles({
     ".gitignore": "node_modules/\n",
