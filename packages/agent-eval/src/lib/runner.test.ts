@@ -554,6 +554,9 @@ describe('runExperiment', () => {
         signal: expect.any(AbortSignal), // Signal always passed for timeout cleanup
         sandbox: undefined,
         agentOptions: undefined,
+        experimentName: 'test-experiment',
+        evalName: 'test-eval',
+        runIndex: 0,
       });
     });
 
