@@ -22,6 +22,7 @@ import { computeFingerprint } from './lib/fingerprint.js';
 import { scanReusableResults } from './lib/results.js';
 import { isClassifierEnabled, classifyFailure } from './lib/classifier.js';
 import { housekeep } from './lib/housekeeping.js';
+import { cleanupActiveSandboxes } from './lib/docker-sandbox.js';
 import { spawnSync } from 'child_process';
 import { minimatch } from 'minimatch';
 import pLimit from 'p-limit';
@@ -33,6 +34,25 @@ dotenvConfig({ override: true });
 // Read version from package.json
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-8'));
+
+let shuttingDown = false;
+async function shutdownAndExit(signal: NodeJS.Signals): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.error(chalk.yellow(`\nReceived ${signal}, cleaning up Docker sandboxes...`));
+  try {
+    const stopped = await cleanupActiveSandboxes();
+    if (stopped > 0) {
+      console.error(chalk.yellow(`Stopped ${stopped} sandbox container(s).`));
+    }
+  } catch {
+    // Best effort
+  }
+  process.exit(130);
+}
+
+process.on('SIGINT', shutdownAndExit);
+process.on('SIGTERM', shutdownAndExit);
 
 const program = new Command();
 program.enablePositionalOptions();
