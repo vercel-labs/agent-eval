@@ -191,6 +191,9 @@ export async function runExperiment(
         signal: attemptController.signal,
         sandbox: config.sandbox,
         agentOptions: config.agentOptions,
+        experimentName,
+        evalName: fixture.name,
+        runIndex,
       }),
       new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
@@ -404,6 +407,7 @@ export async function runSingleEval<T extends ResolvedExperimentConfig['model']>
 		validation: options.validation,
 		sandbox: options.sandbox,
 		agentOptions: options.agentOptions,
+		evalName: fixture.name,
 	});
 
     results.push(agentResultToEvalRunData(agentResult));

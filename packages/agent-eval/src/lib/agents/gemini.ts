@@ -113,6 +113,9 @@ export function createGeminiAgent(): Agent {
           timeout: options.timeout,
           runtime: 'node24',
           backend: options.sandbox,
+          experimentName: options.experimentName,
+          evalName: options.evalName,
+          runIndex: options.runIndex,
         });
 
         // Check for abort after sandbox creation (abort may have fired during create)

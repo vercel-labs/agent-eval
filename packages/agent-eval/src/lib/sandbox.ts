@@ -73,6 +73,12 @@ export interface SandboxOptions {
   teamId?: string;
   /** Optional explicit Vercel project ID for sandbox API auth */
   projectId?: string;
+  /** Experiment name (used by Docker backend for container naming) */
+  experimentName?: string;
+  /** Eval/fixture name (used by Docker backend for container naming) */
+  evalName?: string;
+  /** Run index (used by Docker backend for container naming) */
+  runIndex?: number;
 }
 
 /**
@@ -148,6 +154,9 @@ export class SandboxManager implements Sandbox {
   /**
    * Create a new sandbox instance.
    */
+  // TODO: When @vercel/sandbox v2 is GA, pass experimentName/evalName/runIndex
+  // through as the sandbox `name` for parity with the Docker backend.
+  // See https://vercel.com/docs/vercel-sandbox/concepts/tags
   static async create(options: SandboxOptions = {}): Promise<SandboxManager> {
     const timeout = options.timeout ?? DEFAULT_SANDBOX_TIMEOUT;
     const runtime = options.runtime ?? 'node24';
@@ -354,6 +363,9 @@ export async function createSandbox(
     return DockerSandboxManager.create({
       timeout: options.timeout,
       runtime: options.runtime,
+      experimentName: options.experimentName,
+      evalName: options.evalName,
+      runIndex: options.runIndex,
     });
   }
 

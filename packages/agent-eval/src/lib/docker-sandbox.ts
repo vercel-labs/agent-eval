@@ -49,6 +49,34 @@ export interface DockerSandboxOptions {
   timeout?: number;
   /** Runtime environment */
   runtime?: 'node20' | 'node24';
+  /** Experiment name (used for container naming) */
+  experimentName?: string;
+  /** Eval/fixture name (used for container naming) */
+  evalName?: string;
+  /** Run index (used for container naming) */
+  runIndex?: number;
+}
+
+/**
+ * Sanitize a string for use in a Docker container name.
+ * Docker container names must match [a-zA-Z0-9][a-zA-Z0-9_.-]*.
+ */
+function sanitizeForContainerName(input: string): string {
+  return input.replace(/[^a-zA-Z0-9_.-]/g, '-');
+}
+
+/**
+ * Build a human-readable container name from experiment/eval/run info,
+ * so `docker ps` is easy to skim.
+ */
+function buildContainerName(opts: DockerSandboxOptions): string {
+  const parts: string[] = ['agent-eval'];
+  if (opts.experimentName) parts.push(sanitizeForContainerName(opts.experimentName));
+  if (opts.evalName) parts.push(sanitizeForContainerName(opts.evalName));
+  if (opts.runIndex !== undefined) parts.push(`run${opts.runIndex}`);
+  // Random suffix avoids collisions across concurrent runs of the same eval
+  parts.push(Math.random().toString(36).slice(2, 8));
+  return parts.join('_');
 }
 
 /**
@@ -61,11 +89,13 @@ export class DockerSandboxManager implements Sandbox {
   private _containerId: string = '';
   private timeout: number;
   private runtime: string;
+  private options: DockerSandboxOptions;
 
   constructor(options: DockerSandboxOptions = {}) {
     this.docker = new Docker();
     this.timeout = options.timeout ?? DEFAULT_TIMEOUT;
     this.runtime = options.runtime ?? 'node24';
+    this.options = options;
   }
 
   /**
@@ -92,6 +122,7 @@ export class DockerSandboxManager implements Sandbox {
     // Create the container (starts as root for setup, then switches to non-root user)
     this.container = await this.docker.createContainer({
       Image: imageName,
+      name: buildContainerName(this.options),
       Cmd: ['sleep', 'infinity'], // Keep container running
       WorkingDir: CONTAINER_WORKDIR,
       Tty: true,

@@ -28,6 +28,12 @@ export interface AgentRunOptions {
   sandbox?: SandboxBackend | 'auto';
   /** Agent-specific options (e.g., binaryUrl, extraProviders for opencode) */
   agentOptions?: Record<string, unknown>;
+  /** Experiment name (used for sandbox naming) */
+  experimentName?: string;
+  /** Eval/fixture name (used for sandbox naming) */
+  evalName?: string;
+  /** Run index (used for sandbox naming) */
+  runIndex?: number;
 }
 
 /**
