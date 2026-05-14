@@ -449,6 +449,203 @@ export function createProgressDisplay(
 	);
 }
 
+export interface EvalTrendPoint {
+	timestamp: string;
+	passRate: number;
+	passedRuns: number;
+	totalRuns: number;
+}
+
+export interface EvalTrend {
+	evalName: string;
+	runCount: number;
+	firstPassRate: number;
+	recentPassRate: number;
+	slope: number;
+	direction: 'improving' | 'degrading' | 'stable';
+	points: EvalTrendPoint[];
+}
+
+export interface ExperimentTrendReport {
+	experimentName: string;
+	window: number;
+	evalTrends: EvalTrend[];
+	anyRegression: boolean;
+}
+
+interface SummarySnapshot {
+	passRate: number;
+	passedRuns: number;
+	totalRuns: number;
+}
+
+const TREND_STABLE_THRESHOLD = 0.5;
+
+function parsePassRate(passRate: unknown): number | undefined {
+	if (typeof passRate === 'number' && Number.isFinite(passRate)) {
+		return passRate;
+	}
+
+	if (typeof passRate !== 'string') {
+		return undefined;
+	}
+
+	const trimmed = passRate.trim();
+	const numeric = trimmed.endsWith('%') ? trimmed.slice(0, -1) : trimmed;
+	const parsed = Number.parseFloat(numeric);
+	return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseSummarySnapshot(summary: unknown): SummarySnapshot | undefined {
+	if (!summary || typeof summary !== 'object') {
+		return undefined;
+	}
+
+	const record = summary as Record<string, unknown>;
+	const passRate = parsePassRate(record.passRate);
+	const passedRuns = record.passedRuns;
+	const totalRuns = record.totalRuns;
+
+	if (
+		passRate === undefined ||
+		typeof passedRuns !== 'number' ||
+		typeof totalRuns !== 'number' ||
+		!Number.isFinite(passedRuns) ||
+		!Number.isFinite(totalRuns)
+	) {
+		return undefined;
+	}
+
+	return {
+		passRate,
+		passedRuns,
+		totalRuns,
+	};
+}
+
+function linearRegressionSlope(points: EvalTrendPoint[]): number {
+	const count = points.length;
+	const meanX = (count - 1) / 2;
+	const meanY =
+		points.reduce((sum, point) => sum + point.passRate, 0) / count;
+
+	let numerator = 0;
+	let denominator = 0;
+	for (let i = 0; i < count; i++) {
+		const xDelta = i - meanX;
+		numerator += xDelta * (points[i].passRate - meanY);
+		denominator += xDelta * xDelta;
+	}
+
+	return denominator === 0 ? 0 : numerator / denominator;
+}
+
+function trendDirection(slope: number): EvalTrend['direction'] {
+	if (slope > TREND_STABLE_THRESHOLD) return 'improving';
+	if (slope < -TREND_STABLE_THRESHOLD) return 'degrading';
+	return 'stable';
+}
+
+/**
+ * Analyze pass-rate trends for evals in an experiment.
+ *
+ * Reads results/<experiment>/<timestamp>/<eval>/summary.json chronologically,
+ * uses the newest `window` timestamps, and returns per-eval linear pass-rate
+ * trends. Invalid or incomplete summaries are skipped.
+ */
+export function analyzeExperimentTrend(
+	resultsDir: string,
+	experimentName: string,
+	window = 10,
+): ExperimentTrendReport {
+	const experimentDir = join(resultsDir, experimentName);
+	const report: ExperimentTrendReport = {
+		experimentName,
+		window,
+		evalTrends: [],
+		anyRegression: false,
+	};
+
+	if (!existsSync(experimentDir) || window <= 0) {
+		return report;
+	}
+
+	let timestamps: string[];
+	try {
+		timestamps = readdirSync(experimentDir)
+			.filter((timestamp) => {
+				if (timestamp.startsWith('.')) return false;
+				return statSync(join(experimentDir, timestamp)).isDirectory();
+			})
+			.sort()
+			.slice(-window);
+	} catch {
+		return report;
+	}
+
+	const evalPoints = new Map<string, EvalTrendPoint[]>();
+
+	for (const timestamp of timestamps) {
+		const timestampDir = join(experimentDir, timestamp);
+		let evalDirs: string[];
+		try {
+			evalDirs = readdirSync(timestampDir).filter((evalName) => {
+				if (evalName.startsWith('.')) return false;
+				return statSync(join(timestampDir, evalName)).isDirectory();
+			});
+		} catch {
+			continue;
+		}
+
+		for (const evalName of evalDirs) {
+			try {
+				const summary = parseSummarySnapshot(
+					JSON.parse(
+						readFileSync(
+							join(timestampDir, evalName, 'summary.json'),
+							'utf-8',
+						),
+					),
+				);
+				if (!summary) continue;
+
+				const points = evalPoints.get(evalName) ?? [];
+				points.push({
+					timestamp,
+					passRate: summary.passRate,
+					passedRuns: summary.passedRuns,
+					totalRuns: summary.totalRuns,
+				});
+				evalPoints.set(evalName, points);
+			} catch {
+				// Skip missing or malformed summaries.
+			}
+		}
+	}
+
+	for (const [evalName, points] of evalPoints) {
+		if (points.length < 2) continue;
+
+		const slope = linearRegressionSlope(points);
+		const direction = trendDirection(slope);
+		report.evalTrends.push({
+			evalName,
+			runCount: points.length,
+			firstPassRate: points[0].passRate,
+			recentPassRate: points[points.length - 1].passRate,
+			slope,
+			direction,
+			points,
+		});
+		if (direction === 'degrading') {
+			report.anyRegression = true;
+		}
+	}
+
+	report.evalTrends.sort((a, b) => a.evalName.localeCompare(b.evalName));
+	return report;
+}
+
 /**
  * A reusable result found by the scanner.
  */

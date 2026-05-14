@@ -10,6 +10,7 @@ import {
   formatResultsTable,
   formatRunResult,
   scanReusableResults,
+  analyzeExperimentTrend,
 } from './results.js';
 import type { AgentRunResult } from './agents/types.js';
 import type { EvalRunResult, EvalRunData, ResolvedExperimentConfig } from './types.js';
@@ -454,6 +455,134 @@ describe('results utilities', () => {
       const result = scanReusableResults(TEST_DIR, 'my-exp', { 'eval-1': 'abc123' });
       expect(result.size).toBe(1);
       expect(result.get('eval-1')?.timestamp).toBe('2024-01-26T00-00-00.000Z');
+    });
+  });
+
+  describe('analyzeExperimentTrend', () => {
+    function writeTrendSummary(
+      experimentName: string,
+      timestamp: string,
+      evalName: string,
+      summary: Record<string, unknown>
+    ) {
+      const expDir = join(TEST_DIR, experimentName, timestamp, evalName);
+      mkdirSync(expDir, { recursive: true });
+      writeFileSync(join(expDir, 'summary.json'), JSON.stringify(summary));
+    }
+
+    it('reports degrading, improving, and stable eval trends', () => {
+      for (const [timestamp, alpha, beta, gamma] of [
+        ['2024-01-24T00-00-00.000Z', '100%', 20, '80%'],
+        ['2024-01-25T00-00-00.000Z', '70%', 50, '81%'],
+        ['2024-01-26T00-00-00.000Z', '40%', 80, '80%'],
+      ] as const) {
+        writeTrendSummary('my-exp', timestamp, 'alpha', {
+          totalRuns: 10,
+          passedRuns: Number.parseInt(alpha, 10) / 10,
+          passRate: alpha,
+        });
+        writeTrendSummary('my-exp', timestamp, 'beta', {
+          totalRuns: 10,
+          passedRuns: beta / 10,
+          passRate: beta,
+        });
+        writeTrendSummary('my-exp', timestamp, 'gamma', {
+          totalRuns: 10,
+          passedRuns: Number.parseInt(gamma, 10) / 10,
+          passRate: gamma,
+        });
+      }
+
+      const report = analyzeExperimentTrend(TEST_DIR, 'my-exp');
+
+      expect(report.experimentName).toBe('my-exp');
+      expect(report.window).toBe(10);
+      expect(report.anyRegression).toBe(true);
+      expect(report.evalTrends.map((trend) => trend.evalName)).toEqual([
+        'alpha',
+        'beta',
+        'gamma',
+      ]);
+      expect(report.evalTrends.find((trend) => trend.evalName === 'alpha')).toMatchObject({
+        direction: 'degrading',
+        firstPassRate: 100,
+        recentPassRate: 40,
+        runCount: 3,
+      });
+      expect(report.evalTrends.find((trend) => trend.evalName === 'beta')).toMatchObject({
+        direction: 'improving',
+        firstPassRate: 20,
+        recentPassRate: 80,
+      });
+      expect(report.evalTrends.find((trend) => trend.evalName === 'gamma')).toMatchObject({
+        direction: 'stable',
+        firstPassRate: 80,
+        recentPassRate: 80,
+      });
+    });
+
+    it('uses only the newest timestamps in the requested window', () => {
+      for (const [timestamp, passRate] of [
+        ['2024-01-23T00-00-00.000Z', '0%'],
+        ['2024-01-24T00-00-00.000Z', '100%'],
+        ['2024-01-25T00-00-00.000Z', '75%'],
+        ['2024-01-26T00-00-00.000Z', '50%'],
+      ] as const) {
+        writeTrendSummary('window-exp', timestamp, 'eval-1', {
+          totalRuns: 4,
+          passedRuns: 2,
+          passRate,
+        });
+      }
+
+      const report = analyzeExperimentTrend(TEST_DIR, 'window-exp', 2);
+      const trend = report.evalTrends[0];
+
+      expect(trend.points.map((point) => point.timestamp)).toEqual([
+        '2024-01-25T00-00-00.000Z',
+        '2024-01-26T00-00-00.000Z',
+      ]);
+      expect(trend.firstPassRate).toBe(75);
+      expect(trend.recentPassRate).toBe(50);
+      expect(trend.direction).toBe('degrading');
+    });
+
+    it('skips missing and malformed summaries', () => {
+      writeTrendSummary('mixed-exp', '2024-01-24T00-00-00.000Z', 'eval-1', {
+        totalRuns: 2,
+        passedRuns: 1,
+        passRate: '50%',
+      });
+      writeTrendSummary('mixed-exp', '2024-01-25T00-00-00.000Z', 'eval-1', {
+        totalRuns: 2,
+        passedRuns: 2,
+        passRate: 'not-a-number',
+      });
+      writeTrendSummary('mixed-exp', '2024-01-26T00-00-00.000Z', 'eval-1', {
+        totalRuns: 2,
+        passedRuns: 2,
+        passRate: '100%',
+      });
+
+      const report = analyzeExperimentTrend(TEST_DIR, 'mixed-exp');
+
+      expect(report.evalTrends).toHaveLength(1);
+      expect(report.evalTrends[0].points.map((point) => point.passRate)).toEqual([
+        50,
+        100,
+      ]);
+      expect(report.evalTrends[0].direction).toBe('improving');
+    });
+
+    it('returns an empty report for a missing experiment', () => {
+      const report = analyzeExperimentTrend(TEST_DIR, 'no-such-exp');
+
+      expect(report).toEqual({
+        experimentName: 'no-such-exp',
+        window: 10,
+        evalTrends: [],
+        anyRegression: false,
+      });
     });
   });
 });
