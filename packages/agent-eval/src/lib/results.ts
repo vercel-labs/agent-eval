@@ -24,6 +24,7 @@ import type { AgentRunResult } from './agents/types.js';
 import { parseTranscript, type Transcript } from './o11y/index.js';
 import { isNonModelFailure } from './classifier.js';
 import { readFixtureFiles } from './fixture.js';
+import { discoverEvalResultDirs } from './result-directories.js';
 
 /**
  * Convert AgentRunResult to EvalRunData (result + transcript).
@@ -496,7 +497,7 @@ export function scanReusableResults(
 
 		let evalDirs: string[];
 		try {
-			evalDirs = readdirSync(tsDir).filter((d) => !d.startsWith('.'));
+			evalDirs = discoverEvalResultDirs(tsDir);
 		} catch {
 			continue;
 		}

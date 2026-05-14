@@ -57,6 +57,18 @@ describe('housekeep', () => {
     expect(existsSync(join(TEST_DIR, 'exp', '2024-01-25T12-00-00.000Z', 'eval-1'))).toBe(false);
   });
 
+  it('keeps nested eval results and removes older nested duplicates', () => {
+    const evalName = 'ui-development/design-system/layout-props';
+    createResult(join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z', evalName), {});
+    createResult(join(TEST_DIR, 'exp', '2024-01-25T12-00-00.000Z', evalName), {});
+
+    const stats = housekeep(TEST_DIR, 'exp');
+
+    expect(stats.removedDuplicates).toBe(1);
+    expect(existsSync(join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z', evalName))).toBe(true);
+    expect(existsSync(join(TEST_DIR, 'exp', '2024-01-25T12-00-00.000Z', evalName))).toBe(false);
+  });
+
   it('removes incomplete results (no summary)', () => {
     createResult(join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z', 'eval-1'), {
       summary: false,

@@ -10,6 +10,7 @@
 import { readdirSync, rmSync, existsSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { isClassifierEnabled, isNonModelFailure } from './classifier.js';
+import { discoverEvalResultDirs } from './result-directories.js';
 
 interface HousekeepingStats {
   removedDuplicates: number;
@@ -68,7 +69,7 @@ export function housekeep(
 
     let evalDirs: string[];
     try {
-      evalDirs = readdirSync(tsDir).filter((d) => !d.startsWith('.'));
+      evalDirs = discoverEvalResultDirs(tsDir);
     } catch {
       continue;
     }
