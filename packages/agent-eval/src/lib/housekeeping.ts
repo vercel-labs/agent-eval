@@ -18,6 +18,70 @@ interface HousekeepingStats {
   removedEmptyDirs: number;
 }
 
+function discoverEvalResultDirs(rootDir: string, relativeDir = ''): string[] {
+  const currentDir = relativeDir ? join(rootDir, relativeDir) : rootDir;
+  if (existsSync(join(currentDir, 'summary.json'))) {
+    return relativeDir ? [relativeDir] : [];
+  }
+
+  let entries: string[];
+  try {
+    entries = readdirSync(currentDir).filter((entry) => !entry.startsWith('.'));
+  } catch {
+    return [];
+  }
+
+  if (relativeDir && entries.some((entry) => entry.startsWith('run-'))) {
+    return [relativeDir];
+  }
+
+  const resultDirs: string[] = [];
+  for (const entry of entries) {
+    const entryRelativeDir = relativeDir ? join(relativeDir, entry) : entry;
+    const entryPath = join(rootDir, entryRelativeDir);
+    try {
+      if (statSync(entryPath).isDirectory()) {
+        resultDirs.push(...discoverEvalResultDirs(rootDir, entryRelativeDir));
+      }
+    } catch {
+      // Skip entries that disappear or cannot be read.
+    }
+  }
+  return resultDirs;
+}
+
+function removeEmptyDirs(rootDir: string, relativeDir = ''): boolean {
+  const currentDir = relativeDir ? join(rootDir, relativeDir) : rootDir;
+  let entries: string[];
+  try {
+    entries = readdirSync(currentDir).filter((entry) => !entry.startsWith('.'));
+  } catch {
+    return false;
+  }
+
+  for (const entry of entries) {
+    const entryRelativeDir = relativeDir ? join(relativeDir, entry) : entry;
+    const entryPath = join(rootDir, entryRelativeDir);
+    try {
+      if (statSync(entryPath).isDirectory()) {
+        removeEmptyDirs(rootDir, entryRelativeDir);
+      }
+    } catch {
+      // Directory may have been removed already.
+    }
+  }
+
+  if (relativeDir) {
+    const remaining = readdirSync(currentDir).filter((entry) => !entry.startsWith('.'));
+    if (remaining.length === 0) {
+      rmSync(currentDir, { recursive: true });
+      return true;
+    }
+  }
+
+  return false;
+}
+
 /**
  * Run housekeeping on a single experiment's results directory.
  *
@@ -66,12 +130,7 @@ export function housekeep(
   for (const timestamp of timestamps) {
     const tsDir = join(experimentDir, timestamp);
 
-    let evalDirs: string[];
-    try {
-      evalDirs = readdirSync(tsDir).filter((d) => !d.startsWith('.'));
-    } catch {
-      continue;
-    }
+    const evalDirs = discoverEvalResultDirs(tsDir);
 
     for (const evalDir of evalDirs) {
       const evalResultDir = join(tsDir, evalDir);
@@ -112,6 +171,9 @@ export function housekeep(
 
     // Check if timestamp dir is now empty
     try {
+      if (!options?.dry) {
+        removeEmptyDirs(tsDir);
+      }
       const remaining = readdirSync(tsDir).filter((d) => !d.startsWith('.'));
       if (remaining.length === 0) {
         if (!options?.dry) {

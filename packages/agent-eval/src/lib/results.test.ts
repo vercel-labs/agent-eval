@@ -355,6 +355,21 @@ describe('results utilities', () => {
       expect(result.get('eval-1')?.fingerprint).toBe('abc123');
     });
 
+    it('finds reusable results in nested eval directories', () => {
+      const evalName = 'ui-development/design-system/layout-props';
+      const expDir = join(TEST_DIR, 'my-exp', '2024-01-26T12-00-00.000Z', evalName);
+      mkdirSync(expDir, { recursive: true });
+      writeFileSync(
+        join(expDir, 'summary.json'),
+        JSON.stringify({ totalRuns: 2, passedRuns: 1, passRate: '50%', meanDuration: 10, fingerprint: 'abc123' })
+      );
+
+      const result = scanReusableResults(TEST_DIR, 'my-exp', { [evalName]: 'abc123' });
+      expect(result.size).toBe(1);
+      expect(result.get(evalName)?.evalName).toBe(evalName);
+      expect(result.get(evalName)?.fingerprint).toBe('abc123');
+    });
+
     it('skips results with mismatched fingerprint', () => {
       const expDir = join(TEST_DIR, 'my-exp', '2024-01-26T12-00-00.000Z', 'eval-1');
       mkdirSync(expDir, { recursive: true });

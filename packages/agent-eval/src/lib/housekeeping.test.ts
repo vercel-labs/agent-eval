@@ -154,6 +154,33 @@ describe('housekeep', () => {
     expect(existsSync(join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z', 'eval-1'))).toBe(true);
   });
 
+  it('keeps nested eval results with summary files', () => {
+    const evalName = 'ui-development/design-system/layout-props';
+    const evalDir = join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z', evalName);
+    createResult(evalDir, {});
+
+    const stats = housekeep(TEST_DIR, 'exp');
+
+    expect(stats.removedIncomplete).toBe(0);
+    expect(existsSync(evalDir)).toBe(true);
+    expect(existsSync(join(evalDir, 'summary.json'))).toBe(true);
+  });
+
+  it('removes older duplicate nested eval results', () => {
+    const evalName = 'ui-development/design-system/layout-props';
+    const newer = join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z', evalName);
+    const older = join(TEST_DIR, 'exp', '2024-01-25T12-00-00.000Z', evalName);
+    createResult(newer, {});
+    createResult(older, {});
+
+    const stats = housekeep(TEST_DIR, 'exp');
+
+    expect(stats.removedDuplicates).toBe(1);
+    expect(existsSync(newer)).toBe(true);
+    expect(existsSync(older)).toBe(false);
+    expect(existsSync(join(TEST_DIR, 'exp', '2024-01-25T12-00-00.000Z'))).toBe(false);
+  });
+
   it('keeps non-model failures when classifier is disabled', () => {
     const evalDir = join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z', 'eval-1');
     createResult(evalDir, { passedRuns: 0 });

@@ -459,6 +459,34 @@ export interface ReusableResult {
 	timestamp: string;
 }
 
+function discoverEvalResultDirs(rootDir: string, relativeDir = ''): string[] {
+	const currentDir = relativeDir ? join(rootDir, relativeDir) : rootDir;
+	if (existsSync(join(currentDir, 'summary.json'))) {
+		return relativeDir ? [relativeDir] : [];
+	}
+
+	let entries: string[];
+	try {
+		entries = readdirSync(currentDir).filter((entry) => !entry.startsWith('.'));
+	} catch {
+		return [];
+	}
+
+	const resultDirs: string[] = [];
+	for (const entry of entries) {
+		const entryRelativeDir = relativeDir ? join(relativeDir, entry) : entry;
+		const entryPath = join(rootDir, entryRelativeDir);
+		try {
+			if (statSync(entryPath).isDirectory()) {
+				resultDirs.push(...discoverEvalResultDirs(rootDir, entryRelativeDir));
+			}
+		} catch {
+			// Skip entries that disappear or cannot be read.
+		}
+	}
+	return resultDirs;
+}
+
 /**
  * Scan existing results for an experiment to find reusable eval results.
  *
@@ -494,12 +522,7 @@ export function scanReusableResults(
 		const tsDir = join(experimentDir, timestamp);
 		if (!statSync(tsDir).isDirectory()) continue;
 
-		let evalDirs: string[];
-		try {
-			evalDirs = readdirSync(tsDir).filter((d) => !d.startsWith('.'));
-		} catch {
-			continue;
-		}
+		const evalDirs = discoverEvalResultDirs(tsDir);
 
 		for (const evalDir of evalDirs) {
 			// Already found a reusable result for this eval
