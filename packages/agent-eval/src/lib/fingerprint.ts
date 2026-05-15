@@ -19,6 +19,7 @@ interface FingerprintableConfig {
   model: string;
   scripts: string[];
   timeout: number;
+  maxTurns?: number;
   earlyExit: boolean;
   runs: number;
 }
@@ -70,6 +71,7 @@ export function computeFingerprint(evalPath: string, config: RunnableExperimentC
     model: config.model,
     scripts: [...config.scripts].sort(),
     timeout: config.timeout,
+    maxTurns: config.maxTurns,
     earlyExit: config.earlyExit,
     runs: config.runs,
   };

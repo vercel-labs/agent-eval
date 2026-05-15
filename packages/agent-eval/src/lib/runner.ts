@@ -21,6 +21,37 @@ import {
   createExperimentResults,
   saveResults,
 } from './results.js';
+import { loadTranscript } from './o11y/index.js';
+
+function applyRunBudgets(
+  runData: EvalRunData,
+  config: RunnableExperimentConfig
+): EvalRunData {
+  if (!config.maxTurns || !runData.transcript) {
+    return runData;
+  }
+
+  const transcript = loadTranscript(runData.transcript, config.agent, config.model);
+  const totalTurns = transcript.summary.totalTurns;
+
+  if (totalTurns <= config.maxTurns) {
+    return runData;
+  }
+
+  return {
+    ...runData,
+    result: {
+      ...runData.result,
+      status: 'failed',
+      error: `Exceeded maxTurns limit: ${totalTurns} > ${config.maxTurns}`,
+      analysis: {
+        ...runData.result.analysis,
+        maxTurns: config.maxTurns,
+        totalTurns,
+      },
+    },
+  };
+}
 
 /**
  * Rate-limits how many operations can START within a time window.
@@ -226,7 +257,7 @@ export async function runExperiment(
       };
     }
 
-    let runData = agentResultToEvalRunData(agentResult);
+    let runData = applyRunBudgets(agentResultToEvalRunData(agentResult), config);
 
     if (config.onRunComplete) {
       try {

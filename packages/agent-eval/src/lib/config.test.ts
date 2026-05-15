@@ -22,6 +22,7 @@ describe('validateConfig', () => {
       scripts: ['build', 'lint'],
       validation: 'none',
       timeout: 600,
+      maxTurns: 20,
       brands: [
         {
           id: 'vercel',
@@ -60,6 +61,11 @@ describe('validateConfig', () => {
     const config = { agent: 'claude-code', runs: 0 };
     expect(() => validateConfig(config)).toThrow('Invalid experiment configuration');
   });
+
+  it('rejects non-positive maxTurns', () => {
+    const config = { agent: 'claude-code', maxTurns: 0 };
+    expect(() => validateConfig(config)).toThrow('Invalid experiment configuration');
+  });
 });
 
 describe('resolveConfig', () => {
@@ -81,12 +87,14 @@ describe('resolveConfig', () => {
       model: 'haiku' as const,
       runs: 10,
       earlyExit: false,
+      maxTurns: 12,
     };
     const resolved = resolveConfig(config);
 
     expect(resolved.model).toBe('haiku');
     expect(resolved.runs).toBe(10);
     expect(resolved.earlyExit).toBe(false);
+    expect(resolved.maxTurns).toBe(12);
   });
 
 });

@@ -110,6 +110,9 @@ export interface ExperimentConfig {
   /** Maximum time in seconds for agent to complete. @default 300 (5 minutes) */
   timeout?: number;
 
+  /** Maximum parsed conversation turns allowed for each run. @default undefined */
+  maxTurns?: number;
+
   /** Setup function that runs before agent starts. @default undefined */
   setup?: SetupFunction;
 
@@ -149,6 +152,7 @@ export interface ResolvedExperimentConfig {
   scripts: string[];
   validation: ValidationMode;
   timeout: number;
+  maxTurns?: number;
   setup?: SetupFunction;
   sandbox: SandboxBackend | 'auto';
   editPrompt?: (prompt: string) => string;
@@ -170,6 +174,7 @@ export interface RunnableExperimentConfig {
   scripts: string[];
   validation: ValidationMode;
   timeout: number;
+  maxTurns?: number;
   setup?: SetupFunction;
   sandbox: SandboxBackend | 'auto';
   editPrompt?: (prompt: string) => string;

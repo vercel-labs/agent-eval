@@ -93,6 +93,19 @@ describe('computeFingerprint', () => {
     expect(fp1).not.toBe(fp2);
   });
 
+  it('changes when maxTurns changes', () => {
+    const evalDir = createEvalDir('eval-max-turns', {
+      'PROMPT.md': 'Do something',
+      'EVAL.ts': 'test code',
+      'package.json': '{"type":"module"}',
+    });
+
+    const fp1 = computeFingerprint(evalDir, baseConfig);
+    const fp2 = computeFingerprint(evalDir, { ...baseConfig, maxTurns: 10 });
+
+    expect(fp1).not.toBe(fp2);
+  });
+
   it('is not affected by evals filter (only content matters)', () => {
     const evalDir = createEvalDir('eval-5', {
       'PROMPT.md': 'Do something',

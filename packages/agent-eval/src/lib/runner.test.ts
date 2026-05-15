@@ -7,6 +7,25 @@ import * as agentsIndex from './agents/index.js';
 
 const TEST_DIR = '/tmp/eval-framework-runner-test';
 
+function transcriptWithTurns(totalTurns: number): string {
+  return JSON.stringify({
+    agent: 'claude-code',
+    events: [],
+    summary: {
+      totalTurns,
+      toolCalls: {},
+      totalToolCalls: 0,
+      webFetches: [],
+      filesRead: [],
+      filesModified: [],
+      shellCommands: [],
+      errors: [],
+      thinkingBlocks: 0,
+    },
+    parseSuccess: true,
+  });
+}
+
 describe('runExperiment', () => {
   beforeEach(() => {
     mkdirSync(TEST_DIR, { recursive: true });
@@ -789,6 +808,63 @@ describe('runExperiment', () => {
 
       // Signal should have been aborted on timeout
       expect(signalAborted).toBe(true);
+    });
+  });
+
+  describe('run budgets', () => {
+    it('fails a run when parsed transcript turns exceed maxTurns', async () => {
+      const mockAgent: Agent = {
+        name: 'mock-agent',
+        displayName: 'Mock Agent',
+        getApiKeyEnvVar: () => 'MOCK_API_KEY',
+        getDefaultModel: () => 'mock-model',
+        run: vi.fn().mockResolvedValue({
+          success: true,
+          output: 'Agent output',
+          transcript: transcriptWithTurns(4),
+          duration: 6000,
+          testResult: { success: true, output: 'Test passed' },
+          scriptsResults: {},
+        }),
+      };
+
+      vi.spyOn(agentsIndex, 'getAgent').mockReturnValue(mockAgent);
+
+      const config: ResolvedExperimentConfig = {
+        agent: 'claude-code',
+        model: 'sonnet',
+        evals: ['test-eval'],
+        runs: 1,
+        earlyExit: false,
+        scripts: [],
+        timeout: 300,
+        maxTurns: 3,
+      };
+
+      const fixtures: EvalFixture[] = [
+        {
+          name: 'test-eval',
+          path: '/fake/path',
+          prompt: 'Test prompt',
+          isModule: true,
+        },
+      ];
+
+      const results = await runExperiment({
+        config,
+        fixtures,
+        apiKey: 'test-key',
+        resultsDir: TEST_DIR,
+        experimentName: 'test-experiment',
+      });
+
+      const run = results.evals[0].runs[0].result;
+      expect(run.status).toBe('failed');
+      expect(run.error).toBe('Exceeded maxTurns limit: 4 > 3');
+      expect(run.analysis).toMatchObject({
+        maxTurns: 3,
+        totalTurns: 4,
+      });
     });
   });
 });
