@@ -963,6 +963,34 @@ describe('o11y', () => {
       expect(events[0].tool?.args?._extractedUrl).toBe('https://api.example.com/data');
     });
 
+    it('pairs out-of-order tool results from parallel tool_calls in one assistant turn', () => {
+      const transcript = [
+        JSON.stringify({
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            { id: 'a', type: 'function', function: { name: 'read_file', arguments: '{"path":"a.ts"}' } },
+            { id: 'b', type: 'function', function: { name: 'read_file', arguments: '{"path":"b.ts"}' } },
+          ],
+          message_id: 'm1',
+        }),
+        JSON.stringify({ role: 'tool', content: 'b contents', name: 'read_file', tool_call_id: 'b' }),
+        JSON.stringify({ role: 'tool', content: 'a contents', name: 'read_file', tool_call_id: 'a' }),
+      ].join('\n');
+
+      const { events } = parseMistralVibeTranscript(transcript);
+
+      expect(events).toHaveLength(4);
+      expect(events[0].type).toBe('tool_call');
+      expect(events[0].tool?.args?.path).toBe('a.ts');
+      expect(events[1].type).toBe('tool_call');
+      expect(events[1].tool?.args?.path).toBe('b.ts');
+      expect(events[2].type).toBe('tool_result');
+      expect(events[2].tool?.originalName).toBe('read_file');
+      expect(events[3].type).toBe('tool_result');
+      expect(events[3].tool?.originalName).toBe('read_file');
+    });
+
     it('produces a full summary from a realistic transcript', () => {
       const transcript = [
         JSON.stringify({ role: 'user', content: 'Add a greet function', message_id: 'm0' }),
