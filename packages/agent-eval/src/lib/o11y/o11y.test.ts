@@ -991,6 +991,28 @@ describe('o11y', () => {
       expect(events[3].tool?.originalName).toBe('read_file');
     });
 
+    it('does not mark grep results containing the word "error" as failed', () => {
+      const transcript = [
+        JSON.stringify({
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            { id: 'tc_g', type: 'function', function: { name: 'grep', arguments: '{"pattern":"error"}' } },
+          ],
+        }),
+        JSON.stringify({
+          role: 'tool',
+          content: 'src/log.ts:14: console.log("error handler installed");',
+          name: 'grep',
+          tool_call_id: 'tc_g',
+        }),
+      ].join('\n');
+
+      const { events } = parseMistralVibeTranscript(transcript);
+      const toolResult = events.find((e) => e.type === 'tool_result');
+      expect(toolResult?.tool?.success).toBe(true);
+    });
+
     it('produces a full summary from a realistic transcript', () => {
       const transcript = [
         JSON.stringify({ role: 'user', content: 'Add a greet function', message_id: 'm0' }),

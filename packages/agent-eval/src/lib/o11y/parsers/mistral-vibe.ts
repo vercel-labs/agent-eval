@@ -163,9 +163,12 @@ function parseVibeLine(
     const fallbackName = typeof data.name === 'string' ? data.name : 'unknown';
     const content = typeof data.content === 'string' ? data.content : '';
 
-    // Vibe's role:"tool" rows have no explicit error field; use a content heuristic.
-    const lower = content.toLowerCase();
-    const success = !(lower.includes('error') || lower.includes('failed'));
+    // Vibe's role:"tool" rows have no explicit error field. Match common error
+    // prefixes after trimming leading whitespace; substring-match would false-positive
+    // on legitimate output containing the words "error" or "failed".
+    const lower = content.toLowerCase().trimStart();
+    const errorPrefixes = ['error:', 'error ', 'failed:', 'failed ', 'traceback', 'exception:', 'fatal:'];
+    const success = !errorPrefixes.some((p) => lower.startsWith(p));
 
     events.push({
       type: 'tool_result',
