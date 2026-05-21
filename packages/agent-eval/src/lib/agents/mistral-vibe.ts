@@ -154,7 +154,8 @@ export function createMistralVibeAgent(): Agent {
         // the install.
         const cliInstall = await sandbox.runShell(
           [
-            'set -e',
+            // -x traces each stage so the truncated error tail surfaces the failing step.
+            'set -ex',
             'mkdir -p "$HOME/.local/bin"',
             `node -e "const fs=require('fs');const arch=process.arch==='arm64'?'aarch64':'x86_64';fetch('https://github.com/astral-sh/uv/releases/download/0.11.15/uv-'+arch+'-unknown-linux-gnu.tar.gz').then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.arrayBuffer()}).then(b=>fs.writeFileSync('/tmp/uv.tar.gz',Buffer.from(b)))"`,
             'tar -xzf /tmp/uv.tar.gz --strip-components=1 -C "$HOME/.local/bin"',
@@ -173,7 +174,11 @@ export function createMistralVibeAgent(): Agent {
 
         // Run Mistral Vibe in programmatic mode.
         // --prompt <text>: programmatic mode (auto-selects auto-approve profile).
-        // --trust: bypass workdir trust dialog (required for non-interactive).
+        // --trust: silences the untrusted-workdir stderr warning Vibe emits in
+        //   programmatic mode and ensures any project-level .vibe config is
+        //   honored. The interactive trust dialog is already skipped when
+        //   --prompt is set (vibe/cli/entrypoint.py:204-206), so --trust is
+        //   hygiene rather than a hang fix.
         // --max-turns N: bound runaway agents.
         // --output streaming: newline-delimited LLMMessage JSON per turn.
         // Model + telemetry suppression are controlled via VIBE_* env vars.
