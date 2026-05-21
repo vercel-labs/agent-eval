@@ -25,8 +25,10 @@ import type { TranscriptEvent, ToolName } from '../types.js';
  * Map Vibe native tool names to canonical tool names.
  *
  * Vibe ships no `glob` or `list_dir` tool — models use `bash` for directory
- * ops. `skill` (Vibe's meta-tool that varies in shape per skill) falls through
- * to `'unknown'` deliberately. Regenerate this map per Vibe minor release.
+ * ops. `skill` (Vibe's skill-loading tool) is explicitly mapped to `'unknown'`
+ * because the canonical `ToolName` union has no skill equivalent — Claude
+ * Code's parser handles its `Skill` tool the same way. Regenerate this map
+ * per Vibe minor release.
  */
 const VIBE_TOOL_MAP: Record<string, ToolName> = {
   read_file: 'file_read',
@@ -38,6 +40,7 @@ const VIBE_TOOL_MAP: Record<string, ToolName> = {
   web_search: 'web_search',
   todo: 'agent_task',
   task: 'agent_task',
+  skill: 'unknown',
 };
 
 function canonicalToolName(rawName: string): ToolName {
