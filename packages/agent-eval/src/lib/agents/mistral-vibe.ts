@@ -146,15 +146,17 @@ export function createMistralVibeAgent(): Agent {
           throw new Error(`npm install failed (exit code ${installResult.exitCode}):\n${output}`);
         }
 
-        // Install Mistral Vibe CLI via uv (downloads Python 3.12 if needed).
+        // Install Mistral Vibe CLI via uv 0.11.15 (downloads Python 3.12 if needed).
         // uv installs to $HOME/.local/bin; we prepend it to PATH in every later runShell.
         // Fetch the uv tarball directly via Node — node:*-slim images have no curl/wget,
-        // and upstream's install.sh shells out to curl, so we bypass it entirely.
+        // and upstream's install.sh shells out to curl, so we bypass it entirely. Pinning
+        // the uv version protects against upstream tarball-layout changes silently breaking
+        // the install.
         const cliInstall = await sandbox.runShell(
           [
             'set -e',
             'mkdir -p "$HOME/.local/bin"',
-            `node -e "const fs=require('fs');const arch=process.arch==='arm64'?'aarch64':'x86_64';fetch('https://github.com/astral-sh/uv/releases/latest/download/uv-'+arch+'-unknown-linux-gnu.tar.gz').then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.arrayBuffer()}).then(b=>fs.writeFileSync('/tmp/uv.tar.gz',Buffer.from(b)))"`,
+            `node -e "const fs=require('fs');const arch=process.arch==='arm64'?'aarch64':'x86_64';fetch('https://github.com/astral-sh/uv/releases/download/0.11.15/uv-'+arch+'-unknown-linux-gnu.tar.gz').then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.arrayBuffer()}).then(b=>fs.writeFileSync('/tmp/uv.tar.gz',Buffer.from(b)))"`,
             'tar -xzf /tmp/uv.tar.gz --strip-components=1 -C "$HOME/.local/bin"',
             'export PATH="$HOME/.local/bin:$PATH"',
             'uv tool install mistral-vibe',
