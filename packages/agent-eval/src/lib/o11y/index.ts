@@ -24,3 +24,4 @@ export { parseCodexTranscript } from './parsers/codex.js';
 export { parseOpenCodeTranscript } from './parsers/opencode.js';
 export { parseGeminiTranscript } from './parsers/gemini.js';
 export { parseCursorTranscript } from './parsers/cursor.js';
+export { parseMistralVibeTranscript } from './parsers/mistral-vibe.js';
