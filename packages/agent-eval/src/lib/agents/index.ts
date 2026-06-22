@@ -8,6 +8,7 @@ import { createCodexAgent } from './codex.js';
 import { createOpenCodeAgent } from './opencode.js';
 import { createGeminiAgent } from './gemini.js';
 import { createCursorAgent } from './cursor.js';
+import { createBubAgent } from './bub.js';
 
 // Register all agent variants (Vercel AI Gateway + Direct API)
 registerAgent(createClaudeCodeAgent({ useVercelAiGateway: true }));   // vercel-ai-gateway/claude-code
@@ -17,6 +18,7 @@ registerAgent(createCodexAgent({ useVercelAiGateway: false }));       // codex
 registerAgent(createOpenCodeAgent());                                 // vercel-ai-gateway/opencode
 registerAgent(createGeminiAgent());                                   // gemini
 registerAgent(createCursorAgent());                                   // cursor
+registerAgent(createBubAgent());                                      // bub
 
 // Re-export registry functions
 export { registerAgent, getAgent, listAgents, hasAgent };
