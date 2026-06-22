@@ -280,3 +280,10 @@ export const GEMINI_DIRECT = {
 export const CURSOR_DIRECT = {
   apiKeyEnvVar: 'CURSOR_API_KEY',
 } as const;
+
+/**
+ * Direct API configuration for Mistral.
+ */
+export const MISTRAL_DIRECT = {
+  apiKeyEnvVar: 'MISTRAL_API_KEY',
+} as const;

@@ -256,6 +256,7 @@ agent: 'claude-code'  // requires ANTHROPIC_API_KEY
 agent: 'codex'        // requires OPENAI_API_KEY
 agent: 'gemini'       // requires GEMINI_API_KEY
 agent: 'cursor'       // requires CURSOR_API_KEY
+agent: 'mistral-vibe' // requires MISTRAL_API_KEY
 ```
 
 ### Multi-model experiments
@@ -514,6 +515,7 @@ Every run requires an API key for the agent and a token for the sandbox. Classif
 | `OPENAI_API_KEY`     | `agent: 'codex'`                       | Direct OpenAI API key                                                                        |
 | `GEMINI_API_KEY`     | `agent: 'gemini'`                      | Direct Google Gemini API key                                                                 |
 | `CURSOR_API_KEY`     | `agent: 'cursor'`                      | Direct Cursor API key                                                                        |
+| `MISTRAL_API_KEY`    | `agent: 'mistral-vibe'`                | Direct Mistral API key                                                                       |
 | `VERCEL_TOKEN`       | Always (pick one)                      | Vercel personal access token -- for local dev                                                |
 | `VERCEL_OIDC_TOKEN`  | Always (pick one) OR for classifier    | Vercel OIDC token -- for CI/CD pipelines, or enables classifier without `AI_GATEWAY_API_KEY` |
 

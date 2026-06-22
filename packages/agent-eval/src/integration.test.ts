@@ -44,6 +44,7 @@ const hasAnthropicCredentials = !!process.env.ANTHROPIC_API_KEY && hasSandbox;
 const hasOpenAiCredentials = !!process.env.OPENAI_API_KEY && hasSandbox;
 const hasGeminiCredentials = !!process.env.GEMINI_API_KEY && hasSandbox;
 const hasCursorCredentials = !!process.env.CURSOR_API_KEY && hasSandbox;
+const hasMistralCredentials = !!process.env.MISTRAL_API_KEY && hasSandbox;
 // OpenCode credentials (only supports AI Gateway)
 const hasOpenCodeCredentials = hasAiGatewayCredentials;
 
@@ -970,6 +971,163 @@ test('contains greeting', () => {
         }
       }
     }, 300000); // 5 minute timeout
+  });
+
+  describe.skipIf(!hasMistralCredentials)('Mistral Vibe (Direct API) sandbox execution', () => {
+    it('can run a simple eval with Mistral Vibe', async () => {
+      // Create a simple test fixture
+      const fixtureDir = join(TEST_DIR, 'simple-eval-mistral-vibe');
+      mkdirSync(join(fixtureDir, 'src'), { recursive: true });
+
+      writeFileSync(
+        join(fixtureDir, 'PROMPT.md'),
+        'Add a function called greet in src/index.ts that returns "Hello from Mistral!"'
+      );
+      writeFileSync(
+        join(fixtureDir, 'EVAL.ts'),
+        `
+import { test, expect } from 'vitest';
+import { readFileSync } from 'fs';
+
+test('greet exists', () => {
+  const content = readFileSync('src/index.ts', 'utf-8');
+  expect(content).toContain('greet');
+});
+`
+      );
+      writeFileSync(
+        join(fixtureDir, 'package.json'),
+        JSON.stringify({
+          name: 'simple-eval-mistral-vibe',
+          type: 'module',
+          scripts: { build: 'tsc' },
+          devDependencies: { typescript: '^5.0.0', vitest: '^2.1.0' },
+        })
+      );
+      writeFileSync(
+        join(fixtureDir, 'tsconfig.json'),
+        JSON.stringify({
+          compilerOptions: {
+            target: 'ES2020',
+            module: 'ESNext',
+            moduleResolution: 'bundler',
+            outDir: 'dist',
+          },
+          include: ['src'],
+        })
+      );
+      writeFileSync(join(fixtureDir, 'src/index.ts'), '// TODO: implement');
+
+      const fixture = loadFixture(TEST_DIR, 'simple-eval-mistral-vibe');
+
+      const result = await runSingleEval(fixture, {
+        agent: 'mistral-vibe',
+        model: 'mistral-medium-3.5',
+        timeout: 240,
+        apiKey: process.env.MISTRAL_API_KEY!,
+        scripts: ['build'],
+      });
+
+      // Verify result structure
+      expect(result.result.duration).toBeGreaterThan(0);
+      expect(result.result.status).toBeDefined();
+      // Agent must actually succeed - not just return a result
+      if (result.result.status === 'failed') {
+        console.error('Mistral Vibe agent failed with error:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
+
+      // Verify output content exists (if available)
+      if (result.outputContent) {
+        expect(typeof result.outputContent).toBe('object');
+      }
+
+      // Verify transcript was captured and parsed successfully.
+      expect(result.transcript).toBeTruthy();
+    }, 420000); // 7 minute timeout — uv install + first Vibe run can be slow.
+
+    it('verifies Mistral Vibe result output structure matches expected format', async () => {
+      // Create a simple test fixture
+      const fixtureDir = join(TEST_DIR, 'result-structure-mistral-vibe');
+      mkdirSync(join(fixtureDir, 'src'), { recursive: true });
+
+      writeFileSync(
+        join(fixtureDir, 'PROMPT.md'),
+        'Create src/hello.ts that exports a constant called `greeting` with a friendly message.'
+      );
+      writeFileSync(
+        join(fixtureDir, 'EVAL.ts'),
+        `
+import { test, expect } from 'vitest';
+import { readFileSync, existsSync } from 'fs';
+
+test('hello.ts exists', () => {
+  expect(existsSync('src/hello.ts')).toBe(true);
+});
+
+test('contains greeting', () => {
+  const content = readFileSync('src/hello.ts', 'utf-8');
+  expect(content).toContain('greeting');
+});
+`
+      );
+      writeFileSync(
+        join(fixtureDir, 'package.json'),
+        JSON.stringify({
+          name: 'result-structure-mistral-vibe',
+          type: 'module',
+          scripts: { build: 'tsc' },
+          devDependencies: { typescript: '^5.0.0', vitest: '^2.1.0' },
+        })
+      );
+      writeFileSync(
+        join(fixtureDir, 'tsconfig.json'),
+        JSON.stringify({
+          compilerOptions: {
+            target: 'ES2020',
+            module: 'ESNext',
+            moduleResolution: 'bundler',
+            outDir: 'dist',
+          },
+          include: ['src'],
+        })
+      );
+
+      const fixture = loadFixture(TEST_DIR, 'result-structure-mistral-vibe');
+
+      const result = await runSingleEval(fixture, {
+        agent: 'mistral-vibe',
+        model: 'mistral-medium-3.5',
+        timeout: 240,
+        apiKey: process.env.MISTRAL_API_KEY!,
+        scripts: ['build'],
+      });
+
+      // Verify EvalRunData structure
+      expect(result).toHaveProperty('result');
+      expect(result.result).toHaveProperty('status');
+      expect(result.result).toHaveProperty('duration');
+
+      // Verify optional properties have correct types when present
+      if (result.result.error) {
+        expect(typeof result.result.error).toBe('string');
+      }
+
+      // Verify transcript structure if present
+      if (result.transcript) {
+        expect(typeof result.transcript).toBe('string');
+      }
+
+      // Verify output content structure if present
+      if (result.outputContent) {
+        if (result.outputContent.eval) {
+          expect(typeof result.outputContent.eval).toBe('string');
+        }
+        if (result.outputContent.scripts?.build) {
+          expect(typeof result.outputContent.scripts.build).toBe('string');
+        }
+      }
+    }, 420000); // 7 minute timeout — uv install can be slow on cold sandbox.
   });
 
   describe.skipIf(!hasOpenCodeCredentials)('OpenCode (Vercel AI Gateway) sandbox execution', () => {

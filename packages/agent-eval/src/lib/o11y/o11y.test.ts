@@ -10,6 +10,7 @@ import { parseCodexTranscript } from './parsers/codex.js';
 import { parseOpenCodeTranscript } from './parsers/opencode.js';
 import { parseGeminiTranscript } from './parsers/gemini.js';
 import { parseCursorTranscript } from './parsers/cursor.js';
+import { parseMistralVibeTranscript } from './parsers/mistral-vibe.js';
 
 describe('o11y', () => {
   describe('parseTranscript', () => {
@@ -47,7 +48,7 @@ describe('o11y', () => {
 
       expect(result.parseSuccess).toBe(false);
       expect(result.parseErrors).toContain(
-        'No parser available for agent: unsupported-agent. Supported agents: claude-code, codex, opencode, gemini, cursor'
+        'No parser available for agent: unsupported-agent. Supported agents: claude-code, codex, opencode, gemini, cursor, mistral-vibe'
       );
       expect(result.events).toEqual([]);
       expect(result.summary.totalToolCalls).toBe(0);
@@ -734,6 +735,343 @@ describe('o11y', () => {
       expect(result.summary.toolCalls.file_read).toBe(1);
       expect(result.summary.totalToolCalls).toBe(1);
       expect(result.summary.filesRead).toContain('a.ts');
+    });
+  });
+
+  describe('Mistral Vibe parser', () => {
+    it('parses an assistant message with a tool_call', () => {
+      const transcript = JSON.stringify({
+        role: 'assistant',
+        content: 'I will write the file.',
+        tool_calls: [
+          {
+            id: 'tc_1',
+            type: 'function',
+            function: {
+              name: 'write_file',
+              arguments: '{"path":"src/index.ts","content":"export const x = 1;"}',
+            },
+          },
+        ],
+        message_id: 'm1',
+      });
+
+      const { events } = parseMistralVibeTranscript(transcript);
+
+      expect(events).toHaveLength(2);
+      expect(events[0].type).toBe('message');
+      expect(events[0].role).toBe('assistant');
+      expect(events[0].content).toBe('I will write the file.');
+      expect(events[1].type).toBe('tool_call');
+      expect(events[1].tool?.name).toBe('file_write');
+      expect(events[1].tool?.originalName).toBe('write_file');
+    });
+
+    it('parses a tool result and pairs it with the pending call', () => {
+      const transcript = [
+        JSON.stringify({
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'tc_42',
+              type: 'function',
+              function: { name: 'bash', arguments: '{"command":"ls"}' },
+            },
+          ],
+          message_id: 'm1',
+        }),
+        JSON.stringify({
+          role: 'tool',
+          content: 'EVAL.ts\npackage.json\n',
+          name: 'bash',
+          tool_call_id: 'tc_42',
+        }),
+      ].join('\n');
+
+      const { events } = parseMistralVibeTranscript(transcript);
+
+      expect(events).toHaveLength(2);
+      expect(events[0].type).toBe('tool_call');
+      expect(events[0].tool?.name).toBe('shell');
+      expect(events[0].tool?.originalName).toBe('bash');
+      expect(events[1].type).toBe('tool_result');
+      expect(events[1].tool?.name).toBe('shell');
+      expect(events[1].tool?.originalName).toBe('bash');
+      expect(events[1].tool?.success).toBe(true);
+    });
+
+    it('marks a tool_result as failed when the content mentions an error', () => {
+      const transcript = [
+        JSON.stringify({
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'tc_x',
+              type: 'function',
+              function: { name: 'read_file', arguments: '{"path":"missing.ts"}' },
+            },
+          ],
+        }),
+        JSON.stringify({
+          role: 'tool',
+          content: 'Error: file not found: missing.ts',
+          name: 'read_file',
+          tool_call_id: 'tc_x',
+        }),
+      ].join('\n');
+
+      const { events } = parseMistralVibeTranscript(transcript);
+      const toolResult = events.find((e) => e.type === 'tool_result');
+      expect(toolResult?.tool?.success).toBe(false);
+    });
+
+    it('emits reasoning_content as a separate thinking event before the assistant message', () => {
+      const transcript = JSON.stringify({
+        role: 'assistant',
+        content: 'Done.',
+        reasoning_content: 'Considering the request...',
+        message_id: 'm1',
+      });
+
+      const { events } = parseMistralVibeTranscript(transcript);
+
+      expect(events).toHaveLength(2);
+      expect(events[0].type).toBe('thinking');
+      expect(events[0].content).toBe('Considering the request...');
+      expect(events[1].type).toBe('message');
+      expect(events[1].role).toBe('assistant');
+      expect(events[1].content).toBe('Done.');
+    });
+
+    it('skips messages with injected: true', () => {
+      const transcript = [
+        JSON.stringify({
+          role: 'assistant',
+          content: 'This is a harness-injected reminder.',
+          injected: true,
+          message_id: 'm0',
+        }),
+        JSON.stringify({ role: 'assistant', content: 'Acknowledged.', message_id: 'm1' }),
+      ].join('\n');
+
+      const { events } = parseMistralVibeTranscript(transcript);
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('message');
+      expect(events[0].content).toBe('Acknowledged.');
+    });
+
+    it('parses JSON-encoded function.arguments', () => {
+      const transcript = JSON.stringify({
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'tc_1',
+            type: 'function',
+            function: {
+              name: 'search_replace',
+              arguments: '{"file_path":"src/app.ts","content":"new"}',
+            },
+          },
+        ],
+      });
+
+      const { events } = parseMistralVibeTranscript(transcript);
+      expect(events[0].type).toBe('tool_call');
+      expect(events[0].tool?.name).toBe('file_edit');
+      expect(events[0].tool?.originalName).toBe('search_replace');
+      expect(events[0].tool?.args?.file_path).toBe('src/app.ts');
+    });
+
+    it('normalizes Vibe tool names', () => {
+      const tools = [
+        { native: 'read_file', expected: 'file_read' as const },
+        { native: 'write_file', expected: 'file_write' as const },
+        { native: 'search_replace', expected: 'file_edit' as const },
+        { native: 'bash', expected: 'shell' as const },
+        { native: 'grep', expected: 'grep' as const },
+        { native: 'web_fetch', expected: 'web_fetch' as const },
+        { native: 'web_search', expected: 'web_search' as const },
+        { native: 'todo', expected: 'agent_task' as const },
+        { native: 'task', expected: 'agent_task' as const },
+        { native: 'skill', expected: 'unknown' as const },
+        { native: 'unknown_tool', expected: 'unknown' as const },
+      ];
+
+      for (const { native, expected } of tools) {
+        const transcript = JSON.stringify({
+          role: 'assistant',
+          content: null,
+          tool_calls: [{ id: `tc_${native}`, type: 'function', function: { name: native, arguments: '{}' } }],
+        });
+        const { events } = parseMistralVibeTranscript(transcript);
+        expect(events[0].tool?.name).toBe(expected);
+        expect(events[0].tool?.originalName).toBe(native);
+      }
+    });
+
+    it('extracts file paths from tool args', () => {
+      const transcript = JSON.stringify({
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'tc_1',
+            type: 'function',
+            function: { name: 'read_file', arguments: '{"path":"src/utils.ts"}' },
+          },
+        ],
+      });
+      const { events } = parseMistralVibeTranscript(transcript);
+
+      expect(events[0].tool?.args?._extractedPath).toBe('src/utils.ts');
+    });
+
+    it('extracts commands from shell tool args', () => {
+      const transcript = JSON.stringify({
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'tc_1',
+            type: 'function',
+            function: { name: 'bash', arguments: '{"command":"npm install"}' },
+          },
+        ],
+      });
+      const { events } = parseMistralVibeTranscript(transcript);
+
+      expect(events[0].tool?.args?._extractedCommand).toBe('npm install');
+    });
+
+    it('extracts URLs from web fetch args', () => {
+      const transcript = JSON.stringify({
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'tc_1',
+            type: 'function',
+            function: { name: 'web_fetch', arguments: '{"url":"https://api.example.com/data"}' },
+          },
+        ],
+      });
+      const { events } = parseMistralVibeTranscript(transcript);
+
+      expect(events[0].tool?.args?._extractedUrl).toBe('https://api.example.com/data');
+    });
+
+    it('pairs out-of-order tool results from parallel tool_calls in one assistant turn', () => {
+      const transcript = [
+        JSON.stringify({
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            { id: 'a', type: 'function', function: { name: 'read_file', arguments: '{"path":"a.ts"}' } },
+            { id: 'b', type: 'function', function: { name: 'read_file', arguments: '{"path":"b.ts"}' } },
+          ],
+          message_id: 'm1',
+        }),
+        JSON.stringify({ role: 'tool', content: 'b contents', name: 'read_file', tool_call_id: 'b' }),
+        JSON.stringify({ role: 'tool', content: 'a contents', name: 'read_file', tool_call_id: 'a' }),
+      ].join('\n');
+
+      const { events } = parseMistralVibeTranscript(transcript);
+
+      expect(events).toHaveLength(4);
+      expect(events[0].type).toBe('tool_call');
+      expect(events[0].tool?.args?.path).toBe('a.ts');
+      expect(events[1].type).toBe('tool_call');
+      expect(events[1].tool?.args?.path).toBe('b.ts');
+      expect(events[2].type).toBe('tool_result');
+      expect(events[2].tool?.originalName).toBe('read_file');
+      expect(events[3].type).toBe('tool_result');
+      expect(events[3].tool?.originalName).toBe('read_file');
+    });
+
+    it('does not mark grep results containing the word "error" as failed', () => {
+      const transcript = [
+        JSON.stringify({
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            { id: 'tc_g', type: 'function', function: { name: 'grep', arguments: '{"pattern":"error"}' } },
+          ],
+        }),
+        JSON.stringify({
+          role: 'tool',
+          content: 'src/log.ts:14: console.log("error handler installed");',
+          name: 'grep',
+          tool_call_id: 'tc_g',
+        }),
+      ].join('\n');
+
+      const { events } = parseMistralVibeTranscript(transcript);
+      const toolResult = events.find((e) => e.type === 'tool_result');
+      expect(toolResult?.tool?.success).toBe(true);
+    });
+
+    it('produces a full summary from a realistic transcript', () => {
+      const transcript = [
+        JSON.stringify({ role: 'user', content: 'Add a greet function', message_id: 'm0' }),
+        JSON.stringify({
+          role: 'assistant',
+          content: 'Reading the file first.',
+          tool_calls: [
+            {
+              id: 'tc_1',
+              type: 'function',
+              function: { name: 'read_file', arguments: '{"path":"src/index.ts"}' },
+            },
+          ],
+          message_id: 'm1',
+        }),
+        JSON.stringify({ role: 'tool', content: '// empty', name: 'read_file', tool_call_id: 'tc_1' }),
+        JSON.stringify({
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'tc_2',
+              type: 'function',
+              function: { name: 'bash', arguments: '{"command":"mkdir -p src"}' },
+            },
+          ],
+          message_id: 'm2',
+        }),
+        JSON.stringify({ role: 'tool', content: '', name: 'bash', tool_call_id: 'tc_2' }),
+        JSON.stringify({
+          role: 'assistant',
+          content: 'Writing the new file.',
+          tool_calls: [
+            {
+              id: 'tc_3',
+              type: 'function',
+              function: {
+                name: 'write_file',
+                arguments: '{"path":"src/index.ts","content":"export function greet(){return \\"hi\\";}"}',
+              },
+            },
+          ],
+          message_id: 'm3',
+        }),
+        JSON.stringify({ role: 'tool', content: 'File written', name: 'write_file', tool_call_id: 'tc_3' }),
+      ].join('\n');
+
+      const result = parseTranscript(transcript, 'mistral-vibe');
+
+      expect(result.parseSuccess).toBe(true);
+      expect(result.summary.totalTurns).toBe(2);
+      expect(result.summary.toolCalls.file_read).toBe(1);
+      expect(result.summary.toolCalls.shell).toBe(1);
+      expect(result.summary.toolCalls.file_write).toBe(1);
+      expect(result.summary.totalToolCalls).toBe(3);
+      expect(result.summary.filesRead).toContain('src/index.ts');
+      expect(result.summary.filesModified).toContain('src/index.ts');
+      expect(result.summary.shellCommands).toHaveLength(1);
+      expect(result.summary.shellCommands[0].command).toBe('mkdir -p src');
     });
   });
 

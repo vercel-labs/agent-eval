@@ -38,6 +38,7 @@ const experimentConfigSchema = z.object({
     'vercel-ai-gateway/opencode',
     'gemini',
     'cursor',
+    'mistral-vibe',
   ]),
   model: z.union([z.string(), z.array(z.string())]).optional(),
   evals: z

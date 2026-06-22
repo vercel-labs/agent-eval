@@ -16,6 +16,7 @@ import { parseCodexTranscript } from './codex.js';
 import { parseOpenCodeTranscript } from './opencode.js';
 import { parseGeminiTranscript } from './gemini.js';
 import { parseCursorTranscript } from './cursor.js';
+import { parseMistralVibeTranscript } from './mistral-vibe.js';
 
 /**
  * Supported agent types for parsing.
@@ -27,7 +28,8 @@ export type ParseableAgent =
   | 'codex'
   | 'vercel-ai-gateway/opencode'
   | 'gemini'
-  | 'cursor';
+  | 'cursor'
+  | 'mistral-vibe';
 
 /**
  * Parser registry mapping agent key patterns to their parsers.
@@ -38,6 +40,7 @@ const AGENT_PARSERS = {
   'opencode': parseOpenCodeTranscript,
   'gemini': parseGeminiTranscript,
   'cursor': parseCursorTranscript,
+  'mistral-vibe': parseMistralVibeTranscript,
 } as const;
 
 /**
