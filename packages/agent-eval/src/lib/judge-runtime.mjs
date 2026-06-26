@@ -57,7 +57,14 @@ export function transcript() {
 /** The agent's code changes, as a unified diff against the pre-run commit. */
 export function diff() {
   try {
-    const out = execSync('git diff HEAD', { encoding: 'utf8' });
+    // Stage first so newly-created (untracked) files show up — `git diff HEAD`
+    // alone omits them, which is most of what an agent produces.
+    try {
+      execSync('git add -A', { stdio: 'ignore' });
+    } catch {
+      /* not a git repo */
+    }
+    const out = execSync('git diff --cached HEAD', { encoding: 'utf8' });
     return out ? out.slice(0, 100000) : '(no changes)';
   } catch {
     return '(diff unavailable)';
@@ -100,9 +107,11 @@ export async function judge(evidence, criterion, opts) {
     method: 'POST',
     headers: { authorization: 'Bearer ' + KEY, 'content-type': 'application/json' },
     body: JSON.stringify({
+      // No response_format: the gateway rejects OpenAI's json_object mode for
+      // several routes (e.g. Anthropic). We instruct JSON in the prompt and parse
+      // tolerantly (parseVerdict handles prose / ```json fences).
       model: model,
       temperature: 0,
-      response_format: { type: 'json_object' },
       messages: [
         {
           role: 'system',
