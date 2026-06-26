@@ -496,6 +496,48 @@ Classification uses Claude Sonnet 4.5 via the Vercel AI Gateway with sandboxed r
 - **Enabled** (with `AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN`): Classifications are cached in `classification.json`. Non-model failures are removed by default so they can be re-run; pass `--ack-failures` to keep them as final results.
 - **Disabled** (without keys): The classifier is skipped. All results are preserved as-is. Housekeeping will not remove non-model failures (only incomplete and duplicate results). Add `AI_GATEWAY_API_KEY` to `.env` to enable the classifier.
 
+## LLM Judge
+
+For qualitative checks that deterministic `EVAL.ts` tests can't express — "is the code idiomatic?", "did the agent debug with DevTools instead of guessing?" — use the agentic `judge()`. It runs a real agent as the judge: it **explores** a codebase with its own tools and/or reads a transcript, then returns a structured verdict. (A judge is just an agent run, so it reuses the same sandbox + plugin machinery as evals.)
+
+```typescript
+import { judge } from '@vercel/agent-eval';
+
+// Judge a codebase — the judge agent explores it:
+const v = await judge({
+  criteria: 'The project exports a greet() function that returns a non-empty string',
+  codebase: '/path/to/project',
+});
+v.pass; // boolean
+
+// Judge a transcript — how the agent worked:
+await judge({
+  criteria: 'Used React DevTools to diagnose, not trial-and-error edits',
+  transcript,
+});
+
+// Both, with several criteria (each judged independently):
+const r = await judge({
+  criteria: ['greet() is exported', 'imports next/link', 'no force-dynamic'],
+  codebase: '/path/to/project',
+  transcript,
+});
+r.pass;                      // true iff every criterion passed
+r.results;                   // [{ criterion, pass, reason }, ...]
+```
+
+| Option | Default | Description |
+| ------ | ------- | ----------- |
+| `criteria` | — | One criterion or an array; each is judged independently with its own pass/reason |
+| `codebase` | — | A directory the judge agent explores (`node_modules`/`.git` excluded) |
+| `transcript` | — | A transcript string the judge reads (at least one of `codebase`/`transcript` is required) |
+| `agent` | `vercel-ai-gateway/claude-code` | Which agent acts as the judge |
+| `model` | the judge agent's default | Judge model (independent of the model under test) |
+| `apiKey` | `process.env[agent.getApiKeyEnvVar()]` | Judge agent credential |
+| `timeout` | `600` | Sandbox timeout (seconds) |
+
+The judge runs in a sandbox and needs the judge agent's credential (e.g. `AI_GATEWAY_API_KEY`). It writes its verdict to a file that's captured back to the host, so it works across every supported agent.
+
 ## Housekeeping
 
 After each experiment completes, the framework automatically:

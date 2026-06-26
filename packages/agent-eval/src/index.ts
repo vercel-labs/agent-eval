@@ -145,3 +145,7 @@ export {
   parseCodexTranscript,
   parseOpenCodeTranscript,
 } from './lib/o11y/index.js';
+
+// Re-export the agentic LLM judge
+export type { JudgeOptions, JudgeVerdict, CriterionVerdict } from './lib/judge.js';
+export { judge, buildJudgePrompt, parseJudgeVerdict } from './lib/judge.js';
