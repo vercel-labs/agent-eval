@@ -4,6 +4,7 @@
  */
 
 import Docker from 'dockerode';
+import { Writable } from 'node:stream';
 import * as tar from 'tar-stream';
 import type { Sandbox } from './types.js';
 import type { CommandResult, SandboxFile } from './sandbox.js';
@@ -40,6 +41,19 @@ const SANDBOX_GID = 1000;
  * Directory for npm global packages (non-root install location).
  */
 const NPM_GLOBAL_DIR = '/home/node/.npm-global';
+
+/**
+ * A Writable that accumulates everything written to it into in-memory buffers.
+ * Used as a sink for `docker.modem.demuxStream`.
+ */
+function bufferSink(chunks: Buffer[]): Writable {
+  return new Writable({
+    write(chunk: Buffer, _encoding, callback) {
+      chunks.push(Buffer.from(chunk));
+      callback();
+    },
+  });
+}
 
 /**
  * Options for creating a Docker sandbox.
@@ -239,52 +253,14 @@ export class DockerSandboxManager implements Sandbox {
     const stream = await exec.start({ hijack: true, stdin: false });
 
     return new Promise((resolve, reject) => {
-      let stdout = '';
-      let stderr = '';
-
-      // Docker multiplexes stdout/stderr in the stream
-      // We need to demux it
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
-
-      stream.on('data', (chunk: Buffer) => {
-        // Docker stream format: 8-byte header + payload
-        // Header: [stream_type (1 byte), 0, 0, 0, size (4 bytes)]
-        // stream_type: 1 = stdout, 2 = stderr
-        let offset = 0;
-        while (offset < chunk.length) {
-          if (offset + 8 > chunk.length) {
-            // Incomplete header, treat rest as stdout
-            stdoutChunks.push(chunk.slice(offset));
-            break;
-          }
-
-          const streamType = chunk[offset];
-          const size = chunk.readUInt32BE(offset + 4);
-
-          if (offset + 8 + size > chunk.length) {
-            // Incomplete payload, treat rest as stdout
-            stdoutChunks.push(chunk.slice(offset + 8));
-            break;
-          }
-
-          const payload = chunk.slice(offset + 8, offset + 8 + size);
-          if (streamType === 1) {
-            stdoutChunks.push(payload);
-          } else if (streamType === 2) {
-            stderrChunks.push(payload);
-          } else {
-            // Unknown type, assume stdout
-            stdoutChunks.push(payload);
-          }
-
-          offset += 8 + size;
-        }
-      });
+      // Docker multiplexes stdout/stderr in the stream
+      this.docker.modem.demuxStream(stream, bufferSink(stdoutChunks), bufferSink(stderrChunks));
 
       stream.on('end', async () => {
-        stdout = Buffer.concat(stdoutChunks).toString('utf-8');
-        stderr = Buffer.concat(stderrChunks).toString('utf-8');
+        const stdout = Buffer.concat(stdoutChunks).toString('utf-8');
+        const stderr = Buffer.concat(stderrChunks).toString('utf-8');
 
         try {
           const inspection = await exec.inspect();
