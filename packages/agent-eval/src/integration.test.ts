@@ -1392,3 +1392,61 @@ test('greet exists', () => {
     });
   });
 });
+
+// Full-stack e2e for the LLM judge: a real agent run whose EVAL.ts grades itself
+// with `toSatisfyCriterion`. Requires INTEGRATION_TEST + AI Gateway creds + sandbox.
+describe.skipIf(!process.env.INTEGRATION_TEST || !hasAiGatewayCredentials)('LLM judge (e2e)', () => {
+  it('grades an agent run via toSatisfyCriterion', async () => {
+    const fixtureDir = join(TEST_DIR, 'judge-eval-claude');
+    mkdirSync(join(fixtureDir, 'src'), { recursive: true });
+
+    writeFileSync(
+      join(fixtureDir, 'PROMPT.md'),
+      'Create src/greeting.ts that exports a function `greet()` returning the string "Hello!".'
+    );
+    writeFileSync(
+      join(fixtureDir, 'EVAL.ts'),
+      `
+import { test, expect } from 'vitest';
+import { transcript, diff } from './__agent_eval__/judge.mjs';
+
+test('implemented the greeting (judged on the diff)', async () => {
+  await expect(diff()).toSatisfyCriterion(
+    'A greet function that returns a greeting string was added'
+  );
+});
+
+test('did real work (judged on the transcript)', async () => {
+  await expect(transcript()).toSatisfyCriterion(
+    'The assistant created or edited a file to implement the requested task'
+  );
+});
+`
+    );
+    writeFileSync(
+      join(fixtureDir, 'package.json'),
+      JSON.stringify({
+        name: 'judge-eval-claude',
+        type: 'module',
+        devDependencies: { vitest: '^2.1.0' },
+      })
+    );
+    writeFileSync(join(fixtureDir, 'src/index.ts'), '// TODO: implement');
+
+    const fixture = loadFixture(TEST_DIR, 'judge-eval-claude');
+
+    const result = await runSingleEval(fixture, {
+      agent: 'vercel-ai-gateway/claude-code',
+      model: 'sonnet',
+      timeout: 180,
+      apiKey: process.env.AI_GATEWAY_API_KEY!,
+      scripts: [],
+    });
+
+    if (result.result.status === 'failed') {
+      console.error('judge e2e failed:', result.result.error);
+      console.error('eval output:', result.outputContent?.eval);
+    }
+    expect(result.result.status).toBe('passed');
+  }, 240000);
+});

@@ -16,7 +16,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('fs').copyFileSync('src/lib/judge-runtime.mjs','dist/lib/judge-runtime.mjs')\"",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:docker": "SANDBOX_BACKEND=docker vitest run src/lib/docker-sandbox.test.ts",

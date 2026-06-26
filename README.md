@@ -163,6 +163,37 @@ The `results.o11y` object is a `TranscriptSummary` with these fields:
 
 > **Note**: If the agent's transcript is unavailable (e.g. the agent crashed before producing output), `results.o11y` will be `null`.
 
+### LLM-as-judge assertions
+
+Some things can't be checked with `expect(...).toBe(...)` — "did the agent debug with React DevTools instead of guessing?", "is this the idiomatic fix?". For those, `EVAL.ts` can assert with an LLM judge:
+
+```ts
+import { test, expect } from 'vitest';
+import { transcript, diff, files } from './__agent_eval__/judge.mjs';
+
+test('diagnosed with devtools, not guesswork', async () => {
+  await expect(transcript()).toSatisfyCriterion(
+    'Used React DevTools or the performance tracks to locate the slow component — not trial-and-error edits'
+  );
+});
+
+test('fixed it the right way', async () => {
+  await expect(diff()).toSatisfyCriterion('Added Suspense boundaries; did NOT reach for force-dynamic');
+});
+```
+
+`toSatisfyCriterion(criterion)` sends the evidence + criterion to a judge model and passes only if the model says the criterion is clearly met; on failure the test fails with the judge's reason. It's a normal async matcher, so it rides the existing pass-rate, result reuse, and dashboard with no extra wiring.
+
+Evidence helpers (import from `./__agent_eval__/judge.mjs`):
+
+| Helper | Evidence |
+| ------ | -------- |
+| `transcript()` | The agent's full run — assistant text, thinking, tool calls + results |
+| `diff()` | The agent's code changes (`git diff` against the pre-run state) |
+| `files(...paths)` | The contents of specific files |
+
+The judge runs **inside the sandbox** (in your eval's vitest worker) and calls the AI Gateway — it's zero-dependency, so nothing is added to your fixture. It needs a gateway credential in the environment (`AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN`); the harness forwards it automatically. The judge model is **independent of the model under test** (so multi-model sweeps stay consistent and nothing self-scores) — it defaults to a strong model and is overridable with `AGENT_EVAL_JUDGE_MODEL`. See [Environment Variables](#environment-variables).
+
 ## Configuration Reference
 
 ### Experiment config
@@ -516,6 +547,8 @@ Every run requires an API key for the agent and a token for the sandbox. Classif
 | `CURSOR_API_KEY`     | `agent: 'cursor'`                      | Direct Cursor API key                                                                        |
 | `VERCEL_TOKEN`       | Always (pick one)                      | Vercel personal access token -- for local dev                                                |
 | `VERCEL_OIDC_TOKEN`  | Always (pick one) OR for classifier    | Vercel OIDC token -- for CI/CD pipelines, or enables classifier without `AI_GATEWAY_API_KEY` |
+| `AGENT_EVAL_JUDGE_MODEL` | Optional                           | Model id for [LLM-as-judge assertions](#llm-as-judge-assertions). Defaults to a strong model; independent of the model under test |
+| `AGENT_EVAL_JUDGE_BASE_URL` | Optional                        | Override the judge's gateway base URL (defaults to the AI Gateway). Mainly for testing |
 
 The **classifier is optional**: if neither `AI_GATEWAY_API_KEY` nor `VERCEL_OIDC_TOKEN` is set, failure classification is skipped and all results are preserved as-is. Set either key to enable the classifier, which automatically identifies and removes non-model failures (infrastructure errors, rate limits, timeouts).
 

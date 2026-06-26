@@ -11,6 +11,13 @@ export default tseslint.config(
     },
   },
   {
+    // Injected sandbox runtime: plain JS that runs on Node (fetch + process globals).
+    files: ['src/**/*.mjs'],
+    languageOptions: {
+      globals: { process: 'readonly', fetch: 'readonly', console: 'readonly' },
+    },
+  },
+  {
     ignores: ['dist/**', 'node_modules/**'],
   },
 );

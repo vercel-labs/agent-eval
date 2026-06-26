@@ -7,6 +7,12 @@ import type { SandboxManager } from '../sandbox.js';
 import type { DockerSandboxManager } from '../docker-sandbox.js';
 import { parseTranscript } from '../o11y/index.js';
 import type { ValidationMode } from '../types.js';
+import {
+  getJudgeRuntimeSource,
+  resolveJudgeEnv,
+  TRANSCRIPT_EVENTS_PATH,
+  JUDGE_RUNTIME_PATH,
+} from '../judge.js';
 
 /** Union type for sandbox implementations */
 type AnySandbox = SandboxManager | DockerSandboxManager;
@@ -82,8 +88,17 @@ export async function runValidation(
     // Detect which eval file exists (EVAL.ts or EVAL.tsx)
     const evalFile = await detectEvalFile(sandbox);
 
-    // Always run vitest for the eval file (explicitly specify the file)
-    const testResult = await sandbox.runCommand('npx', ['vitest', 'run', evalFile]);
+    // Always run vitest for the eval file (explicitly specify the file).
+    // Forward gateway creds + judge model so in-eval `toSatisfyCriterion` LLM
+    // assertions can reach the model. Env is merged by the sandbox, not replaced,
+    // so PATH/etc. are preserved; when no gateway credential is present we pass no
+    // env and judge-based assertions are simply unavailable.
+    const judgeEnv = resolveJudgeEnv();
+    const testResult = await sandbox.runCommand(
+      'npx',
+      ['vitest', 'run', evalFile],
+      judgeEnv ? { env: judgeEnv } : {}
+    );
     results.test = {
       success: testResult.exitCode === 0,
       output: testResult.stdout + testResult.stderr,
@@ -237,6 +252,10 @@ export async function injectTranscriptContext(
 
     await sandbox.writeFiles({
       [TRANSCRIPT_CONTEXT_PATH]: JSON.stringify(context, null, 2),
+      // Full normalized transcript for LLM-judge assertions (toSatisfyCriterion).
+      [TRANSCRIPT_EVENTS_PATH]: JSON.stringify({ events: transcript?.events ?? [] }),
+      // Zero-dep judge runtime EVAL.ts can import (registers the matcher + helpers).
+      [JUDGE_RUNTIME_PATH]: getJudgeRuntimeSource(),
     });
   } catch {
     // Best-effort: don't fail the eval if context injection fails
