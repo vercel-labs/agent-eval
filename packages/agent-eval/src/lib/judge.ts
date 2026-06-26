@@ -63,5 +63,10 @@ export function resolveJudgeEnv(model?: string): Record<string, string> | undefi
   const base = process.env.AGENT_EVAL_JUDGE_BASE_URL;
   if (base) env.AGENT_EVAL_JUDGE_BASE_URL = base;
 
+  // codebase() explorer strategy: 'fetch' forces the tool-loop; otherwise an
+  // in-sandbox agent CLI is used when present.
+  const explorer = process.env.AGENT_EVAL_JUDGE_EXPLORER;
+  if (explorer) env.AGENT_EVAL_JUDGE_EXPLORER = explorer;
+
   return env;
 }

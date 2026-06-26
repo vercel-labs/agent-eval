@@ -1408,7 +1408,7 @@ describe.skipIf(!process.env.INTEGRATION_TEST || !hasAiGatewayCredentials)('LLM 
       join(fixtureDir, 'EVAL.ts'),
       `
 import { test, expect } from 'vitest';
-import { transcript, diff } from './__agent_eval__/judge.mjs';
+import { transcript, diff, codebase } from './__agent_eval__/judge.mjs';
 
 test('implemented the greeting (judged on the diff)', async () => {
   await expect(diff()).toSatisfyCriterion(
@@ -1419,6 +1419,12 @@ test('implemented the greeting (judged on the diff)', async () => {
 test('did real work (judged on the transcript)', async () => {
   await expect(transcript()).toSatisfyCriterion(
     'The assistant created or edited a file to implement the requested task'
+  );
+});
+
+test('implementation is correct (judged by exploring the codebase)', async () => {
+  await expect(codebase()).toSatisfyCriterion(
+    'The project exports a greet() function that returns a non-empty greeting string'
   );
 });
 `
@@ -1443,10 +1449,9 @@ test('did real work (judged on the transcript)', async () => {
       scripts: [],
     });
 
-    if (result.result.status === 'failed') {
-      console.error('judge e2e failed:', result.result.error);
-      console.error('eval output:', result.outputContent?.eval);
-    }
+    // Surface the in-sandbox vitest output (incl. which judge explorer ran).
+    console.error('eval output:\n' + (result.outputContent?.eval ?? ''));
+    if (result.result.status === 'failed') console.error('judge e2e failed:', result.result.error);
     expect(result.result.status).toBe('passed');
   }, 240000);
 });

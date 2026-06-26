@@ -239,3 +239,73 @@ describe('toSatisfyCriterion (e2e, real vitest subprocess)', () => {
     expect(output).toContain('NO_DEVTOOLS_MARKER');
   }, 60000);
 });
+
+// --- codebase() agentic explorer: fetch tool-loop path, stubbed gateway, real fs ---
+describe('codebase() exploration (fetch tool-loop, stubbed gateway)', () => {
+  const ws = mkdtempSync(join(tmpdir(), 'agent-eval-ws-'));
+  const realFetch = globalThis.fetch;
+  let rt: typeof import('./judge-runtime.mjs');
+
+  // Queue gateway responses; the loop drives them turn by turn.
+  let responses: unknown[];
+  let seen: { tools?: { function: { name: string } }[]; messages: unknown[] }[];
+  const stub = () => {
+    let i = 0;
+    globalThis.fetch = (async (_url: string | URL, init: { body: string }) => {
+      seen.push(JSON.parse(init.body));
+      const r = responses[Math.min(i++, responses.length - 1)];
+      return { ok: true, status: 200, json: async () => r, text: async () => '' };
+    }) as unknown as typeof fetch;
+  };
+
+  beforeAll(async () => {
+    writeFileSync(join(ws, 'greeting.ts'), 'export function greet() {\n  return "Hello!";\n}\n');
+    process.env.AGENT_EVAL_JUDGE_EXPLORER = 'fetch'; // skip CLI detection → use the loop
+    process.env.AI_GATEWAY_API_KEY = 'stub-key';
+    process.env.AGENT_EVAL_JUDGE_MODEL = 'stub/model';
+    rt = await import('./judge-runtime.mjs');
+  });
+
+  beforeEach(() => {
+    seen = [];
+    stub();
+  });
+
+  afterAll(() => {
+    globalThis.fetch = realFetch;
+    delete process.env.AGENT_EVAL_JUDGE_EXPLORER;
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  const toolCall = (name: string, args: unknown) => ({
+    choices: [
+      { message: { role: 'assistant', content: null, tool_calls: [{ id: name, type: 'function', function: { name, arguments: JSON.stringify(args) } }] } },
+    ],
+  });
+
+  it('reads a file via a tool call, feeds it back, then passes on submit_verdict', async () => {
+    responses = [
+      toolCall('read_file', { path: 'greeting.ts' }),
+      toolCall('submit_verdict', { pass: true, reason: 'greet returns a greeting' }),
+    ];
+    await (expect(rt.codebase(ws)) as { toSatisfyCriterion(c: string): Promise<void> }).toSatisfyCriterion(
+      'greet() returns a non-empty greeting'
+    );
+    // turn 1 sent the tool definitions...
+    expect(seen[0].tools?.some((t) => t.function.name === 'read_file')).toBe(true);
+    // ...and turn 2 carried the real file contents back as a tool result.
+    expect(JSON.stringify(seen[1].messages)).toContain('Hello!');
+  });
+
+  it('rejects (with the reason) when submit_verdict is pass:false', async () => {
+    responses = [toolCall('submit_verdict', { pass: false, reason: 'NO_GREET_FOUND' })];
+    await expect(
+      (expect(rt.codebase(ws)) as { toSatisfyCriterion(c: string): Promise<void> }).toSatisfyCriterion('x')
+    ).rejects.toThrow(/NO_GREET_FOUND/);
+  });
+
+  it('guards against path traversal in tools', () => {
+    const r = rt.__test.runTool(ws, 'read_file', { path: '../../etc/passwd' });
+    expect(r.error).toMatch(/outside/);
+  });
+});

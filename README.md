@@ -191,6 +191,16 @@ Evidence helpers (import from `./__agent_eval__/judge.mjs`):
 | `transcript()` | The agent's full run — assistant text, thinking, tool calls + results |
 | `diff()` | The agent's code changes (`git diff` against the pre-run state) |
 | `files(...paths)` | The contents of specific files |
+| `codebase()` | Nothing up front — the judge **explores** the workspace itself (reads files, greps, runs the code) |
+
+For judgments that need to roam the project ("is this implemented correctly/idiomatically?"), pass `codebase()` instead of pre-collected evidence:
+
+```ts
+import { codebase } from './__agent_eval__/judge.mjs';
+await expect(codebase()).toSatisfyCriterion('greet() is exported and returns a non-empty string');
+```
+
+`codebase()` reuses an agent CLI already installed in the sandbox (it explores natively), and falls back to a built-in tool-loop (`read_file`/`grep`/`list_dir`, path-sandboxed to the project) when no CLI is present. Force the loop with `AGENT_EVAL_JUDGE_EXPLORER=fetch`. It's heavier than the single-shot helpers (multiple model calls / a sub-agent run), so reach for it only when fixed evidence won't do.
 
 The judge runs **inside the sandbox** (in your eval's vitest worker) and calls the AI Gateway — it's zero-dependency, so nothing is added to your fixture. It needs a gateway credential in the environment (`AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN`); the harness forwards it automatically. The judge model is **independent of the model under test** (so multi-model sweeps stay consistent and nothing self-scores) — it defaults to a strong model and is overridable with `AGENT_EVAL_JUDGE_MODEL`. See [Environment Variables](#environment-variables).
 

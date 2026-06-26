@@ -223,6 +223,9 @@ export default defineConfig({
   test: {
     include: ['${evalFile}'],
     globals: false,
+    // LLM-judge assertions call a model (and codebase() may run a multi-turn
+    // explorer or agent CLI), so the 5s default is far too low.
+    testTimeout: 120000,
   },
 });
 `,
