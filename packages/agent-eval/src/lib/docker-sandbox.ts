@@ -4,7 +4,7 @@
  */
 
 import Docker from 'dockerode';
-import { Writable } from 'node:stream';
+import { PassThrough, Writable } from 'node:stream';
 import * as tar from 'tar-stream';
 import type { Sandbox } from './types.js';
 import type { CommandResult, SandboxFile } from './sandbox.js';
@@ -41,19 +41,6 @@ const SANDBOX_GID = 1000;
  * Directory for npm global packages (non-root install location).
  */
 const NPM_GLOBAL_DIR = '/home/node/.npm-global';
-
-/**
- * A Writable that accumulates everything written to it into in-memory buffers.
- * Used as a sink for `docker.modem.demuxStream`.
- */
-function bufferSink(chunks: Buffer[]): Writable {
-  return new Writable({
-    write(chunk: Buffer, _encoding, callback) {
-      chunks.push(Buffer.from(chunk));
-      callback();
-    },
-  });
-}
 
 /**
  * Options for creating a Docker sandbox.
@@ -253,12 +240,18 @@ export class DockerSandboxManager implements Sandbox {
     const stream = await exec.start({ hijack: true, stdin: false });
 
     return new Promise((resolve, reject) => {
+      const stdoutStream = new PassThrough();
+      const stderrStream = new PassThrough();
+      stdoutStream.on('data', (chunk) => stdoutChunks.push(chunk));
+      stderrStream.on('data', (chunk) => stderrChunks.push(chunk));
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
       // Docker multiplexes stdout/stderr in the stream
-      this.docker.modem.demuxStream(stream, bufferSink(stdoutChunks), bufferSink(stderrChunks));
+      this.docker.modem.demuxStream(stream, stdoutStream, stderrStream);
 
       stream.on('end', async () => {
+        stdoutStream.end();
+        stderrStream.end();
         const stdout = Buffer.concat(stdoutChunks).toString('utf-8');
         const stderr = Buffer.concat(stderrChunks).toString('utf-8');
 
