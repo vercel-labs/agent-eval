@@ -230,6 +230,8 @@ const config: ExperimentConfig = {
 - `judge.agent` is optional and defaults to the codegen agent — omit it to keep the same harness and only pin the model. When it names a different agent, that agent's CLI is installed in the sandbox automatically and its key is resolved from its own env var (falling back to `VERCEL_OIDC_TOKEN`).
 - Pinning changes the eval fingerprint, so a pinned run won't reuse self-graded cached results.
 
+**TypeScript support is built in.** Importing from `@vercel/agent-eval/eval` types the `environment`/`transcript` subjects _and_ registers the `toSatisfyCriterion` / `toScoreAtLeast` matchers on Vitest's `expect` — no manual `declare module 'vitest'` augmentation needed. The package also re-exports the `JudgeSubject` and `JudgeVerdict` types for advanced use.
+
 > **Note**: requires `validation: 'vitest'` (the default). The framework gives the eval process the run's credentials automatically so the judge can call the agent CLI in-sandbox.
 
 ## Configuration Reference
