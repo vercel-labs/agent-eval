@@ -46,6 +46,38 @@ export interface OpenCodeProviderConfig {
 }
 
 /**
+ * Resolve a model override into the id the OpenCode CLI expects.
+ *
+ * OpenCode reads `--model` as `<providerID>/<modelID>` and the generated
+ * opencode.json only configures the `vercel` (AI Gateway) provider. A canonical
+ * gateway id like `anthropic/claude-sonnet-5` therefore selects a *provider*
+ * named `anthropic` — which is not configured and has no key in the sandbox —
+ * and the CLI dies at session start ("Unexpected server error") on every task.
+ * The gateway form OpenCode understands is `vercel/anthropic/claude-sonnet-5`.
+ *
+ * So: prefix `vercel/` unless the caller already targets a configured provider
+ * (`vercel` itself, or a key in agentOptions.extraProviders — the escape hatch
+ * for unreleased models). Mirrors codex's `openai/` prefixing in
+ * generateCodexConfig, and the package's own defaultModel shape
+ * (`vercel/anthropic/claude-sonnet-4`). A bare id with no `/` (never a valid
+ * gateway id) is prefixed too, trading the opaque provider error for the
+ * gateway's model-not-found.
+ *
+ * Stays host-side (and exported for the unit tests) — the resolution needs
+ * extraProviders, which only the host knows.
+ */
+export function resolveOpenCodeModel(
+  model: string,
+  extraProviders?: Record<string, OpenCodeProviderConfig>
+): string {
+  const providerID = model.split('/')[0];
+  if (providerID === 'vercel' || (extraProviders && Object.hasOwn(extraProviders, providerID))) {
+    return model;
+  }
+  return `vercel/${model}`;
+}
+
+/**
  * Generate OpenCode config file content.
  * Configures the Vercel AI Gateway provider, plus any additional providers.
  *
@@ -188,6 +220,22 @@ export function createOpenCodeDefinition(): AgentDefinition {
         // the matching tool permissions are written into opencode.json by
         // generateOpenCodeConfig.
         ...(options.webResearch ? { OPENCODE_ENABLE_EXA: '1' } : {}),
+      };
+    },
+
+    /**
+     * Host-computed value the runner passes as `--model`: the model override
+     * resolved against the configured providers (see resolveOpenCodeModel).
+     * Computed here because extraProviders is host-side knowledge; the runner
+     * also uses cliModel-vs-model to report observations back in the caller's
+     * namespace (see normalizeObservedModel in run.mjs). null on native-default.
+     */
+    runnerExtra(options: AgentRunOptions): Record<string, unknown> {
+      const extraProviders = options.agentOptions?.extraProviders as
+        | Record<string, OpenCodeProviderConfig>
+        | undefined;
+      return {
+        cliModel: options.model ? resolveOpenCodeModel(options.model, extraProviders) : null,
       };
     },
   };

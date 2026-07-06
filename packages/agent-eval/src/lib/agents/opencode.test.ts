@@ -3,11 +3,13 @@ import { describe, expect, it } from 'vitest';
 // tested logic is exactly what the sandbox runs); the pure config generator lives
 // in the host-side definition.
 import {
+  buildOpenCodeCliArgs,
   extractObservedModelFromOpenCodeOutput,
   extractObservedModelFromSessionExport,
   extractSessionIdFromTranscript,
+  normalizeObservedModel,
 } from './opencode/run.mjs';
-import { generateOpenCodeConfig } from './opencode/agent.js';
+import { createOpenCodeDefinition, generateOpenCodeConfig, resolveOpenCodeModel } from './opencode/agent.js';
 
 describe('generateOpenCodeConfig', () => {
   it('grants only the default tool permissions when webResearch is off', () => {
@@ -30,6 +32,96 @@ describe('generateOpenCodeConfig', () => {
     const withResearch = JSON.parse(generateOpenCodeConfig(undefined, 'test-key', undefined, true));
     const without = JSON.parse(generateOpenCodeConfig(undefined, 'test-key'));
     expect(withResearch.provider).toEqual(without.provider);
+  });
+});
+
+describe('resolveOpenCodeModel', () => {
+  it('prefixes canonical gateway ids with the vercel provider', () => {
+    expect(resolveOpenCodeModel('anthropic/claude-sonnet-5')).toBe('vercel/anthropic/claude-sonnet-5');
+    expect(resolveOpenCodeModel('openai/gpt-5.5')).toBe('vercel/openai/gpt-5.5');
+  });
+
+  it('keeps already-prefixed ids verbatim', () => {
+    expect(resolveOpenCodeModel('vercel/anthropic/claude-sonnet-5')).toBe('vercel/anthropic/claude-sonnet-5');
+  });
+
+  it('keeps ids targeting an extra provider verbatim', () => {
+    const extraProviders = { 'anthropic-preview': { npm: '@ai-sdk/anthropic' } };
+    expect(resolveOpenCodeModel('anthropic-preview/claude-x', extraProviders)).toBe('anthropic-preview/claude-x');
+    // A gateway id still gets prefixed when extra providers are configured.
+    expect(resolveOpenCodeModel('anthropic/claude-sonnet-5', extraProviders)).toBe('vercel/anthropic/claude-sonnet-5');
+  });
+
+  it('prefixes bare ids so the gateway rejects them with a model error, not a provider error', () => {
+    expect(resolveOpenCodeModel('claude-sonnet-5')).toBe('vercel/claude-sonnet-5');
+  });
+});
+
+describe('OpenCode definition runnerExtra', () => {
+  const definition = createOpenCodeDefinition();
+
+  const baseOptions = { prompt: 'p', apiKey: 'k', timeout: 1000 };
+
+  it('resolves the model override against extraProviders from agentOptions', () => {
+    const extra = definition.runnerExtra!({
+      ...baseOptions,
+      model: 'anthropic/claude-sonnet-5',
+    });
+    expect(extra).toEqual({ cliModel: 'vercel/anthropic/claude-sonnet-5' });
+
+    const withProvider = definition.runnerExtra!({
+      ...baseOptions,
+      model: 'anthropic-preview/claude-x',
+      agentOptions: { extraProviders: { 'anthropic-preview': {} } },
+    });
+    expect(withProvider).toEqual({ cliModel: 'anthropic-preview/claude-x' });
+  });
+
+  it('is null on native-default runs (no model override)', () => {
+    expect(definition.runnerExtra!(baseOptions)).toEqual({ cliModel: null });
+  });
+});
+
+describe('buildOpenCodeCliArgs', () => {
+  it('passes the host-resolved model from extra.cliModel', () => {
+    const args = buildOpenCodeCliArgs({
+      prompt: 'do the thing',
+      model: 'anthropic/claude-sonnet-5',
+      extra: { cliModel: 'vercel/anthropic/claude-sonnet-5' },
+    });
+    expect(args).toEqual(['run', 'do the thing', '--format', 'json', '--model', 'vercel/anthropic/claude-sonnet-5']);
+  });
+
+  it('never passes input.model verbatim — extra.cliModel is the only model source', () => {
+    // Verbatim pass-through is the mis-route this fixes (opencode would read
+    // `anthropic` as its provider id). Without extra there is no --model at all.
+    const args = buildOpenCodeCliArgs({ prompt: 'p', model: 'anthropic/claude-sonnet-5' });
+    expect(args).toEqual(['run', 'p', '--format', 'json']);
+  });
+
+  it('enables log printing instead of --model on native-default runs', () => {
+    const args = buildOpenCodeCliArgs({ prompt: 'p', modelPolicy: 'native-default', extra: { cliModel: null } });
+    expect(args).toEqual(['run', 'p', '--format', 'json', '--print-logs', '--log-level', 'INFO']);
+  });
+});
+
+describe('normalizeObservedModel', () => {
+  it('un-applies the host vercel/ prefix so observed matches the requested gateway id', () => {
+    const input = { model: 'anthropic/claude-sonnet-5', extra: { cliModel: 'vercel/anthropic/claude-sonnet-5' } };
+    expect(normalizeObservedModel('vercel/anthropic/claude-sonnet-5', input)).toBe('anthropic/claude-sonnet-5');
+    // A gateway substitution still surfaces as a clean gateway id.
+    expect(normalizeObservedModel('vercel/anthropic/claude-haiku-4', input)).toBe('anthropic/claude-haiku-4');
+  });
+
+  it('passes observations through when the caller already spoke the OpenCode namespace', () => {
+    const input = { model: 'vercel/openai/gpt-5.5', extra: { cliModel: 'vercel/openai/gpt-5.5' } };
+    expect(normalizeObservedModel('vercel/openai/gpt-5.5', input)).toBe('vercel/openai/gpt-5.5');
+  });
+
+  it('passes native-default observations through untouched', () => {
+    const input = { modelPolicy: 'native-default', extra: { cliModel: null } };
+    expect(normalizeObservedModel('vercel/google/gemini-3-pro-preview', input)).toBe('vercel/google/gemini-3-pro-preview');
+    expect(normalizeObservedModel(undefined, input)).toBeUndefined();
   });
 });
 
