@@ -1,5 +1,11 @@
 # @vercel/agent-eval
 
+## 1.3.1
+
+### Patch Changes
+
+- [#170](https://github.com/vercel-labs/agent-eval/pull/170) [`d6e9c86`](https://github.com/vercel-labs/agent-eval/commit/d6e9c86c769f7dcbe5bf78a1f54ad90c2ac230a0) Thanks [@molebox](https://github.com/molebox)! - Fix OpenCode explicit model overrides never routing through the AI Gateway. `--model anthropic/claude-sonnet-5` was passed to the OpenCode CLI verbatim, which reads the first segment as its _provider_ id — a provider that is not configured in the generated opencode.json (only `vercel`, the AI Gateway, is) — so every explicit-model run died at session start with "Unexpected server error". The model override is now resolved host-side (`vercel/` is prefixed unless the caller already targets `vercel/...` or a configured `extraProviders` key) and handed to the runner via `input.extra`, mirroring codex's `openai/` prefixing. Observed models are reported back in the caller's namespace: when the host added the prefix, the runner strips the leading `vercel/` from the observation, so `observedModel === requestedModel` holds for canonical gateway ids and a gateway substitution still surfaces as a clean gateway id. Native-default observations (e.g. `vercel/google/gemini-3-pro-preview`) and already-prefixed or extra-provider requests are unchanged.
+
 ## 1.3.0
 
 ### Minor Changes
