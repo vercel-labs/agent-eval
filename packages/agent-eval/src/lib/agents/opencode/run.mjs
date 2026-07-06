@@ -25,25 +25,63 @@ import { fileURLToPath } from 'node:url';
 /**
  * Build the OpenCode CLI argument list.
  *
- * Preserved verbatim from the old adapter:
  *   - `run <prompt> --format json` is always emitted (`--format json` gives the
  *     structured JSON event stream we parse for the transcript).
- *   - `--model <model>` is appended when a model override is present.
+ *   - `--model <extra.cliModel>` is appended when a model override is present.
+ *     cliModel is HOST-computed (resolveOpenCodeModel in agent.ts, threaded via
+ *     runnerExtra like codex's resolved model) so a canonical gateway id like
+ *     `anthropic/claude-sonnet-5` arrives as `vercel/anthropic/claude-sonnet-5` —
+ *     the form OpenCode routes through the configured `vercel` provider. There is
+ *     deliberately NO fallback to input.model: passing it verbatim is the exact
+ *     mis-route this fixes, and both runner entry points (the orchestrator and
+ *     the judge's eval-helper) always ship extra.
  *   - else, when modelPolicy === 'native-default', `--print-logs --log-level INFO`
  *     is appended so older OpenCode versions print the CLI-selected model (the
  *     log-scrape path) without a follow-up export call.
  *
- * @param {{prompt:string, model?:string, modelPolicy?:string}} input
+ * @param {{prompt:string, modelPolicy?:string, extra?:Record<string,unknown>}} input
  * @returns {string[]}
  */
 export function buildOpenCodeCliArgs(input) {
   const cliArgs = ['run', input.prompt, '--format', 'json'];
-  if (input.model) {
-    cliArgs.push('--model', input.model);
+  const cliModel = input.extra?.cliModel;
+  if (cliModel) {
+    cliArgs.push('--model', String(cliModel));
   } else if (input.modelPolicy === 'native-default') {
     cliArgs.push('--print-logs', '--log-level', 'INFO');
   }
   return cliArgs;
+}
+
+/**
+ * Report the observed model in the caller's namespace.
+ *
+ * When the host prefixed the requested model with `vercel/` (extra.cliModel !==
+ * input.model), OpenCode observes it back in its own provider namespace —
+ * `vercel/anthropic/claude-sonnet-5` for a requested `anthropic/claude-sonnet-5`.
+ * Un-apply exactly that translation so observed === requested holds for callers
+ * that speak canonical gateway ids, and a gateway substitution still surfaces as
+ * a clean gateway id (`anthropic/claude-haiku-4`, not `vercel/anthropic/...`).
+ *
+ * Everything else passes through untouched: native-default runs (no override —
+ * consumers already treat `vercel/google/gemini-3-pro-preview` as canonical),
+ * callers that already speak OpenCode's namespace (`vercel/...` requested), and
+ * extraProviders runs (their providerID isn't `vercel`).
+ *
+ * @param {string|undefined} observedModel
+ * @param {{model?:string, extra?:Record<string,unknown>}} input
+ * @returns {string|undefined}
+ */
+export function normalizeObservedModel(observedModel, input) {
+  if (!observedModel) {
+    return observedModel;
+  }
+  const cliModel = input.extra?.cliModel;
+  const hostPrefixed = typeof cliModel === 'string' && cliModel !== input.model;
+  if (hostPrefixed && observedModel.startsWith('vercel/')) {
+    return observedModel.slice('vercel/'.length);
+  }
+  return observedModel;
 }
 
 /**
@@ -228,7 +266,7 @@ export async function runAgent(input) {
       }
     }
   }
-  const observedModelOrNull = observedModel ?? null;
+  const observedModelOrNull = normalizeObservedModel(observedModel, input) ?? null;
 
   if (res.error || agentExitCode !== 0) {
     // Mirror the old error string: last 5 lines of output, else a coded fallback.

@@ -349,16 +349,19 @@ transcript or logs. Provide `model` to force a specific model.
 
 ### OpenCode model format
 
-OpenCode uses Vercel AI Gateway exclusively. Models must use the `vercel/{provider}/{model}` format:
+OpenCode uses Vercel AI Gateway exclusively. The OpenCode CLI reads models as
+`{providerID}/{modelID}`, where the provider is the CLI's own `vercel` (AI
+Gateway) provider — so both of these forms work:
 
 ```typescript
-model: 'vercel/anthropic/claude-sonnet-4'
-model: 'vercel/openai/gpt-4o'
-model: 'vercel/moonshotai/kimi-k2'
-model: 'vercel/minimax/minimax-m2.1'
+model: 'anthropic/claude-sonnet-4'        // canonical gateway id — vercel/ is added automatically
+model: 'vercel/anthropic/claude-sonnet-4' // OpenCode's native form — passed verbatim
 ```
 
-The `vercel/` prefix is required. Using `anthropic/claude-sonnet-4` (without `vercel/`) will fail with a "provider not found" error.
+When the prefix was added automatically, `observedModel` is reported back in
+the request's namespace (`anthropic/claude-sonnet-4`), so requested-vs-observed
+comparisons hold. Models targeting a provider configured via
+`agentOptions.extraProviders` are passed verbatim.
 
 ### Response-only evals
 
