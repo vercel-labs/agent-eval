@@ -198,6 +198,18 @@ Two matchers, on either subject:
 - `toSatisfyCriterion(criterion)` — passes when the judge decides the criterion is satisfied.
 - `toScoreAtLeast(criterion, threshold)` — passes when the judge's 0–1 score is `>= threshold`.
 
+One deterministic matcher, on `transcript` only — no judge run, free and exact:
+
+- `toContainText(needle)` — passes when the raw transcript contains the substring. Built for `.not`, i.e. asserting the agent *never* said or reached for something:
+
+```typescript
+test('never suggested the pages router API', () => {
+  expect(transcript).not.toContainText('getServerSideProps');
+});
+```
+
+A missing or empty transcript **throws** (fails the test even under `.not`) — an uncaptured transcript is an infra failure, not evidence of absence. Note the transcript is the agent's native format (for `claude-code`, raw session JSONL), so text containing quotes or newlines appears JSON-escaped there; stick to identifier-like needles. For semantic "never did X" checks, phrase the negation *inside* a `toSatisfyCriterion` criterion instead — do not use `.not.toSatisfyCriterion(...)`, which would invert the judge's fail-closed default into a fail-open one.
+
 You supply only the **criterion** string; the framework owns the judge prompt and the verdict contract. On failure the assertion message carries the judge's reasoning, e.g. `[judge:environment] FAIL (score 0.42): product list is a Client Component`, so a failed judge clause is distinguishable from a failed deterministic test or a crash.
 
 By default the judge uses the **same agent and model** as the run under test (self-grading). Because each assertion is a real agent run, it costs time and tokens — keep criteria focused.

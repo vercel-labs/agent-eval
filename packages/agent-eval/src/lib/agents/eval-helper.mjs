@@ -11,6 +11,7 @@
  *     await expect(environment).toSatisfyCriterion('uses Server Components for the list');
  *     await expect(transcript).toSatisfyCriterion('diagnosed with DevTools, not guesswork');
  *     await expect(environment).toScoreAtLeast('code quality', 0.8);
+ *     expect(transcript).not.toContainText('getServerSideProps'); // deterministic, no judge
  *   });
  *
  * It is AGENTIC and reuses the SAME harness: each assertion re-invokes the codegen
@@ -221,6 +222,53 @@ expect.extend({
       pass,
       message: () =>
         `[judge:${subject}] score ${score} ${pass ? '>=' : '<'} ${threshold} — ${criterion}\n  reason: ${v.reason}`,
+    };
+  },
+
+  /**
+   * Deterministic transcript assertion — reads the materialized transcript and
+   * checks for an exact substring. No judge run, so it is free and exact; built
+   * for `.not` ("the agent never reached for X"):
+   *
+   *   expect(transcript).not.toContainText('getServerSideProps');
+   *
+   * Misuse and a missing/empty transcript THROW instead of returning pass:false —
+   * a returned failure would invert into a silent pass under `.not`, and an
+   * uncaptured transcript is an infra failure, not evidence of absence.
+   *
+   * The transcript is the agent's NATIVE format (e.g. claude-code = raw session
+   * JSONL), so text containing quotes/newlines appears JSON-escaped there; stick
+   * to identifier-like needles.
+   */
+  toContainText(received, needle) {
+    if (subjectOf(received) !== 'transcript') {
+      throw new Error('toContainText expects `transcript` from @vercel/agent-eval/eval');
+    }
+    if (typeof needle !== 'string' || needle.length === 0) {
+      throw new Error('toContainText expects a non-empty string to search for');
+    }
+    const text = existsSync(TRANSCRIPT_FILE) ? readFileSync(TRANSCRIPT_FILE, 'utf8') : '';
+    if (!text) {
+      throw new Error(
+        `toContainText: transcript at ${TRANSCRIPT_FILE} is missing or empty — ` +
+          'transcript capture failed, so nothing can be asserted about it'
+      );
+    }
+    const idx = text.indexOf(needle);
+    const pass = idx !== -1;
+    return {
+      pass,
+      message: () => {
+        if (pass) {
+          // Shown when `.not` fails: cite where the needle actually appears.
+          const start = Math.max(0, idx - 60);
+          const context = text
+            .slice(start, idx + needle.length + 60)
+            .replace(/\n/g, '\\n');
+          return `[transcript] expected NOT to contain ${JSON.stringify(needle)}, but found it at char ${idx}: …${context}…`;
+        }
+        return `[transcript] expected to contain ${JSON.stringify(needle)} (searched ${text.length} chars)`;
+      },
     };
   },
 });
