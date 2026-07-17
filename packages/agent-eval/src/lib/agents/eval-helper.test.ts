@@ -17,7 +17,7 @@ import {
 declare module 'vitest' {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   interface Assertion<T = any> {
-    toContainText(needle: string): T;
+    toContainText(needle: string | RegExp): T;
   }
 }
 
@@ -161,11 +161,42 @@ describe('toContainText', () => {
     );
   });
 
-  it('throws on an empty or non-string needle', () => {
+  it('throws on an empty or non-string, non-RegExp needle', () => {
     writeTranscript('content');
-    expect(() => expect(transcript).toContainText('')).toThrowError(/non-empty string/);
+    expect(() => expect(transcript).toContainText('')).toThrowError(
+      /non-empty string or a RegExp/
+    );
     expect(() =>
-      expect(transcript).toContainText(/regex/ as unknown as string)
-    ).toThrowError(/non-empty string/);
+      expect(transcript).toContainText(42 as unknown as string)
+    ).toThrowError(/non-empty string or a RegExp/);
+  });
+
+  it('accepts a RegExp needle, e.g. case-insensitive via the i flag', () => {
+    writeTranscript('the agent added GetServerSideProps to the page');
+    expect(transcript).toContainText(/getserversideprops/i);
+    expect(transcript).not.toContainText(/useEffect/i);
+  });
+
+  it('regex .not failure cites the ACTUAL matched text, not the pattern', () => {
+    writeTranscript('reached for GETSERVERSIDEPROPS here');
+    expect(() =>
+      expect(transcript).not.toContainText(/getserversideprops/i)
+    ).toThrowError(
+      /expected NOT to contain \/getserversideprops\/i, but found it at char 12: …reached for GETSERVERSIDEPROPS here…/
+    );
+  });
+
+  it('is stable across assertions with a g-flagged regex (no lastIndex drift)', () => {
+    writeTranscript('x marks the spot');
+    const re = /x/g;
+    expect(transcript).toContainText(re);
+    expect(transcript).toContainText(re);
+  });
+
+  it('throws when the regex matches the empty string — the assertion would be vacuous', () => {
+    writeTranscript('content');
+    expect(() => expect(transcript).toContainText(/z*/)).toThrowError(
+      /matches the empty string/
+    );
   });
 });
