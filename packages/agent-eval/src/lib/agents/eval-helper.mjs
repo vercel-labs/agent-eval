@@ -227,10 +227,12 @@ expect.extend({
 
   /**
    * Deterministic transcript assertion — reads the materialized transcript and
-   * checks for an exact substring. No judge run, so it is free and exact; built
-   * for `.not` ("the agent never reached for X"):
+   * checks for an exact substring or a RegExp match (use `/…/i` for
+   * case-insensitive). No judge run, so it is free and exact; built for `.not`
+   * ("the agent never reached for X"):
    *
    *   expect(transcript).not.toContainText('getServerSideProps');
+   *   expect(transcript).not.toContainText(/getserversideprops/i);
    *
    * Misuse and a missing/empty transcript THROW instead of returning pass:false —
    * a returned failure would invert into a silent pass under `.not`, and an
@@ -238,14 +240,15 @@ expect.extend({
    *
    * The transcript is the agent's NATIVE format (e.g. claude-code = raw session
    * JSONL), so text containing quotes/newlines appears JSON-escaped there; stick
-   * to identifier-like needles.
+   * to identifier-like needles or match the escaped form with a RegExp.
    */
   toContainText(received, needle) {
     if (subjectOf(received) !== 'transcript') {
       throw new Error('toContainText expects `transcript` from @vercel/agent-eval/eval');
     }
-    if (typeof needle !== 'string' || needle.length === 0) {
-      throw new Error('toContainText expects a non-empty string to search for');
+    const isRegex = needle instanceof RegExp;
+    if (!isRegex && (typeof needle !== 'string' || needle.length === 0)) {
+      throw new Error('toContainText expects a non-empty string or a RegExp to search for');
     }
     const text = existsSync(TRANSCRIPT_FILE) ? readFileSync(TRANSCRIPT_FILE, 'utf8') : '';
     if (!text) {
@@ -254,8 +257,28 @@ expect.extend({
           'transcript capture failed, so nothing can be asserted about it'
       );
     }
-    const idx = text.indexOf(needle);
+    let idx = -1;
+    let matched = '';
+    if (isRegex) {
+      // Strip g/y so exec always searches from the start, regardless of the
+      // needle's lastIndex state or reuse across assertions.
+      const re = new RegExp(needle.source, needle.flags.replace(/[gy]/g, ''));
+      const m = re.exec(text);
+      if (m) {
+        if (m[0] === '') {
+          throw new Error(
+            `toContainText: ${String(needle)} matches the empty string, which would make the assertion vacuous`
+          );
+        }
+        idx = m.index;
+        matched = m[0];
+      }
+    } else {
+      idx = text.indexOf(needle);
+      matched = needle;
+    }
     const pass = idx !== -1;
+    const display = isRegex ? String(needle) : JSON.stringify(needle);
     return {
       pass,
       message: () => {
@@ -263,11 +286,11 @@ expect.extend({
           // Shown when `.not` fails: cite where the needle actually appears.
           const start = Math.max(0, idx - 60);
           const context = text
-            .slice(start, idx + needle.length + 60)
+            .slice(start, idx + matched.length + 60)
             .replace(/\n/g, '\\n');
-          return `[transcript] expected NOT to contain ${JSON.stringify(needle)}, but found it at char ${idx}: …${context}…`;
+          return `[transcript] expected NOT to contain ${display}, but found it at char ${idx}: …${context}…`;
         }
-        return `[transcript] expected to contain ${JSON.stringify(needle)} (searched ${text.length} chars)`;
+        return `[transcript] expected to contain ${display} (searched ${text.length} chars)`;
       },
     };
   },
