@@ -4,6 +4,7 @@ import {
   buildShellCanaryPrompt,
   extractCodexThreadId,
   extractObservedModelFromCodexSession,
+  parseCanaryMarker,
   shellCanaryConfirmed,
 } from './codex/run.mjs';
 import { generateCodexConfig } from './codex/agent.js';
@@ -188,5 +189,22 @@ describe('codex shell-tool canary (native-default toolless repair)', () => {
 
   it('keeps already-prefixed model ids verbatim in the repair TOML', () => {
     expect(buildModelRepairToml('openai/gpt-5.6-sol')).toContain('model = "openai/gpt-5.6-sol"');
+  });
+
+  it('parses a verified canary marker with and without a repaired model', () => {
+    expect(parseCanaryMarker(JSON.stringify({ verified: true, repairedModel: 'gpt-5.6-sol' }))).toEqual({
+      repairedModel: 'gpt-5.6-sol',
+    });
+    expect(parseCanaryMarker(JSON.stringify({ verified: true, repairedModel: null }))).toEqual({
+      repairedModel: null,
+    });
+  });
+
+  it('treats unverified, corrupt, or empty markers as absent', () => {
+    expect(parseCanaryMarker(JSON.stringify({ verified: false, repairedModel: 'x' }))).toBeNull();
+    expect(parseCanaryMarker(JSON.stringify({ repairedModel: 'x' }))).toBeNull();
+    expect(parseCanaryMarker('not json')).toBeNull();
+    expect(parseCanaryMarker('')).toBeNull();
+    expect(parseCanaryMarker(undefined)).toBeNull();
   });
 });

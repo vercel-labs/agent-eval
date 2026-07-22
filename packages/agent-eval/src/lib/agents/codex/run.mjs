@@ -232,12 +232,41 @@ export function buildCodexExecArgs(input) {
  *      `command_execution` item whose output contains the nonce — an
  *      agent_message merely echoing the nonce is NOT accepted (fabrication).
  *   2. If the canary fails: read the model the CLI natively resolved from the
- *      canary's own session file, append an explicit `model = "openai/<it>"` line
+ *      canary's own session file, prepend an explicit `model = "openai/<it>"` line
  *      to ~/.codex/default.config.toml (same semantics — the CLI chose the model;
  *      we only re-state it), and re-run the canary.
  *   3. If the canary still fails, the run errors LOUDLY instead of executing a
- *      toolless agent and publishing it as normal behavior.
+ *      toolless agent and publishing it as normal behavior. The canary's captured
+ *      output is preserved on that error result for triage.
+ *
+ * The verified outcome is memoized in ~/.codex (CANARY_MARKER_PATH): judge
+ * assertions re-invoke this runner once per assertion in the same sandbox, and
+ * without the marker each assertion would pay its own canary exec.
  */
+
+/** Marker file memoizing the canary outcome for the sandbox's lifetime. */
+const CANARY_MARKER_FILENAME = 'agent-eval-canary.json';
+
+/**
+ * Parse the canary marker file's contents. Returns `{ repairedModel }` when the
+ * marker records a verified shell tool (repairedModel is null when no repair was
+ * needed), or null when the contents are not a valid marker.
+ *
+ * @param {string|undefined} raw
+ * @returns {{repairedModel: string|null}|null}
+ */
+export function parseCanaryMarker(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && parsed.verified === true) {
+      return { repairedModel: typeof parsed.repairedModel === 'string' ? parsed.repairedModel : null };
+    }
+  } catch {
+    // Corrupt marker → treat as absent and re-verify.
+  }
+  return null;
+}
 
 /**
  * Canary prompt. The nonce is random per run so a cached/fabricated answer can
@@ -307,7 +336,7 @@ export function buildModelRepairToml(observedModel) {
  *
  * @param {import('../plugin/contract.js').AgentRunInput} input
  * @param {string} nonce
- * @returns {{confirmed: boolean, stdout: string}}
+ * @returns {{confirmed: boolean, stdout: string, output: string}}
  */
 function runShellCanary(input, nonce) {
   const res = spawnSync('codex', buildCodexExecArgs({ prompt: buildShellCanaryPrompt(nonce), extra: input.extra }), {
@@ -318,21 +347,49 @@ function runShellCanary(input, nonce) {
     timeout: 180_000,
   });
   const stdout = res.stdout || '';
-  return { confirmed: shellCanaryConfirmed(stdout, nonce), stdout };
+  // stdout THEN stderr, matching the runner's real-exec output convention.
+  const output = stdout + (res.stderr || '');
+  return { confirmed: shellCanaryConfirmed(stdout, nonce), stdout, output };
 }
 
 /**
- * Canary + (if needed) config repair for native-default runs. Returns null when
- * the shell tool is verified (possibly after repair), or an error string when the
- * run must fail loudly.
+ * Canary + (if needed) config repair for native-default runs. `error` is null
+ * when the shell tool is verified (possibly after repair); otherwise the run
+ * must fail loudly. `canaryOutput` carries the combined canary CLI output so
+ * failure results stay debuggable (what did the model actually reply?).
  *
  * @param {import('../plugin/contract.js').AgentRunInput} input
- * @returns {{error: string|null, repairedModel: string|null}}
+ * @returns {{error: string|null, repairedModel: string|null, canaryOutput: string}}
  */
 function ensureShellToolForNativeDefault(input) {
+  const markerPath = join(homedir(), '.codex', CANARY_MARKER_FILENAME);
+
+  // Memoized outcome: judge assertions re-invoke this runner in the same
+  // sandbox; only the first invocation pays the canary exec. The marker also
+  // re-reports the original repair so every result carries the same evidence.
+  let marker;
+  try {
+    marker = parseCanaryMarker(readFileSync(markerPath, 'utf8'));
+  } catch {
+    marker = null;
+  }
+  if (marker) return { error: null, repairedModel: marker.repairedModel, canaryOutput: '' };
+
   const nonce = `agent-eval-shell-canary-${randomBytes(8).toString('hex')}`;
   const first = runShellCanary(input, nonce);
-  if (first.confirmed) return { error: null, repairedModel: null };
+
+  const writeMarker = (repairedModel) => {
+    try {
+      writeFileSync(markerPath, JSON.stringify({ verified: true, repairedModel }));
+    } catch {
+      // Best-effort memo: without it, later invocations just re-run the canary.
+    }
+  };
+
+  if (first.confirmed) {
+    writeMarker(null);
+    return { error: null, repairedModel: null, canaryOutput: first.output };
+  }
 
   // Toolless: recover the model the CLI natively resolved from the canary's own
   // session, then re-state it explicitly in the profile config.
@@ -344,6 +401,7 @@ function ensureShellToolForNativeDefault(input) {
       error:
         'codex shell-tool canary failed (no command_execution reached the sandbox) and the native default model could not be observed from the session file, so the explicit-model repair is impossible. Failing loudly instead of running a toolless agent.',
       repairedModel: null,
+      canaryOutput: first.output,
     };
   }
 
@@ -357,6 +415,7 @@ function ensureShellToolForNativeDefault(input) {
     return {
       error: `codex shell-tool canary failed and the config repair could not be written: ${e && e.message ? e.message : String(e)}`,
       repairedModel: null,
+      canaryOutput: first.output,
     };
   }
 
@@ -365,9 +424,11 @@ function ensureShellToolForNativeDefault(input) {
     return {
       error: `codex shell-tool canary still failed after explicit-model repair (model = ${observedModel}). Failing loudly instead of running a toolless agent.`,
       repairedModel: null,
+      canaryOutput: first.output + second.output,
     };
   }
-  return { error: null, repairedModel: observedModel };
+  writeMarker(observedModel);
+  return { error: null, repairedModel: observedModel, canaryOutput: first.output + second.output };
 }
 
 /**
@@ -434,10 +495,13 @@ export async function runAgent(input) {
   if (!cliModel) {
     const ensured = ensureShellToolForNativeDefault(input);
     if (ensured.error) {
+      // Preserve the canary CLI output/transcript on the fail-loud path, the
+      // same way the login and real-exec failure paths preserve theirs — this
+      // is the only evidence of what the toolless model actually replied.
       return {
         ok: false,
-        output: '',
-        transcript: null,
+        output: ensured.canaryOutput,
+        transcript: extractTranscriptFromOutput(ensured.canaryOutput) ?? null,
         observedModel: null,
         error: ensured.error,
         agentExitCode: -1,

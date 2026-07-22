@@ -169,6 +169,9 @@ export interface RunnerResult {
    * profile config by the shell-tool repair (codex >= 0.144.0 drops the exec tool
    * on custom providers when config omits `model`). Absent when no repair ran.
    * Evidence, not configuration — the model choice was still the CLI's own.
+   * Propagated through AgentRunResult into EvalRunResult so persisted results
+   * record which runs needed the repair (also the workaround's removal signal:
+   * repairs dropping to zero means the upstream CLI is fixed).
    */
   modelRepair?: string;
 }

@@ -236,6 +236,7 @@ export async function runWithDefinition(
   let agentOutput = '';
   let transcript: string | undefined;
   let observedModel: string | undefined;
+  let modelRepair: string | undefined;
   let aborted = false;
   let sandboxStopped = false;
 
@@ -334,6 +335,7 @@ export async function runWithDefinition(
     agentOutput = runnerResult.output;
     transcript = runnerResult.transcript ?? undefined;
     observedModel = runnerResult.observedModel ?? undefined;
+    modelRepair = runnerResult.modelRepair ?? undefined;
 
     if (aborted) {
       return {
@@ -357,6 +359,7 @@ export async function runWithDefinition(
         duration: Date.now() - startTime,
         sandboxId: sandbox.sandboxId,
         observedModel,
+        modelRepair,
       };
     }
 
@@ -404,6 +407,7 @@ export async function runWithDefinition(
       generatedFiles,
       deletedFiles,
       observedModel,
+      modelRepair,
     };
   } catch (error) {
     // Abort wins over a generic error (same as the old adapter).
@@ -425,6 +429,7 @@ export async function runWithDefinition(
       duration: Date.now() - startTime,
       sandboxId: sandbox?.sandboxId,
       observedModel,
+      modelRepair,
     };
   } finally {
     if (options.signal) {
