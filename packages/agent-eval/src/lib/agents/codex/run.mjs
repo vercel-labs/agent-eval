@@ -344,7 +344,9 @@ function runShellCanary(input, nonce) {
     env: process.env,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
-    timeout: 180_000,
+    // A single echo round-trip; a hung canary must not eat the sandbox's task
+    // budget (worst case is two canary calls before the real exec).
+    timeout: 60_000,
   });
   const stdout = res.stdout || '';
   // stdout THEN stderr, matching the runner's real-exec output convention.
@@ -597,6 +599,8 @@ if (isMain) {
   }
 
   // Fallback channel: a compact status line (no transcript — it can be huge).
+  // Must carry every field readRunnerResult's fallback reconstructs, or that
+  // field is silently lost whenever the result file can't be read back.
   process.stdout.write(
     '__AGENT_RESULT__ ' +
       JSON.stringify({
@@ -604,6 +608,8 @@ if (isMain) {
         observedModel: result.observedModel,
         error: result.error,
         agentExitCode: result.agentExitCode,
+        // undefined when no repair ran → omitted by JSON.stringify.
+        modelRepair: result.modelRepair,
       }) +
       '\n'
   );

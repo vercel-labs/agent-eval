@@ -17,7 +17,10 @@
  * It is AGENTIC and reuses the SAME harness: each assertion re-invokes the codegen
  * agent's runner (`__agent_eval__/run.mjs`, already shipped) IN this sandbox. The
  * judge explores the final state (cwd) or reads the materialized transcript file —
- * no fresh sandbox, no copying evidence around, no new harness.
+ * no fresh sandbox, no copying evidence around, no new harness. Codex runner
+ * re-invocations skip the native-default shell canary via the per-sandbox marker
+ * (~/.codex/agent-eval-canary.json, see codex/run.mjs) — only the first
+ * invocation pays it.
  *
  * Zero-dependency apart from `vitest` (already present in the fixture). Runs only
  * in-sandbox. The path constants below mirror shared.ts (the orchestrator writes
