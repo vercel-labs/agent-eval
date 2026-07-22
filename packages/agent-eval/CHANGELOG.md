@@ -1,5 +1,15 @@
 # @vercel/agent-eval
 
+## 1.4.0
+
+### Minor Changes
+
+- [#172](https://github.com/vercel-labs/agent-eval/pull/172) [`4f8732c`](https://github.com/vercel-labs/agent-eval/commit/4f8732ccdd2fe396ffa2e162644a3632521070c7) Thanks [@gaojude](https://github.com/gaojude)! - Add `expect(transcript).toContainText(needle)` — a deterministic, judge-free EVAL.ts matcher over the materialized transcript. `needle` is an exact substring or a RegExp (use `/…/i` for case-insensitive). Built for `.not` ("the agent never reached for X"): absence checks no longer need a judge run or manual `readFileSync(transcriptPath())`. Misuse (wrong subject, empty needle, empty-matching regex) and a missing/empty transcript throw instead of returning a failed verdict, so `.not` can never invert them into a silent pass.
+
+### Patch Changes
+
+- [#175](https://github.com/vercel-labs/agent-eval/pull/175) [`f661766`](https://github.com/vercel-labs/agent-eval/commit/f661766173cd008e13729190868e8015134ebb26) Thanks [@molebox](https://github.com/molebox)! - Verify and repair the shell tool for native-default Codex runs. Codex CLI >= 0.144.0 (published 2026-07-09) exposes no shell/exec tool to the model when config.toml uses a custom `model_provider` (e.g. the AI Gateway) and omits the `model` key — exactly what native-default runs write. The model still answers, but it cannot run commands, read files, or use installed skills, and it sometimes fabricates command output instead of reporting the missing tool. run.mjs now pre-verifies native-default runs with a fabrication-proof shell canary (a `command_execution` item must carry a random nonce), repairs by re-stating the CLI's own resolved default model as an explicit top-level `model` key in the profile config, re-verifies, and fails loudly if the tool is still unavailable — preserving the canary's captured output on the failure result for triage. The verified outcome is memoized per sandbox (`~/.codex/agent-eval-canary.json`) so judge assertions that re-invoke the runner do not pay repeat canary calls. The repair is recorded as an optional `modelRepair` field propagated through `RunnerResult` → `AgentRunResult` → `EvalRunResult`, so persisted results show which runs needed it (and repairs dropping to zero signals the upstream fix).
+
 ## 1.3.1
 
 ### Patch Changes
