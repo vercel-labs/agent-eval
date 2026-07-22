@@ -164,4 +164,11 @@ export interface RunnerResult {
   error: string | null;
   /** The agent CLI's exit code (diagnostics; -1 if it could not be spawned). */
   agentExitCode: number;
+  /**
+   * Codex only: the model the CLI natively resolved, re-stated explicitly in the
+   * profile config by the shell-tool repair (codex >= 0.144.0 drops the exec tool
+   * on custom providers when config omits `model`). Absent when no repair ran.
+   * Evidence, not configuration — the model choice was still the CLI's own.
+   */
+  modelRepair?: string;
 }
