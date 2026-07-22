@@ -621,6 +621,7 @@ describe('runExperiment', () => {
           output: 'Agent output',
           duration: 1000,
           observedModel: 'runtime-model',
+          modelRepair: 'runtime-model',
           testResult: { success: true, output: 'Test passed' },
           scriptsResults: {},
         }),
@@ -661,6 +662,8 @@ describe('runExperiment', () => {
         modelPolicy: 'native-default',
       }));
       expect(results.evals[0].runs[0].result.observedModel).toBe('runtime-model');
+      // Shell-tool repair evidence follows the same path as observedModel.
+      expect(results.evals[0].runs[0].result.modelRepair).toBe('runtime-model');
     });
 
     it('passes response-only validation mode to the agent', async () => {

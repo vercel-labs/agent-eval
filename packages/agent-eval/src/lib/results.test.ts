@@ -48,6 +48,23 @@ describe('results utilities', () => {
       expect(runData.transcript).toBe('{"role":"assistant","content":"Hello"}');
       expect(runData.outputContent?.eval).toBe('test output');
       expect(runData.outputContent?.scripts?.build).toBe('build output');
+      // No repair ran → field omitted, mirroring observedModel's omit-when-absent shape.
+      expect(runData.result.modelRepair).toBeUndefined();
+    });
+
+    it('copies modelRepair through like observedModel (shell-tool repair evidence)', () => {
+      const agentResult: AgentRunResult = {
+        success: true,
+        output: 'Agent output',
+        duration: 45000,
+        observedModel: 'openai/gpt-5.6-sol',
+        modelRepair: 'gpt-5.6-sol',
+      };
+
+      const runData = agentResultToEvalRunData(agentResult);
+
+      expect(runData.result.observedModel).toBe('openai/gpt-5.6-sol');
+      expect(runData.result.modelRepair).toBe('gpt-5.6-sol');
     });
 
     it('converts failed agent result', () => {
@@ -243,7 +260,7 @@ describe('results utilities', () => {
 
       const evals = [
         createEvalSummary('eval-1', [
-          { result: { status: 'passed', duration: 10, observedModel: 'vercel/openai/gpt-5.5' } },
+          { result: { status: 'passed', duration: 10, observedModel: 'vercel/openai/gpt-5.5', modelRepair: 'gpt-5.5' } },
         ]),
       ];
 
@@ -266,6 +283,9 @@ describe('results utilities', () => {
       expect(resultJson.model).toBe('vercel/openai/gpt-5.5');
       expect(resultJson.requestedModel).toBeUndefined();
       expect(resultJson.observedModel).toBe('vercel/openai/gpt-5.5');
+      // Repair evidence must survive into the persisted result.json — it is the
+      // removal signal for the codex shell-tool workaround (see codex/run.mjs).
+      expect(resultJson.modelRepair).toBe('gpt-5.5');
     });
 
     it('does not collide when script is named "eval"', () => {

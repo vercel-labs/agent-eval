@@ -62,6 +62,9 @@ export function agentResultToEvalRunData(
 	if (agentResult.observedModel) {
 		result.observedModel = agentResult.observedModel;
 	}
+	if (agentResult.modelRepair) {
+		result.modelRepair = agentResult.modelRepair;
+	}
 
 	return {
 		result,

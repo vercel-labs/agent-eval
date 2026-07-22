@@ -86,6 +86,8 @@ export interface AgentRunResult {
   deletedFiles?: string[];
   /** Model reported by the underlying agent CLI, when observable */
   observedModel?: string;
+  /** Codex only: model re-stated explicitly by the shell-tool repair (see RunnerResult.modelRepair) */
+  modelRepair?: string;
 }
 
 /**

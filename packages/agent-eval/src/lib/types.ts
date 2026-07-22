@@ -264,6 +264,8 @@ export interface EvalRunResult {
   requestedModel?: string;
   /** Model reported by the underlying agent CLI, when observable */
   observedModel?: string;
+  /** Codex only: model re-stated explicitly by the shell-tool repair (evidence the run needed it) */
+  modelRepair?: string;
   /** Path to parsed transcript file (relative to run directory) */
   transcriptPath?: string;
   /** Path to raw transcript file (relative to run directory) */

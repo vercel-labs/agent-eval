@@ -211,6 +211,7 @@ async function readRunnerResult(
         observedModel: status.observedModel ?? null,
         error: status.error ?? null,
         agentExitCode: status.agentExitCode ?? -1,
+        ...(status.modelRepair ? { modelRepair: status.modelRepair } : {}),
       };
     } catch {
       // fall through to the throw
@@ -236,6 +237,7 @@ export async function runWithDefinition(
   let agentOutput = '';
   let transcript: string | undefined;
   let observedModel: string | undefined;
+  let modelRepair: string | undefined;
   let aborted = false;
   let sandboxStopped = false;
 
@@ -264,7 +266,11 @@ export async function runWithDefinition(
       return { success: false, output: '', error: 'Aborted', duration: Date.now() - startTime };
     }
 
-    // 2. Create the sandbox.
+    // 2. Create the sandbox. One sandbox serves the codegen run AND every judge
+    //    re-invocation of the runner (eval-helper.mjs); codex's shell-canary
+    //    memoization (~/.codex/agent-eval-canary.json, see codex/run.mjs) relies
+    //    on that shared lifetime — a sandbox-per-invocation change would make
+    //    every judge assertion re-pay the canary exec.
     sandbox = await createSandbox({
       timeout: options.timeout,
       runtime: 'node24',
@@ -334,6 +340,7 @@ export async function runWithDefinition(
     agentOutput = runnerResult.output;
     transcript = runnerResult.transcript ?? undefined;
     observedModel = runnerResult.observedModel ?? undefined;
+    modelRepair = runnerResult.modelRepair ?? undefined;
 
     if (aborted) {
       return {
@@ -357,6 +364,7 @@ export async function runWithDefinition(
         duration: Date.now() - startTime,
         sandboxId: sandbox.sandboxId,
         observedModel,
+        modelRepair,
       };
     }
 
@@ -404,6 +412,7 @@ export async function runWithDefinition(
       generatedFiles,
       deletedFiles,
       observedModel,
+      modelRepair,
     };
   } catch (error) {
     // Abort wins over a generic error (same as the old adapter).
@@ -425,6 +434,7 @@ export async function runWithDefinition(
       duration: Date.now() - startTime,
       sandboxId: sandbox?.sandboxId,
       observedModel,
+      modelRepair,
     };
   } finally {
     if (options.signal) {

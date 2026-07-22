@@ -22,6 +22,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -215,6 +216,223 @@ export function buildCodexExecArgs(input) {
   return args;
 }
 
+/* ────────────────── native-default shell-tool canary + repair ──────────────────
+ *
+ * Codex CLI >= 0.144.0 exposes NO shell/exec tool to the model when config.toml
+ * has a custom `model_provider` (e.g. the AI Gateway) and omits the `model` key —
+ * exactly the shape native-default runs write. The model answers, but it cannot
+ * run commands, read files, or use installed skills, and it sometimes FABRICATES
+ * command output instead of reporting the missing tool. Verified empirically:
+ * 0.143.0 is the last good version; adding an explicit `model = "<the same model
+ * the CLI resolves natively>"` fully restores the tool.
+ *
+ * Because fabrication makes post-hoc transcript checks unreliable, native-default
+ * runs are pre-verified with a shell canary before the real task:
+ *   1. canary exec: ask codex to `echo <random nonce>`. PROOF is a
+ *      `command_execution` item whose output contains the nonce — an
+ *      agent_message merely echoing the nonce is NOT accepted (fabrication).
+ *   2. If the canary fails: read the model the CLI natively resolved from the
+ *      canary's own session file, prepend an explicit `model = "openai/<it>"` line
+ *      to ~/.codex/default.config.toml (same semantics — the CLI chose the model;
+ *      we only re-state it), and re-run the canary.
+ *   3. If the canary still fails, the run errors LOUDLY instead of executing a
+ *      toolless agent and publishing it as normal behavior. The canary's captured
+ *      output is preserved on that error result for triage.
+ *
+ * The verified outcome is memoized in ~/.codex (CANARY_MARKER_PATH): judge
+ * assertions re-invoke this runner once per assertion in the same sandbox, and
+ * without the marker each assertion would pay its own canary exec.
+ */
+
+/** Marker file memoizing the canary outcome for the sandbox's lifetime. */
+const CANARY_MARKER_FILENAME = 'agent-eval-canary.json';
+
+/**
+ * Parse the canary marker file's contents. Returns `{ repairedModel }` when the
+ * marker records a verified shell tool (repairedModel is null when no repair was
+ * needed), or null when the contents are not a valid marker.
+ *
+ * @param {string|undefined} raw
+ * @returns {{repairedModel: string|null}|null}
+ */
+export function parseCanaryMarker(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && parsed.verified === true) {
+      return { repairedModel: typeof parsed.repairedModel === 'string' ? parsed.repairedModel : null };
+    }
+  } catch {
+    // Corrupt marker → treat as absent and re-verify.
+  }
+  return null;
+}
+
+/**
+ * Canary prompt. The nonce is random per run so a cached/fabricated answer can
+ * never pass. Kept terse to minimize tokens.
+ *
+ * @param {string} nonce
+ * @returns {string}
+ */
+export function buildShellCanaryPrompt(nonce) {
+  return `Run the shell command \`echo ${nonce}\` and reply with its exact output. If you cannot run shell commands, reply exactly: NO-SHELL-TOOL`;
+}
+
+/**
+ * True iff the codex --json stdout proves the shell ran: a completed
+ * `command_execution` item with exit_code 0 whose command or aggregated_output
+ * contains the nonce. Agent messages containing the nonce do NOT count — a
+ * toolless codex has been observed inventing plausible command output.
+ *
+ * @param {string} stdout
+ * @param {string} nonce
+ * @returns {boolean}
+ */
+export function shellCanaryConfirmed(stdout, nonce) {
+  if (!stdout) return false;
+  for (const line of stdout.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const event = JSON.parse(line);
+      const item = event.item;
+      if (
+        event.type === 'item.completed' &&
+        item &&
+        item.type === 'command_execution' &&
+        item.exit_code === 0 &&
+        ((typeof item.command === 'string' && item.command.includes(nonce)) ||
+          (typeof item.aggregated_output === 'string' && item.aggregated_output.includes(nonce)))
+      ) {
+        return true;
+      }
+    } catch {
+      // Ignore non-JSON output lines.
+    }
+  }
+  return false;
+}
+
+/**
+ * The config repair: an explicit top-level `model` line for
+ * ~/.codex/default.config.toml. Gateway model ids are prefixed
+ * ("openai/gpt-5.6-sol"); session files record the bare id, so prefix when
+ * missing. The line MUST be PREPENDED to the config: `model` is a top-level
+ * key, and anything appended after a `[table]` header (e.g.
+ * `[model_providers.vercel]`) would become a key of that table instead.
+ *
+ * @param {string} observedModel
+ * @returns {string}
+ */
+export function buildModelRepairToml(observedModel) {
+  const fullModel = observedModel.includes('/') ? observedModel : `openai/${observedModel}`;
+  return `# agent-eval repair: codex >= 0.144.0 drops the shell tool when config omits \`model\`\nmodel = "${fullModel}"\n`;
+}
+
+/**
+ * Run the canary exec once and report. Uses the same profile/flags as the real
+ * exec (buildCodexExecArgs) so it verifies the exact configuration the task will
+ * run under. Bounded by its own timeout so a hang cannot eat the task budget.
+ *
+ * @param {import('../plugin/contract.js').AgentRunInput} input
+ * @param {string} nonce
+ * @returns {{confirmed: boolean, stdout: string, output: string}}
+ */
+function runShellCanary(input, nonce) {
+  const res = spawnSync('codex', buildCodexExecArgs({ prompt: buildShellCanaryPrompt(nonce), extra: input.extra }), {
+    cwd: input.cwd,
+    env: process.env,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+    // A single echo round-trip; a hung canary must not eat the sandbox's task
+    // budget (worst case is two canary calls before the real exec).
+    timeout: 60_000,
+  });
+  const stdout = res.stdout || '';
+  // stdout THEN stderr, matching the runner's real-exec output convention.
+  const output = stdout + (res.stderr || '');
+  return { confirmed: shellCanaryConfirmed(stdout, nonce), stdout, output };
+}
+
+/**
+ * Canary + (if needed) config repair for native-default runs. `error` is null
+ * when the shell tool is verified (possibly after repair); otherwise the run
+ * must fail loudly. `canaryOutput` carries the combined canary CLI output so
+ * failure results stay debuggable (what did the model actually reply?).
+ *
+ * @param {import('../plugin/contract.js').AgentRunInput} input
+ * @returns {{error: string|null, repairedModel: string|null, canaryOutput: string}}
+ */
+function ensureShellToolForNativeDefault(input) {
+  const markerPath = join(homedir(), '.codex', CANARY_MARKER_FILENAME);
+
+  // Memoized outcome: judge assertions re-invoke this runner in the same
+  // sandbox; only the first invocation pays the canary exec. The marker also
+  // re-reports the original repair so every result carries the same evidence.
+  let marker;
+  try {
+    marker = parseCanaryMarker(readFileSync(markerPath, 'utf8'));
+  } catch {
+    marker = null;
+  }
+  if (marker) return { error: null, repairedModel: marker.repairedModel, canaryOutput: '' };
+
+  const nonce = `agent-eval-shell-canary-${randomBytes(8).toString('hex')}`;
+  const first = runShellCanary(input, nonce);
+
+  const writeMarker = (repairedModel) => {
+    try {
+      writeFileSync(markerPath, JSON.stringify({ verified: true, repairedModel }));
+    } catch {
+      // Best-effort memo: without it, later invocations just re-run the canary.
+    }
+  };
+
+  if (first.confirmed) {
+    writeMarker(null);
+    return { error: null, repairedModel: null, canaryOutput: first.output };
+  }
+
+  // Toolless: recover the model the CLI natively resolved from the canary's own
+  // session, then re-state it explicitly in the profile config.
+  const threadId = extractCodexThreadId(first.stdout);
+  const sessionTranscript = captureCodexSessionTranscript(threadId);
+  const observedModel = extractObservedModelFromCodexSession(sessionTranscript);
+  if (!observedModel) {
+    return {
+      error:
+        'codex shell-tool canary failed (no command_execution reached the sandbox) and the native default model could not be observed from the session file, so the explicit-model repair is impossible. Failing loudly instead of running a toolless agent.',
+      repairedModel: null,
+      canaryOutput: first.output,
+    };
+  }
+
+  try {
+    // Prepend, never append: `model` must land in the top-level TOML section,
+    // before any `[table]` header. See buildModelRepairToml.
+    const configPath = join(homedir(), '.codex', 'default.config.toml');
+    const existing = readFileSync(configPath, 'utf8');
+    writeFileSync(configPath, buildModelRepairToml(observedModel) + existing);
+  } catch (e) {
+    return {
+      error: `codex shell-tool canary failed and the config repair could not be written: ${e && e.message ? e.message : String(e)}`,
+      repairedModel: null,
+      canaryOutput: first.output,
+    };
+  }
+
+  const second = runShellCanary(input, nonce);
+  if (!second.confirmed) {
+    return {
+      error: `codex shell-tool canary still failed after explicit-model repair (model = ${observedModel}). Failing loudly instead of running a toolless agent.`,
+      repairedModel: null,
+      canaryOutput: first.output + second.output,
+    };
+  }
+  writeMarker(observedModel);
+  return { error: null, repairedModel: observedModel, canaryOutput: first.output + second.output };
+}
+
 /**
  * Run Codex over the workspace at `input.cwd` and return a RunnerResult.
  *
@@ -270,6 +488,30 @@ export async function runAgent(input) {
     };
   }
 
+  // Step 1.5: native-default runs (no explicit model in config) are pre-verified
+  // with a shell canary and repaired when codex resolves its default model into a
+  // toolless session (codex >= 0.144.0 with a custom provider). Explicit-model
+  // runs already carry `model` in the profile config and are unaffected.
+  let modelRepair = null;
+  const cliModel = input.extra?.cliModel ?? null;
+  if (!cliModel) {
+    const ensured = ensureShellToolForNativeDefault(input);
+    if (ensured.error) {
+      // Preserve the canary CLI output/transcript on the fail-loud path, the
+      // same way the login and real-exec failure paths preserve theirs — this
+      // is the only evidence of what the toolless model actually replied.
+      return {
+        ok: false,
+        output: ensured.canaryOutput,
+        transcript: extractTranscriptFromOutput(ensured.canaryOutput) ?? null,
+        observedModel: null,
+        error: ensured.error,
+        agentExitCode: -1,
+      };
+    }
+    modelRepair = ensured.repairedModel;
+  }
+
   // Step 2: codex exec. Blocking is fine — the runner has nothing else to do while
   // the agent works. The sandbox-level timeout bounds it.
   const res = spawnSync('codex', buildCodexExecArgs(input), {
@@ -307,10 +549,19 @@ export async function runAgent(input) {
       observedModel,
       error: errorLines || fallback,
       agentExitCode,
+      ...(modelRepair ? { modelRepair } : {}),
     };
   }
 
-  return { ok: true, output, transcript, observedModel, error: null, agentExitCode };
+  return {
+    ok: true,
+    output,
+    transcript,
+    observedModel,
+    error: null,
+    agentExitCode,
+    ...(modelRepair ? { modelRepair } : {}),
+  };
 }
 
 /* ─────────────────────────── runnable (CLI) entry ─────────────────────────── */
@@ -348,6 +599,8 @@ if (isMain) {
   }
 
   // Fallback channel: a compact status line (no transcript — it can be huge).
+  // Must carry every field readRunnerResult's fallback reconstructs, or that
+  // field is silently lost whenever the result file can't be read back.
   process.stdout.write(
     '__AGENT_RESULT__ ' +
       JSON.stringify({
@@ -355,6 +608,8 @@ if (isMain) {
         observedModel: result.observedModel,
         error: result.error,
         agentExitCode: result.agentExitCode,
+        // undefined when no repair ran → omitted by JSON.stringify.
+        modelRepair: result.modelRepair,
       }) +
       '\n'
   );
