@@ -23,7 +23,7 @@ import type {
 import type { AgentRunResult } from './agents/types.js';
 import { parseTranscript, type Transcript } from './o11y/index.js';
 import { isNonModelFailure } from './classifier.js';
-import { readFixtureFiles } from './fixture.js';
+import { copyFixtureFiles } from './fixture.js';
 
 /**
  * Convert AgentRunResult to EvalRunData (result + transcript).
@@ -310,12 +310,7 @@ export function saveResults(
 					const fixturePath =
 						options.fixturePaths?.[evalSummary.name];
 					if (fixturePath) {
-						const fixtureFiles = readFixtureFiles(fixturePath);
-						for (const [filePath, content] of fixtureFiles) {
-							const fullPath = join(projectDir, filePath);
-							mkdirSync(dirname(fullPath), { recursive: true });
-							writeFileSync(fullPath, content);
-						}
+						copyFixtureFiles(fixturePath, projectDir);
 					}
 
 					// Remove deleted files from the copied project

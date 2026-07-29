@@ -57,8 +57,10 @@ export interface Sandbox {
     args?: string[],
     options?: { env?: Record<string, string>; cwd?: string }
   ): Promise<{ stdout: string; stderr: string; exitCode: number }>;
-  /** Read a file from the sandbox */
+  /** Read a file from the sandbox, decoded as UTF-8 (lossy for binary files) */
   readFile(path: string): Promise<string>;
+  /** Read a file from the sandbox as raw bytes. Use this for anything binary. */
+  readFileBuffer(path: string): Promise<Buffer>;
   /** Write files to the sandbox */
   writeFiles(files: Record<string, string>): Promise<void>;
   /** Get the sandbox working directory */
@@ -298,8 +300,8 @@ export interface EvalRunData {
     /** npm script outputs (nested to avoid collision) */
     scripts?: Record<string, string>;
   };
-  /** Files generated/modified by the agent (path -> content). Used for copyFiles option. */
-  generatedFiles?: Record<string, string>;
+  /** Files generated/modified by the agent (path -> raw content). Used for copyFiles option. */
+  generatedFiles?: Record<string, Buffer>;
   /** Files deleted by the agent. Used for copyFiles option. */
   deletedFiles?: string[];
 }

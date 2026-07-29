@@ -203,7 +203,9 @@ export class SandboxManager implements Sandbox {
   }
 
   /**
-   * Read a file from the sandbox.
+   * Read a file from the sandbox, decoded as UTF-8.
+   *
+   * Lossy for binary files — use `readFileBuffer` for anything that is not text.
    */
   async readFile(path: string): Promise<string> {
     const result = await this.runCommand('cat', [path]);
@@ -211,6 +213,27 @@ export class SandboxManager implements Sandbox {
       throw new Error(`Failed to read file ${path}: ${result.stderr}`);
     }
     return result.stdout;
+  }
+
+  /**
+   * Read a file from the sandbox as raw bytes.
+   *
+   * `readFile` hands back command stdout, and stdout is a *string*: the sandbox
+   * API decodes the log stream as UTF-8, chunk by chunk. Every byte that is not
+   * valid UTF-8 comes back as U+FFFD, and multi-byte sequences straddling a
+   * chunk boundary are lost as well, so any binary file (icon, image, font) is
+   * silently destroyed and grows ~1.8x on the way out.
+   *
+   * base64 keeps every byte inside ASCII, so the same transport round-trips
+   * losslessly. Buffer's base64 decoder ignores the line breaks coreutils
+   * inserts, so no `-w` flag (which BusyBox lacks) is needed.
+   */
+  async readFileBuffer(path: string): Promise<Buffer> {
+    const result = await this.runCommand('base64', [path]);
+    if (result.exitCode !== 0) {
+      throw new Error(`Failed to read file ${path}: ${result.stderr}`);
+    }
+    return Buffer.from(result.stdout, 'base64');
   }
 
   /**

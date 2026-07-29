@@ -50,6 +50,7 @@ export {
   loadAllFixtures,
   getFixtureFiles,
   readFixtureFiles,
+  copyFixtureFiles,
 } from './lib/fixture.js';
 
 // Re-export sandbox utilities

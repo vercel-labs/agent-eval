@@ -318,7 +318,9 @@ export class DockerSandboxManager implements Sandbox {
   }
 
   /**
-   * Read a file from the container.
+   * Read a file from the container, decoded as UTF-8.
+   *
+   * Lossy for binary files — use `readFileBuffer` for anything that is not text.
    */
   async readFile(path: string): Promise<string> {
     const result = await this.runCommand('cat', [path]);
@@ -326,6 +328,22 @@ export class DockerSandboxManager implements Sandbox {
       throw new Error(`Failed to read file ${path}: ${result.stderr}`);
     }
     return result.stdout;
+  }
+
+  /**
+   * Read a file from the container as raw bytes.
+   *
+   * Mirrors SandboxManager.readFileBuffer: execCommand decodes the demuxed
+   * stdout with `.toString('utf-8')`, which replaces every non-UTF-8 byte with
+   * U+FFFD and destroys binary files. base64 keeps the bytes inside ASCII so
+   * the same transport round-trips losslessly.
+   */
+  async readFileBuffer(path: string): Promise<Buffer> {
+    const result = await this.runCommand('base64', [path]);
+    if (result.exitCode !== 0) {
+      throw new Error(`Failed to read file ${path}: ${result.stderr}`);
+    }
+    return Buffer.from(result.stdout, 'base64');
   }
 
   /**
