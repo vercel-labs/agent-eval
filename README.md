@@ -542,7 +542,7 @@ const config: ExperimentConfig = {
 - **`changed`** — Copy only files that were modified, created, or deleted by the agent
 - **`all`** — Copy the complete project including both the original fixture files and agent changes
 
-Files are saved to `results/<experiment>/<timestamp>/<eval>/run-N/project/`. The framework uses git to track changes. Binary files (images, fonts, icons) are copied byte-for-byte, so a collected tree is a faithful copy you can build, run or screenshot.
+Files are saved to `results/<experiment>/<timestamp>/<eval>/run-N/project/`. The framework uses git to track changes.
 
 ## Result Reuse
 

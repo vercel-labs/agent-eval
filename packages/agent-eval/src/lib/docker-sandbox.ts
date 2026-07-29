@@ -331,12 +331,7 @@ export class DockerSandboxManager implements Sandbox {
   }
 
   /**
-   * Read a file from the container as raw bytes.
-   *
-   * Mirrors SandboxManager.readFileBuffer: execCommand decodes the demuxed
-   * stdout with `.toString('utf-8')`, which replaces every non-UTF-8 byte with
-   * U+FFFD and destroys binary files. base64 keeps the bytes inside ASCII so
-   * the same transport round-trips losslessly.
+   * Read a file from the sandbox as raw bytes, through base64 encoding.
    */
   async readFileBuffer(path: string): Promise<Buffer> {
     const result = await this.runCommand('base64', [path]);
