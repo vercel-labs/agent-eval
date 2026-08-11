@@ -276,8 +276,8 @@ const config: ExperimentConfig = {
   // Expensive setup reused through immutable Vercel Sandbox snapshots
   sandboxTemplate: defineSandboxTemplate({
     key: 'dependencies-v1',
-    identity: ({ hashFiles }) => ({
-      dependencies: hashFiles(['package.json', 'package-lock.json']),
+    identity: ({ config }) => ({
+      frameworkVersion: config.agentOptions?.frameworkVersion ?? 'local',
     }),
     prepare: async ({ sandbox }) => {
       await sandbox.runCommand('npm', ['install']);
@@ -487,10 +487,10 @@ import {
 const dependencies = defineSandboxTemplate({
   key: 'dependencies-v1',
 
-  // Optional. The returned value defines when prepared states are equivalent.
-  // Without this callback, all agent-visible fixture files are hashed.
-  identity: ({ hashFiles }) => ({
-    dependencies: hashFiles(['package.json', 'package-lock.json']),
+  // Optional additional context, such as an external framework version.
+  // The complete agent-visible fixture is always hashed regardless.
+  identity: ({ config }) => ({
+    frameworkVersion: config.agentOptions?.frameworkVersion ?? 'local',
   }),
 
   prepare: async ({ sandbox }) => {
@@ -512,13 +512,17 @@ const config: ExperimentConfig = {
 export default config;
 ```
 
-The framework combines the returned identity with the template `key`, backend,
-runtime, and template format version. Change `key` whenever preparation logic
-changes in a way not represented by `identity`.
+The complete agent-visible fixture always participates in the snapshot identity.
+Fixtures that differ only in withheld `PROMPT.md` and `EVAL.ts` files therefore
+share prepared state naturally, while different starting projects never do.
+The optional `identity` callback only adds contextual inputs; it cannot collapse
+different visible fixtures into one snapshot.
 
-A custom identity is an assertion that equal values produce interchangeable
-prepared states. Templates currently require the Vercel sandbox backend; Docker
-fails explicitly rather than silently repeating preparation.
+The framework combines the fixture and additional identities with the template
+`key`, backend, runtime, and template format version. Change `key` whenever
+preparation logic changes in a way not otherwise represented. Templates currently
+require the Vercel sandbox backend; Docker fails explicitly rather than silently
+repeating preparation.
 
 ## A/B Testing
 

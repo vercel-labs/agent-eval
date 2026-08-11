@@ -98,20 +98,25 @@ export async function computeSandboxTemplateIdentity(options: {
   runtime: string;
 }): Promise<string> {
   const { template, fixture, config, workspaceFiles, backend, runtime } = options;
-  const userIdentity = template.identity
+  // The complete visible workspace is always part of the identity. A custom
+  // identity can add external/contextual inputs, but can never make different
+  // fixture starting states share a snapshot.
+  const workspaceIdentity = hashSandboxFiles(workspaceFiles);
+  const additionalIdentity = template.identity
     ? await template.identity({
         fixture,
         config,
         hashFiles: (patterns) => hashFixturePatterns(fixture.path, patterns),
       })
-    : hashSandboxFiles(workspaceFiles);
+    : null;
 
   return createHash('sha256')
     .update(
       canonicalize({
         format: 1,
         key: template.key,
-        identity: userIdentity,
+        workspaceIdentity,
+        additionalIdentity,
         backend,
         runtime,
       })

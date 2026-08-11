@@ -76,7 +76,7 @@ describe('sandbox templates', () => {
     expect(first).not.toBe(second);
   });
 
-  it('lets identity define which contexts share prepared state', async () => {
+  it('does not let a custom identity collapse different visible fixtures', async () => {
     const evalFixture = fixture();
     const template = defineSandboxTemplate({
       key: 'deps-v1',
@@ -101,7 +101,31 @@ describe('sandbox templates', () => {
       workspaceFiles: [{ path: 'source.ts', content: 'two' }],
     });
 
-    expect(first).toBe(second);
+    expect(first).not.toBe(second);
+  });
+
+  it('uses a custom identity as an additional contextual input', async () => {
+    const evalFixture = fixture();
+    let version = 'v1';
+    const template = defineSandboxTemplate({
+      key: 'deps-v1',
+      identity: () => ({ version }),
+      prepare: async () => {},
+    });
+    const options = {
+      template,
+      fixture: evalFixture,
+      config,
+      workspaceFiles: [{ path: 'source.ts', content: 'same' }],
+      backend: 'vercel' as const,
+      runtime: 'node24',
+    };
+
+    const first = await computeSandboxTemplateIdentity(options);
+    version = 'v2';
+    const second = await computeSandboxTemplateIdentity(options);
+
+    expect(first).not.toBe(second);
   });
 
   it('rejects non-serializable custom identities', async () => {
