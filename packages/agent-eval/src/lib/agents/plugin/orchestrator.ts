@@ -118,13 +118,7 @@ export function resolveJudgeRuntime(def: AgentDefinition, options: AgentRunOptio
   }
 
   // Pinned to a DIFFERENT agent — resolve its definition + key + runner.
-  const judgeAgent = getAgent(spec.agent!);
-  const judgeDef = judgeAgent.definition;
-  if (!judgeDef) {
-    throw new Error(
-      `Agent "${spec.agent}" cannot be used as a pinned judge because it does not expose an agent definition.`
-    );
-  }
+  const judgeDef = getAgent(spec.agent!).definition;
   const judgeApiKey = resolveAgentApiKey(judgeDef.getApiKeyEnvVar) ?? '';
   const judgeOptions: AgentRunOptions = { ...options, model: spec.model, apiKey: judgeApiKey };
   return {

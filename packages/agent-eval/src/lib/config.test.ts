@@ -7,6 +7,7 @@ import {
 } from './config.js';
 import { registerAgent } from './agents/index.js';
 import type { Agent } from './agents/types.js';
+import type { AgentDefinition } from './agents/plugin/contract.js';
 
 describe('validateConfig', () => {
   it('accepts valid minimal config', () => {
@@ -135,12 +136,24 @@ describe('resolveConfig', () => {
   });
 
   it('resolves an agent registered by an experiment module', () => {
-    const customAgent: Agent = {
+    const definition: AgentDefinition = {
       name: 'config-test-custom-agent',
       displayName: 'Config Test Custom Agent',
+      defaultModel: 'custom-default',
+      o11yAgentName: 'claude-code',
+      runnerPath: '/custom/run.mjs',
       getApiKeyEnvVar: () => 'CUSTOM_AGENT_API_KEY',
-      getDefaultModel: () => 'custom-default',
+      install: () => [],
+      configFiles: () => [],
+      authEnv: () => ({}),
+    };
+    const customAgent: Agent = {
+      name: definition.name,
+      displayName: definition.displayName,
+      getApiKeyEnvVar: definition.getApiKeyEnvVar,
+      getDefaultModel: () => definition.defaultModel,
       run: async () => ({ success: true, output: '', duration: 0 }),
+      definition,
     };
     registerAgent(customAgent);
 

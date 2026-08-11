@@ -344,11 +344,23 @@ import {
   type ExperimentConfig,
 } from '@vercel/agent-eval';
 
-const myAgent: Agent = {
+const definition = {
   name: 'my-agent',
   displayName: 'My Agent',
+  defaultModel: 'default-model',
+  o11yAgentName: 'claude-code',
+  runnerPath: '/path/to/run.mjs',
   getApiKeyEnvVar: () => 'MY_AGENT_API_KEY',
-  getDefaultModel: () => 'default-model',
+  install: () => [],
+  configFiles: () => [],
+  authEnv: () => ({}),
+} satisfies Agent['definition'];
+
+const myAgent: Agent = {
+  name: definition.name,
+  displayName: definition.displayName,
+  getApiKeyEnvVar: definition.getApiKeyEnvVar,
+  getDefaultModel: () => definition.defaultModel,
   run: async (fixturePath, options) => {
     // Invoke the agent and return an AgentRunResult.
     return {
@@ -357,6 +369,7 @@ const myAgent: Agent = {
       duration: 1000,
     };
   },
+  definition,
 };
 
 registerAgent(myAgent);
@@ -370,8 +383,9 @@ export default config;
 
 Agent IDs must be non-empty. A later registration with the same ID replaces the
 previous one, which allows shared registration modules to be evaluated by
-multiple experiment files. Custom agents may omit the built-in plugin
-`definition`; without one they cannot be selected as a pinned agentic judge.
+multiple experiment files. Registered agents conform to the complete `Agent`
+contract, including the definition used for installation, authentication,
+invocation, transcript parsing, and pinned judging.
 
 ### Multi-model experiments
 

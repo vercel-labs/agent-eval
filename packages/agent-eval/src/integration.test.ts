@@ -17,6 +17,7 @@ import { loadConfig } from './lib/config.js';
 import { getSandboxBackendInfo } from './lib/sandbox.js';
 import { registerAgent } from './lib/agents/index.js';
 import type { Agent } from './lib/agents/types.js';
+import type { AgentDefinition } from './lib/agents/plugin/contract.js';
 
 // Load .env file (try .env.local first, then .env)
 dotenvConfig({ path: '.env.local' });
@@ -68,11 +69,22 @@ describe.skipIf(!process.env.INTEGRATION_TEST)('integration tests', () => {
 
   describe('custom agent registration', () => {
     it('runs an eval through an agent registered under a custom ID', async () => {
-      const agent: Agent = {
+      const definition: AgentDefinition = {
         name: 'integration-custom-agent',
         displayName: 'Integration Custom Agent',
+        defaultModel: 'custom-default',
+        o11yAgentName: 'claude-code',
+        runnerPath: '/custom/run.mjs',
         getApiKeyEnvVar: () => 'INTEGRATION_CUSTOM_AGENT_KEY',
-        getDefaultModel: () => 'custom-default',
+        install: () => [],
+        configFiles: () => [],
+        authEnv: () => ({}),
+      };
+      const agent: Agent = {
+        name: definition.name,
+        displayName: definition.displayName,
+        getApiKeyEnvVar: definition.getApiKeyEnvVar,
+        getDefaultModel: () => definition.defaultModel,
         run: async (_fixturePath, options) => ({
           success: true,
           output: `handled: ${options.prompt}`,
@@ -80,6 +92,7 @@ describe.skipIf(!process.env.INTEGRATION_TEST)('integration tests', () => {
           testResult: { success: true, output: 'custom validation passed' },
           scriptsResults: {},
         }),
+        definition,
       };
       registerAgent(agent);
 
