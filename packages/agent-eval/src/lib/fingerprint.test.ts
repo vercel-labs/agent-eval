@@ -67,6 +67,26 @@ describe('computeFingerprint', () => {
     expect(fp1).not.toBe(fp2);
   });
 
+  it('changes when sandbox template key changes', () => {
+    const evalDir = createEvalDir('eval-template', {
+      'PROMPT.md': 'Do something',
+      'EVAL.ts': 'test code',
+      'package.json': '{"type":"module"}',
+    });
+    const prepare = async () => {};
+
+    const fp1 = computeFingerprint(evalDir, {
+      ...baseConfig,
+      sandboxTemplate: { key: 'deps-v1', prepare },
+    });
+    const fp2 = computeFingerprint(evalDir, {
+      ...baseConfig,
+      sandboxTemplate: { key: 'deps-v2', prepare },
+    });
+
+    expect(fp1).not.toBe(fp2);
+  });
+
   it('changes when config model changes', () => {
     const evalDir = createEvalDir('eval-3', {
       'PROMPT.md': 'Do something',

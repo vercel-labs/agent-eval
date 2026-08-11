@@ -53,6 +53,18 @@ export {
   readFixtureFiles,
 } from './lib/fixture.js';
 
+// Re-export reusable sandbox templates
+export type {
+  SandboxTemplate,
+  SandboxTemplateIdentityContext,
+  SandboxTemplateIdentityValue,
+  SandboxTemplatePrepareContext,
+} from './lib/sandbox-template.js';
+export {
+  defineSandboxTemplate,
+  SANDBOX_TEMPLATE_CACHE_PATH,
+} from './lib/sandbox-template.js';
+
 // Re-export sandbox utilities
 export type {
   SandboxOptions,
