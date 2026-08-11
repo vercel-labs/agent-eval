@@ -553,6 +553,8 @@ describe('runExperiment', () => {
         fixture: fixtures[0],
         experimentConfig: config,
         setup: mockSetup,
+        interaction: undefined,
+        runIndex: 0,
         scripts: ['build', 'lint'],
         validation: undefined,
         signal: expect.any(AbortSignal), // Signal always passed for timeout cleanup
@@ -560,6 +562,82 @@ describe('runExperiment', () => {
         agentOptions: undefined,
         webResearch: undefined,
       });
+    });
+
+    it('fails clearly when interaction is configured for a one-shot agent', async () => {
+      const mockAgent = {
+        name: 'one-shot-agent',
+        displayName: 'One-shot Agent',
+        getApiKeyEnvVar: () => 'MOCK_API_KEY',
+        getDefaultModel: () => 'mock-model',
+        run: vi.fn(),
+      } as unknown as Agent;
+      vi.spyOn(agentsIndex, 'getAgent').mockReturnValue(mockAgent);
+
+      const results = await runExperiment({
+        config: {
+          agent: 'one-shot-agent',
+          model: 'model',
+          evals: '*',
+          runs: 1,
+          earlyExit: false,
+          scripts: [],
+          timeout: 600,
+          interaction: { respond: () => null },
+        },
+        fixtures: [{
+          name: 'test-eval',
+          path: '/fake/path',
+          prompt: 'prompt',
+          isModule: true,
+        }],
+        apiKey: 'key',
+        resultsDir: TEST_DIR,
+        experimentName: 'interaction-unsupported',
+      });
+
+      expect(mockAgent.run).not.toHaveBeenCalled();
+      expect(results.evals[0].runs[0].result.error).toContain(
+        'does not support natural multi-turn interaction'
+      );
+    });
+
+    it('forwards interaction and run context to a capable agent', async () => {
+      const run = vi.fn().mockResolvedValue({ success: true, output: 'done', duration: 1 });
+      const mockAgent = {
+        name: 'multi-turn-agent',
+        displayName: 'Multi-turn Agent',
+        capabilities: { naturalMultiTurn: true },
+        getApiKeyEnvVar: () => 'MOCK_API_KEY',
+        getDefaultModel: () => 'mock-model',
+        run,
+      } as unknown as Agent;
+      vi.spyOn(agentsIndex, 'getAgent').mockReturnValue(mockAgent);
+      const fixture = { name: 'test-eval', path: '/fake/path', prompt: 'prompt', isModule: true };
+      const interaction = { maxTurns: 2, respond: () => null };
+
+      await runExperiment({
+        config: {
+          agent: 'multi-turn-agent',
+          model: 'model',
+          evals: '*',
+          runs: 1,
+          earlyExit: false,
+          scripts: [],
+          timeout: 600,
+          interaction,
+        },
+        fixtures: [fixture],
+        apiKey: 'key',
+        resultsDir: TEST_DIR,
+        experimentName: 'interaction-supported',
+      });
+
+      expect(run).toHaveBeenCalledWith('/fake/path', expect.objectContaining({
+        interaction,
+        fixture,
+        runIndex: 0,
+      }));
     });
 
     it('forwards webResearch to agent.run when set', async () => {

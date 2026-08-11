@@ -2,8 +2,21 @@
  * Agent interface and common types for all agents.
  */
 
-import type { JudgeConfig, ModelPolicy, ModelTier, SetupFunction, SandboxBackend, ValidationMode, EvalFixture, RunnableExperimentConfig } from '../types.js';
+
+import type {
+  EvalFixture,
+  InteractionConfig,
+  InteractionTurn,
+  JudgeConfig,
+  ModelPolicy,
+  ModelTier,
+  RunnableExperimentConfig,
+  SandboxBackend,
+  SetupFunction,
+  ValidationMode,
+} from '../types.js';
 import type { SandboxTemplate } from '../sandbox-template.js';
+
 import type { AgentDefinition } from './plugin/contract.js';
 
 /**
@@ -22,11 +35,14 @@ export interface AgentRunOptions {
   apiKey: string;
   /** Optional expensive reusable sandbox preparation. */
   sandboxTemplate?: SandboxTemplate;
-  /** Fixture/config context used to compute and prepare the reusable template. */
+  /** Fixture/config context used by reusable templates and interaction callbacks. */
   fixture?: EvalFixture;
   experimentConfig?: RunnableExperimentConfig;
+  runIndex?: number;
   /** Optional setup function to run before agent for every attempt. */
   setup?: SetupFunction;
+  /** Natural completed-turn interaction controlled by this agent implementation. */
+  interaction?: InteractionConfig;
   /** npm scripts to run after agent completes */
   scripts?: string[];
   /** Validation mode after agent completes */
@@ -94,6 +110,8 @@ export interface AgentRunResult {
   observedModel?: string;
   /** Codex only: model re-stated explicitly by the shell-tool repair (see RunnerResult.modelRepair) */
   modelRepair?: string;
+  /** Natural interaction history coordinated by the agent implementation. */
+  interaction?: { turns: InteractionTurn[] };
 }
 
 /**
@@ -105,6 +123,11 @@ export interface Agent {
 
   /** Human-readable display name */
   displayName: string;
+
+  /** Optional capabilities beyond the legacy one-shot contract. */
+  capabilities?: {
+    naturalMultiTurn?: boolean;
+  };
 
   /** Run the agent on a fixture */
   run(fixturePath: string, options: AgentRunOptions): Promise<AgentRunResult>;

@@ -473,6 +473,7 @@ const config: ExperimentConfig = {
 Response-only fixtures still need `PROMPT.md` and `package.json`, but they do
 not need `EVAL.ts` or `EVAL.tsx`.
 
+
 ## Reusable Sandbox Preparation
 
 Use `defineSandboxTemplate` to run expensive setup once and give every eval
@@ -523,6 +524,79 @@ The framework combines the fixture and additional identities with the template
 preparation logic changes in a way not otherwise represented. Templates currently
 require the Vercel sandbox backend; Docker fails explicitly rather than silently
 repeating preparation.
+
+## Simulated User Interaction
+
+Registered agents can opt into natural multi-turn interaction by declaring the
+`naturalMultiTurn` capability and consuming the interaction options passed to
+`Agent.run`. The exported `runNaturalInteraction` helper drives completed turns
+without introducing a separate event protocol:
+
+```typescript
+import {
+  registerAgent,
+  runNaturalInteraction,
+  type Agent,
+  type ExperimentConfig,
+} from '@vercel/agent-eval';
+
+const interactiveAgent: Agent = {
+  // ...the rest of the complete Agent implementation
+  capabilities: { naturalMultiTurn: true },
+
+  async run(fixturePath, options) {
+    const session = await harnessAgent.createSession();
+    try {
+      const { result, turns } = await runNaturalInteraction({
+        initialPrompt: options.prompt,
+        interaction: options.interaction,
+        fixture: options.fixture!,
+        runIndex: options.runIndex!,
+        // Reusing `session` here retains the harness's native conversation history.
+        generate: prompt => harnessAgent.generate({ session, prompt }),
+      });
+
+      return {
+        success: true,
+        output: result.text,
+        duration: 1000,
+        interaction: { turns },
+      };
+    } finally {
+      await session.destroy();
+    }
+  },
+};
+
+registerAgent(interactiveAgent);
+
+const config: ExperimentConfig = {
+  agent: interactiveAgent.name,
+  interaction: {                              // NEW
+    maxTurns: 2,
+    respond: async ({ turn, result }) => {
+      if (turn === 1) {
+        if (!/deployment region/i.test(result.text)) {
+          throw new Error('Expected a deployment-region question');
+        }
+        return 'Use iad1.';                    // start another user turn
+      }
+      return null;                             // conversation complete
+    },
+  },
+};
+```
+
+`respond` runs after each naturally completed assistant turn. Returning a string
+starts a new user turn in the same native session; returning `null` proceeds to
+validation. Errors and exceeding `maxTurns` fail the run. The full interaction
+history is saved in `result.json` and is available to capable agents for
+materialization into `__agent_eval__/results.json`.
+
+Built-in one-shot agents currently reject `interaction` clearly. This additive
+seam is intended for registered HarnessAgent-backed agents; no custom event or
+structured-tool protocol is introduced.
+
 
 ## A/B Testing
 

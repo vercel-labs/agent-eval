@@ -38,6 +38,7 @@ describe('validateConfig', () => {
     expect(() => validateConfig(config)).not.toThrow();
   });
 
+
   it('accepts a reusable sandbox template', () => {
     const sandboxTemplate = {
       key: 'deps-v1',
@@ -53,6 +54,19 @@ describe('validateConfig', () => {
   it('rejects a sandbox template without a non-empty key', () => {
     expect(() =>
       validateConfig({ agent: 'claude-code', sandboxTemplate: { key: '', prepare: async () => {} } })
+    ).toThrow('Invalid experiment configuration');
+  });
+
+  it('accepts natural interaction config', () => {
+    const interaction = { maxTurns: 2, respond: async () => null };
+    const validated = validateConfig({ agent: 'claude-code', interaction }).interaction;
+    expect(validated?.maxTurns).toBe(2);
+    expect(validated?.respond).toBeTypeOf('function');
+  });
+
+  it('rejects a non-positive interaction maxTurns', () => {
+    expect(() =>
+      validateConfig({ agent: 'claude-code', interaction: { maxTurns: 0, respond: () => null } })
     ).toThrow('Invalid experiment configuration');
   });
 
@@ -184,11 +198,20 @@ describe('resolveConfig', () => {
     );
   });
 
+
   it('passes sandboxTemplate through and leaves it undefined by default', () => {
     const sandboxTemplate = { key: 'deps-v1', prepare: async () => {} };
     expect(resolveConfig({ agent: 'claude-code' as const }).sandboxTemplate).toBeUndefined();
     expect(resolveConfig({ agent: 'claude-code' as const, sandboxTemplate }).sandboxTemplate).toBe(
       sandboxTemplate
+    );
+  });
+
+  it('passes interaction through and leaves it undefined by default', () => {
+    const interaction = { maxTurns: 2, respond: async () => null };
+    expect(resolveConfig({ agent: 'claude-code' as const }).interaction).toBeUndefined();
+    expect(resolveConfig({ agent: 'claude-code' as const, interaction }).interaction).toBe(
+      interaction
     );
   });
 
