@@ -61,6 +61,7 @@ const TEMPLATE_RUNTIME = 'node24';
 // Deduplicate preparation when concurrent attempts request the same identity.
 const templatePreparations = new Map<string, Promise<string>>();
 const RESULT_PATH = '__agent_eval__/agent-result.json';
+const TEMPLATE_WORKSPACE_MANIFEST = '__agent_eval_template__/workspace-files.json';
 
 /**
  * Host-disk path to the in-sandbox eval helper, resolved next to the compiled
@@ -311,6 +312,9 @@ export async function runWithDefinition(
           });
           try {
             await preparationSandbox.uploadFiles(workspaceFiles);
+            await preparationSandbox.writeFiles({
+              [TEMPLATE_WORKSPACE_MANIFEST]: JSON.stringify(workspaceFiles.map((file) => file.path)),
+            });
             await options.sandboxTemplate!.prepare({
               sandbox: preparationSandbox,
               fixture: options.fixture!,
@@ -363,8 +367,24 @@ export async function runWithDefinition(
     }
 
     // 3. Overlay the current fixture even when the template was prepared from an
-    //    equivalent context, then establish this attempt's baseline. Prepared
-    //    artifacts remain available; fixture files always reflect this attempt.
+    //    equivalent context. Remove files belonging to the fixture that originally
+    //    produced the snapshot first, so a file absent from this attempt cannot
+    //    leak across contexts. Artifacts created by prepare (node_modules, build
+    //    caches, etc.) remain available.
+    if (options.sandboxTemplate) {
+      try {
+        const originalPaths = JSON.parse(
+          await sandbox.readFile(TEMPLATE_WORKSPACE_MANIFEST)
+        ) as string[];
+        for (const path of originalPaths) {
+          await sandbox.runCommand('rm', ['-f', '--', path]);
+        }
+        await sandbox.runCommand('rm', ['-rf', '--', '__agent_eval_template__']);
+      } catch {
+        // A malformed/missing manifest means the snapshot is unsafe to overlay.
+        throw new Error('Reusable sandbox template is missing its workspace manifest. Bump the template key to rebuild it.');
+      }
+    }
     await sandbox.uploadFiles(workspaceFiles);
     await initGitAndCommit(sandbox);
     if (options.setup) {

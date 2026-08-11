@@ -5,6 +5,9 @@ import {
   resolveEvalNames,
   CONFIG_DEFAULTS,
 } from './config.js';
+import { registerAgent } from './agents/index.js';
+import type { Agent } from './agents/types.js';
+import type { AgentDefinition } from './agents/plugin/contract.js';
 
 describe('validateConfig', () => {
   it('accepts valid minimal config', () => {
@@ -69,8 +72,13 @@ describe('validateConfig', () => {
     expect(() => validateConfig(config)).not.toThrow();
   });
 
-  it('rejects invalid agent', () => {
-    const config = { agent: 'invalid-agent' };
+  it('accepts a custom agent identifier for registry resolution', () => {
+    const config = { agent: 'my-custom-agent' };
+    expect(validateConfig(config).agent).toBe('my-custom-agent');
+  });
+
+  it('rejects an empty agent identifier', () => {
+    const config = { agent: '' };
     expect(() => validateConfig(config)).toThrow('Invalid experiment configuration');
   });
 
@@ -143,6 +151,37 @@ describe('resolveConfig', () => {
     expect(resolved.modelPolicy).toBe('agent-default');
     expect(resolved.runs).toBe(10);
     expect(resolved.earlyExit).toBe(false);
+  });
+
+  it('resolves an agent registered by an experiment module', () => {
+    const definition: AgentDefinition = {
+      name: 'config-test-custom-agent',
+      displayName: 'Config Test Custom Agent',
+      defaultModel: 'custom-default',
+      o11yAgentName: 'claude-code',
+      runnerPath: '/custom/run.mjs',
+      getApiKeyEnvVar: () => 'CUSTOM_AGENT_API_KEY',
+      install: () => [],
+      configFiles: () => [],
+      authEnv: () => ({}),
+    };
+    const customAgent: Agent = {
+      name: definition.name,
+      displayName: definition.displayName,
+      getApiKeyEnvVar: definition.getApiKeyEnvVar,
+      getDefaultModel: () => definition.defaultModel,
+      run: async () => ({ success: true, output: '', duration: 0 }),
+      definition,
+    };
+    registerAgent(customAgent);
+
+    expect(resolveConfig({ agent: customAgent.name }).agent).toBe(customAgent.name);
+  });
+
+  it('rejects an unregistered custom agent during resolution', () => {
+    expect(() => resolveConfig({ agent: 'unregistered-config-test-agent' })).toThrow(
+      'Unknown agent: unregistered-config-test-agent'
+    );
   });
 
   it('passes sandboxTemplate through and leaves it undefined by default', () => {
