@@ -109,7 +109,8 @@ export interface Agent {
   /** Get the default model for this agent */
   getDefaultModel(): ModelTier;
 
-  /** The host-side definition (auth, runner path, install). Exposed so the
-   * orchestrator can resolve a DIFFERENT agent as the judge via the registry. */
-  definition: AgentDefinition;
+  /** The host-side definition (auth, runner path, install). Built-in plugin
+   * agents expose this so the orchestrator can use them as judges. Custom
+   * one-shot agents may omit it unless they support that integration. */
+  definition?: AgentDefinition;
 }

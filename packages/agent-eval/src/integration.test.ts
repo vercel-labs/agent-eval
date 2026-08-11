@@ -15,6 +15,8 @@ import { loadFixture, loadAllFixtures } from './lib/fixture.js';
 import { runSingleEval } from './lib/runner.js';
 import { loadConfig } from './lib/config.js';
 import { getSandboxBackendInfo } from './lib/sandbox.js';
+import { registerAgent } from './lib/agents/index.js';
+import type { Agent } from './lib/agents/types.js';
 
 // Load .env file (try .env.local first, then .env)
 dotenvConfig({ path: '.env.local' });
@@ -62,6 +64,45 @@ describe.skipIf(!process.env.INTEGRATION_TEST)('integration tests', () => {
     if (existsSync(TEST_DIR)) {
       rmSync(TEST_DIR, { recursive: true });
     }
+  });
+
+  describe('custom agent registration', () => {
+    it('runs an eval through an agent registered under a custom ID', async () => {
+      const agent: Agent = {
+        name: 'integration-custom-agent',
+        displayName: 'Integration Custom Agent',
+        getApiKeyEnvVar: () => 'INTEGRATION_CUSTOM_AGENT_KEY',
+        getDefaultModel: () => 'custom-default',
+        run: async (_fixturePath, options) => ({
+          success: true,
+          output: `handled: ${options.prompt}`,
+          duration: 1,
+          testResult: { success: true, output: 'custom validation passed' },
+          scriptsResults: {},
+        }),
+      };
+      registerAgent(agent);
+
+      const fixtureDir = join(TEST_DIR, 'custom-agent-eval');
+      mkdirSync(fixtureDir, { recursive: true });
+      writeFileSync(join(fixtureDir, 'PROMPT.md'), 'Use the custom agent');
+      writeFileSync(join(fixtureDir, 'EVAL.ts'), '');
+      writeFileSync(
+        join(fixtureDir, 'package.json'),
+        JSON.stringify({ name: 'custom-agent-eval', type: 'module' })
+      );
+
+      const result = await runSingleEval(loadFixture(TEST_DIR, 'custom-agent-eval'), {
+        agent: agent.name,
+        model: 'custom-model',
+        timeout: 10,
+        apiKey: 'test-key',
+        scripts: [],
+      });
+
+      expect(result.result.status).toBe('passed');
+      expect(result.result.duration).toBeGreaterThan(0);
+    });
   });
 
   describe('project initialization', () => {
