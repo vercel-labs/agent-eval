@@ -15,6 +15,8 @@ import { loadFixture, loadAllFixtures } from './lib/fixture.js';
 import { runSingleEval } from './lib/runner.js';
 import { loadConfig } from './lib/config.js';
 import { getSandboxBackendInfo } from './lib/sandbox.js';
+import { runWithDefinition } from './lib/agents/plugin/orchestrator.js';
+import type { AgentDefinition } from './lib/agents/plugin/contract.js';
 
 // Load .env file (try .env.local first, then .env)
 dotenvConfig({ path: '.env.local' });
@@ -62,6 +64,87 @@ describe.skipIf(!process.env.INTEGRATION_TEST)('integration tests', () => {
     if (existsSync(TEST_DIR)) {
       rmSync(TEST_DIR, { recursive: true });
     }
+  });
+
+  describe.skipIf(!process.env.SANDBOX_TEMPLATE_INTEGRATION_TEST)('reusable sandbox templates', () => {
+    it('reuses prepared state while isolating attempt mutations', async () => {
+      const fixtureDir = join(TEST_DIR, 'sandbox-template-eval');
+      mkdirSync(fixtureDir, { recursive: true });
+      writeFileSync(join(fixtureDir, 'PROMPT.md'), 'Use prepared state');
+      writeFileSync(join(fixtureDir, 'EVAL.ts'), '');
+      writeFileSync(
+        join(fixtureDir, 'package.json'),
+        JSON.stringify({ name: 'sandbox-template-eval', type: 'module' })
+      );
+
+      let prepareCalls = 0;
+      const sandboxTemplate = {
+        key: `integration-template-${Date.now()}`,
+        prepare: async ({ sandbox }: { sandbox: import('./lib/types.js').Sandbox }) => {
+          prepareCalls++;
+          await sandbox.writeFiles({ 'prepared.txt': 'prepared once' });
+        },
+      };
+      const setup = async (sandbox: import('./lib/types.js').Sandbox) => {
+        expect(await sandbox.readFile('prepared.txt')).toBe('prepared once');
+        const mutation = await sandbox.runCommand('test', ['-f', 'attempt-mutation.txt']);
+        expect(mutation.exitCode).not.toBe(0);
+        await sandbox.writeFiles({ 'attempt-mutation.txt': 'attempt only' });
+      };
+      const runnerPath = join(TEST_DIR, 'template-runner.mjs');
+      writeFileSync(
+        runnerPath,
+        `import { writeFileSync } from 'node:fs';
+const input = JSON.parse(process.argv[2]);
+writeFileSync(input.resultPath, JSON.stringify({ ok: true, output: 'done', transcript: null, observedModel: null, error: null, agentExitCode: 0 }));`
+      );
+      const definition: AgentDefinition = {
+        name: 'template-test-agent',
+        displayName: 'Template Test Agent',
+        defaultModel: 'test',
+        o11yAgentName: 'claude-code',
+        runnerPath,
+        getApiKeyEnvVar: () => 'TEST_KEY',
+        install: () => [],
+        configFiles: () => [],
+        authEnv: () => ({}),
+      };
+      const fixture = loadFixture(TEST_DIR, 'sandbox-template-eval');
+      const experimentConfig = {
+        agent: definition.name,
+        model: 'test',
+        evals: [fixture.name],
+        runs: 2,
+        earlyExit: false,
+        scripts: [],
+        validation: 'none' as const,
+        timeout: 120,
+        sandbox: 'vercel' as const,
+        sandboxTemplate,
+        setup,
+        copyFiles: 'none' as const,
+      };
+      const options = {
+        prompt: fixture.prompt,
+        model: 'test',
+        timeout: 120000,
+        apiKey: 'unused',
+        scripts: [],
+        validation: 'none' as const,
+        sandbox: 'vercel' as const,
+        sandboxTemplate,
+        fixture,
+        experimentConfig,
+        setup,
+      };
+
+      const first = await runWithDefinition(definition, fixture.path, options);
+      const second = await runWithDefinition(definition, fixture.path, options);
+
+      expect(first.success, first.error).toBe(true);
+      expect(second.success, second.error).toBe(true);
+      expect(prepareCalls).toBe(1);
+    }, 300000);
   });
 
   describe('project initialization', () => {

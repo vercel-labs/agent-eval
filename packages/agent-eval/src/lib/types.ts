@@ -2,6 +2,8 @@
  * Core types for the eval framework.
  */
 
+import type { SandboxTemplate } from './sandbox-template.js';
+
 /**
  * Supported AI agent types.
  */
@@ -135,7 +137,10 @@ export interface ExperimentConfig {
   /** Maximum time in seconds for agent to complete. @default 300 (5 minutes) */
   timeout?: number;
 
-  /** Setup function that runs before agent starts. @default undefined */
+  /** Expensive reusable sandbox preparation. Vercel snapshots the prepared state. @default undefined */
+  sandboxTemplate?: SandboxTemplate;
+
+  /** Setup function that runs before agent starts for every attempt. @default undefined */
   setup?: SetupFunction;
 
   /** Sandbox backend to use. @default 'auto' (Vercel if token present, else Docker) */
@@ -184,6 +189,7 @@ export interface ResolvedExperimentConfig {
   scripts: string[];
   validation: ValidationMode;
   timeout: number;
+  sandboxTemplate?: SandboxTemplate;
   setup?: SetupFunction;
   sandbox: SandboxBackend | 'auto';
   editPrompt?: (prompt: string) => string;
@@ -208,6 +214,7 @@ export interface RunnableExperimentConfig {
   scripts: string[];
   validation: ValidationMode;
   timeout: number;
+  sandboxTemplate?: SandboxTemplate;
   setup?: SetupFunction;
   sandbox: SandboxBackend | 'auto';
   editPrompt?: (prompt: string) => string;

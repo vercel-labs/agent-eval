@@ -85,6 +85,7 @@ dist/
 .env
 .env.local
 results/
+.agent-eval/
 *.log
 .DS_Store
 `;

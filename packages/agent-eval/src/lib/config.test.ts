@@ -35,6 +35,24 @@ describe('validateConfig', () => {
     expect(() => validateConfig(config)).not.toThrow();
   });
 
+  it('accepts a reusable sandbox template', () => {
+    const sandboxTemplate = {
+      key: 'deps-v1',
+      identity: () => 'shared-deps',
+      prepare: async () => {},
+    };
+    const validated = validateConfig({ agent: 'claude-code', sandboxTemplate }).sandboxTemplate;
+    expect(validated?.key).toBe('deps-v1');
+    expect(validated?.identity).toBeTypeOf('function');
+    expect(validated?.prepare).toBeTypeOf('function');
+  });
+
+  it('rejects a sandbox template without a non-empty key', () => {
+    expect(() =>
+      validateConfig({ agent: 'claude-code', sandboxTemplate: { key: '', prepare: async () => {} } })
+    ).toThrow('Invalid experiment configuration');
+  });
+
   it('accepts array of models', () => {
     const config = {
       agent: 'claude-code',
@@ -125,6 +143,14 @@ describe('resolveConfig', () => {
     expect(resolved.modelPolicy).toBe('agent-default');
     expect(resolved.runs).toBe(10);
     expect(resolved.earlyExit).toBe(false);
+  });
+
+  it('passes sandboxTemplate through and leaves it undefined by default', () => {
+    const sandboxTemplate = { key: 'deps-v1', prepare: async () => {} };
+    expect(resolveConfig({ agent: 'claude-code' as const }).sandboxTemplate).toBeUndefined();
+    expect(resolveConfig({ agent: 'claude-code' as const, sandboxTemplate }).sandboxTemplate).toBe(
+      sandboxTemplate
+    );
   });
 
   it('passes webResearch through and leaves it undefined by default', () => {

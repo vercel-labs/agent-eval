@@ -73,6 +73,8 @@ export interface SandboxOptions {
   teamId?: string;
   /** Optional explicit Vercel project ID for sandbox API auth */
   projectId?: string;
+  /** Create a Vercel sandbox from an immutable snapshot. */
+  snapshotId?: string;
 }
 
 /**
@@ -154,7 +156,9 @@ export class SandboxManager implements Sandbox {
     const credentials = resolveVercelSandboxCredentials(options);
 
     const sandbox = await VercelSandbox.create({
-      runtime,
+      ...(options.snapshotId
+        ? { source: { type: 'snapshot' as const, snapshotId: options.snapshotId } }
+        : { runtime }),
       timeout,
       ...(credentials ?? {}),
     });
@@ -273,6 +277,12 @@ export class SandboxManager implements Sandbox {
   async stop(): Promise<void> {
     await this.sandbox.stop();
   }
+
+  /** Snapshot this sandbox. Snapshotting stops it. */
+  async snapshot(): Promise<string> {
+    const snapshot = await this.sandbox.snapshot();
+    return snapshot.snapshotId;
+  }
 }
 
 function resolveVercelSandboxCredentials(options: SandboxOptions): {
@@ -364,6 +374,9 @@ export async function createSandbox(
   const backend = resolveBackend(options);
 
   if (backend === 'docker') {
+    if (options.snapshotId) {
+      throw new Error('Reusable sandbox templates are not supported by the Docker backend yet.');
+    }
     return DockerSandboxManager.create({
       timeout: options.timeout,
       runtime: options.runtime,
@@ -373,6 +386,10 @@ export async function createSandbox(
   return SandboxManager.create({
     timeout: options.timeout,
     runtime: options.runtime,
+    snapshotId: options.snapshotId,
+    token: options.token,
+    teamId: options.teamId,
+    projectId: options.projectId,
   });
 }
 
