@@ -181,6 +181,20 @@ export async function runExperiment(
 
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
+    if (config.interaction && !agent.capabilities?.naturalMultiTurn) {
+      return {
+        fixtureName: fixture.name,
+        runIndex,
+        runData: {
+          result: {
+            status: 'failed',
+            error: `Agent "${agent.name}" does not support natural multi-turn interaction.`,
+            duration: 0,
+          },
+        },
+      };
+    }
+
     const modelPolicy = config.modelPolicy ?? 'agent-default';
     const requestedModel = modelPolicy === 'native-default' ? undefined : config.model;
     const agentResult = await Promise.race([
@@ -191,6 +205,9 @@ export async function runExperiment(
         timeout: timeoutMs,
         apiKey,
         setup: config.setup,
+        interaction: config.interaction,
+        fixture,
+        runIndex,
         scripts: config.scripts,
         validation: config.validation,
         signal: attemptController.signal,
@@ -279,7 +296,8 @@ export async function runExperiment(
         !result.aborted &&
         result.runData.result.status === 'failed' &&
         result.runData.result.duration < ANOMALY_THRESHOLD_S &&
-        !result.runData.result.error?.includes('timed out');
+        !result.runData.result.error?.includes('timed out') &&
+        !result.runData.result.error?.includes('does not support natural multi-turn interaction');
 
       if (!isSuspiciouslyFast || retry >= MAX_RETRIES) {
         return result;
@@ -385,6 +403,7 @@ export async function runSingleEval<T extends ResolvedExperimentConfig['model']>
     timeout: number;
     apiKey: string;
     setup?: ResolvedExperimentConfig['setup'];
+    interaction?: ResolvedExperimentConfig['interaction'];
     scripts?: string[];
     validation?: ResolvedExperimentConfig['validation'];
     sandbox?: ResolvedExperimentConfig['sandbox'];
@@ -396,6 +415,9 @@ export async function runSingleEval<T extends ResolvedExperimentConfig['model']>
   }
 ): Promise<T extends Array<unknown> ? EvalRunData[] : EvalRunData> {
   const agent = getAgent(options.agent ?? 'vercel-ai-gateway/claude-code');
+  if (options.interaction && !agent.capabilities?.naturalMultiTurn) {
+    throw new Error(`Agent "${agent.name}" does not support natural multi-turn interaction.`);
+  }
 
   const models: string[] = Array.isArray(options.model) ? options.model : [options.model];
   const prompt = options.editPrompt ? options.editPrompt(fixture.prompt) : fixture.prompt;
@@ -411,6 +433,9 @@ export async function runSingleEval<T extends ResolvedExperimentConfig['model']>
 		timeout: options.timeout * 1000,
 		apiKey: options.apiKey,
 		setup: options.setup,
+		interaction: options.interaction,
+		fixture,
+		runIndex: 0,
 		scripts: options.scripts,
 		validation: options.validation,
 		sandbox: options.sandbox,

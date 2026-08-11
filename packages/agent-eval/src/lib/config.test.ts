@@ -38,6 +38,19 @@ describe('validateConfig', () => {
     expect(() => validateConfig(config)).not.toThrow();
   });
 
+  it('accepts natural interaction config', () => {
+    const interaction = { maxTurns: 2, respond: async () => null };
+    const validated = validateConfig({ agent: 'claude-code', interaction }).interaction;
+    expect(validated?.maxTurns).toBe(2);
+    expect(validated?.respond).toBeTypeOf('function');
+  });
+
+  it('rejects a non-positive interaction maxTurns', () => {
+    expect(() =>
+      validateConfig({ agent: 'claude-code', interaction: { maxTurns: 0, respond: () => null } })
+    ).toThrow('Invalid experiment configuration');
+  });
+
   it('accepts array of models', () => {
     const config = {
       agent: 'claude-code',
@@ -163,6 +176,14 @@ describe('resolveConfig', () => {
   it('rejects an unregistered custom agent during resolution', () => {
     expect(() => resolveConfig({ agent: 'unregistered-config-test-agent' })).toThrow(
       'Unknown agent: unregistered-config-test-agent'
+    );
+  });
+
+  it('passes interaction through and leaves it undefined by default', () => {
+    const interaction = { maxTurns: 2, respond: async () => null };
+    expect(resolveConfig({ agent: 'claude-code' as const }).interaction).toBeUndefined();
+    expect(resolveConfig({ agent: 'claude-code' as const, interaction }).interaction).toBe(
+      interaction
     );
   });
 

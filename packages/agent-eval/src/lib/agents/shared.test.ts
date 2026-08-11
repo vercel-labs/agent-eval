@@ -1,5 +1,28 @@
 import { describe, expect, it, vi } from 'vitest';
-import { prepareNeutralWorkspace } from './shared.js';
+import { injectTranscriptContext, prepareNeutralWorkspace, TRANSCRIPT_CONTEXT_PATH } from './shared.js';
+
+describe('injectTranscriptContext', () => {
+  it('materializes natural interaction history for EVAL.ts assertions', async () => {
+    const writeFiles = vi.fn();
+    const turns = [{ turn: 1, result: { text: 'Which region?' }, userResponse: 'iad1' }];
+
+    await injectTranscriptContext(
+      { writeFiles } as never,
+      undefined,
+      'claude-code',
+      undefined,
+      turns
+    );
+
+    expect(writeFiles).toHaveBeenCalledWith({
+      [TRANSCRIPT_CONTEXT_PATH]: JSON.stringify(
+        { o11y: null, interaction: { turns } },
+        null,
+        2
+      ),
+    });
+  });
+});
 
 describe('prepareNeutralWorkspace', () => {
   it('copies Vercel sandboxes into /workspace and switches the working directory', async () => {

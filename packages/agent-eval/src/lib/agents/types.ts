@@ -2,7 +2,17 @@
  * Agent interface and common types for all agents.
  */
 
-import type { JudgeConfig, ModelPolicy, ModelTier, SetupFunction, SandboxBackend, ValidationMode } from '../types.js';
+import type {
+  InteractionConfig,
+  InteractionTurn,
+  JudgeConfig,
+  ModelPolicy,
+  ModelTier,
+  SetupFunction,
+  SandboxBackend,
+  ValidationMode,
+  EvalFixture,
+} from '../types.js';
 import type { AgentDefinition } from './plugin/contract.js';
 
 /**
@@ -21,6 +31,11 @@ export interface AgentRunOptions {
   apiKey: string;
   /** Optional setup function to run before agent */
   setup?: SetupFunction;
+  /** Natural completed-turn interaction controlled by this agent implementation. */
+  interaction?: InteractionConfig;
+  /** Context for interaction callbacks. Present when run through the experiment runner. */
+  fixture?: EvalFixture;
+  runIndex?: number;
   /** npm scripts to run after agent completes */
   scripts?: string[];
   /** Validation mode after agent completes */
@@ -88,6 +103,8 @@ export interface AgentRunResult {
   observedModel?: string;
   /** Codex only: model re-stated explicitly by the shell-tool repair (see RunnerResult.modelRepair) */
   modelRepair?: string;
+  /** Natural interaction history coordinated by the agent implementation. */
+  interaction?: { turns: InteractionTurn[] };
 }
 
 /**
@@ -99,6 +116,11 @@ export interface Agent {
 
   /** Human-readable display name */
   displayName: string;
+
+  /** Optional capabilities beyond the legacy one-shot contract. */
+  capabilities?: {
+    naturalMultiTurn?: boolean;
+  };
 
   /** Run the agent on a fixture */
   run(fixturePath: string, options: AgentRunOptions): Promise<AgentRunResult>;

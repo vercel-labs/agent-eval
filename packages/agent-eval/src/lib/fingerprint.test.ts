@@ -67,6 +67,22 @@ describe('computeFingerprint', () => {
     expect(fp1).not.toBe(fp2);
   });
 
+  it('changes when natural interaction is configured', () => {
+    const evalDir = createEvalDir('eval-interaction', {
+      'PROMPT.md': 'Do something',
+      'EVAL.ts': 'test code',
+      'package.json': '{"type":"module"}',
+    });
+
+    const fp1 = computeFingerprint(evalDir, baseConfig);
+    const fp2 = computeFingerprint(evalDir, {
+      ...baseConfig,
+      interaction: { maxTurns: 2, respond: () => null },
+    });
+
+    expect(fp1).not.toBe(fp2);
+  });
+
   it('changes when config model changes', () => {
     const evalDir = createEvalDir('eval-3', {
       'PROMPT.md': 'Do something',
