@@ -1,5 +1,11 @@
 # @vercel/agent-eval
 
+## 1.5.0
+
+### Minor Changes
+
+- [#181](https://github.com/vercel-labs/agent-eval/pull/181) [`cc57b91`](https://github.com/vercel-labs/agent-eval/commit/cc57b919109312af93b1bd1d09a68b1bc4e60939) Thanks [@OwenKephart](https://github.com/OwenKephart)! - Allow experiment modules to register custom `Agent` implementations under arbitrary stable string IDs.
+
 ## 1.4.0
 
 ### Minor Changes
