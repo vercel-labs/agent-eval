@@ -331,6 +331,62 @@ agent: 'gemini'       // requires GEMINI_API_KEY
 agent: 'cursor'       // requires CURSOR_API_KEY
 ```
 
+### Custom agents
+
+Register an implementation of the exported `Agent` interface before exporting
+an experiment config. Custom IDs are valid anywhere a built-in agent ID is
+accepted:
+
+```typescript
+import {
+  registerAgent,
+  type Agent,
+  type ExperimentConfig,
+} from '@vercel/agent-eval';
+
+const definition = {
+  name: 'my-agent',
+  displayName: 'My Agent',
+  defaultModel: 'default-model',
+  o11yAgentName: 'claude-code',
+  runnerPath: '/path/to/run.mjs',
+  getApiKeyEnvVar: () => 'MY_AGENT_API_KEY',
+  install: () => [],
+  configFiles: () => [],
+  authEnv: () => ({}),
+} satisfies Agent['definition'];
+
+const myAgent: Agent = {
+  name: definition.name,
+  displayName: definition.displayName,
+  getApiKeyEnvVar: definition.getApiKeyEnvVar,
+  getDefaultModel: () => definition.defaultModel,
+  run: async (fixturePath, options) => {
+    // Invoke the agent and return an AgentRunResult.
+    return {
+      success: true,
+      output: 'done',
+      duration: 1000,
+    };
+  },
+  definition,
+};
+
+registerAgent(myAgent);
+
+const config: ExperimentConfig = {
+  agent: 'my-agent',
+};
+
+export default config;
+```
+
+Agent IDs must be non-empty. A later registration with the same ID replaces the
+previous one, which allows shared registration modules to be evaluated by
+multiple experiment files. Registered agents conform to the complete `Agent`
+contract, including the definition used for installation, authentication,
+invocation, transcript parsing, and pinned judging.
+
 ### Multi-model experiments
 
 Provide an array of models to run the same experiment on each one. Results are stored under separate directories (`experiment-name/model-name`):

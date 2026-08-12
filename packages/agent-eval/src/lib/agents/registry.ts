@@ -11,6 +11,13 @@ const agents = new Map<string, Agent>();
  * Register an agent in the registry.
  */
 export function registerAgent(agent: Agent): void {
+  if (!agent.name.trim()) {
+    throw new Error('Agent name must be a non-empty string.');
+  }
+
+  // Preserve the registry's existing replacement behavior. This also makes
+  // shared registration modules safe when config loading evaluates them more
+  // than once (for example, across multiple experiment files).
   agents.set(agent.name, agent);
 }
 
