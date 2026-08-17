@@ -38,6 +38,7 @@ import {
   JUDGE_CONFIG_PATH,
   JUDGE_RUNNER_PATH,
 } from '../shared.js';
+import { redactRunResult } from '../redact.js';
 import { getAgent } from '../registry.js';
 import type { AgentDefinition, AgentRunInput, RunnerResult } from './contract.js';
 
@@ -226,8 +227,36 @@ async function readRunnerResult(
 /**
  * The shared host-side run(). Each agent's createXxxAgent() wires this up with its
  * definition; the public Agent interface is unchanged, so runner.ts is untouched.
+ *
+ * Thin wrapper over {@link runOnce} that strips the run's credentials from the
+ * result. It wraps rather than patching each `return` because runOnce has eight of
+ * them and a ninth added later must not be able to leak by omission. See redact.ts
+ * for why this happens on the way out instead of before the judge reads the
+ * transcript.
  */
 export async function runWithDefinition(
+  def: AgentDefinition,
+  fixturePath: string,
+  options: AgentRunOptions
+): Promise<AgentRunResult> {
+  const result = await runOnce(def, fixturePath, options);
+
+  // A judge pinned to a different agent authenticates with its own key, and it can
+  // reach the transcript too, so redact both. Resolving the judge can throw (an
+  // unregistered agent, a missing runner file) — that is the run's failure to
+  // report, not redaction's, so fall back to the codegen key rather than turning it
+  // into a throw on a path that previously returned a result.
+  let judgeApiKey: string | undefined;
+  try {
+    judgeApiKey = resolveJudgeRuntime(def, options).judgeOptions.apiKey;
+  } catch {
+    judgeApiKey = undefined;
+  }
+
+  return redactRunResult(result, [options.apiKey, judgeApiKey]);
+}
+
+async function runOnce(
   def: AgentDefinition,
   fixturePath: string,
   options: AgentRunOptions
