@@ -2,7 +2,8 @@
  * Agent interface and common types for all agents.
  */
 
-import type { JudgeConfig, ModelPolicy, ModelTier, SetupFunction, SandboxBackend, ValidationMode } from '../types.js';
+import type { JudgeConfig, ModelPolicy, ModelTier, SetupFunction, SandboxBackend, ValidationMode, EvalFixture, RunnableExperimentConfig } from '../types.js';
+import type { SandboxTemplate } from '../sandbox-template.js';
 import type { AgentDefinition } from './plugin/contract.js';
 
 /**
@@ -19,7 +20,12 @@ export interface AgentRunOptions {
   timeout: number;
   /** API key for the agent */
   apiKey: string;
-  /** Optional setup function to run before agent */
+  /** Optional expensive reusable sandbox preparation. */
+  sandboxTemplate?: SandboxTemplate;
+  /** Fixture/config context used to compute and prepare the reusable template. */
+  fixture?: EvalFixture;
+  experimentConfig?: RunnableExperimentConfig;
+  /** Optional setup function to run before agent for every attempt. */
   setup?: SetupFunction;
   /** npm scripts to run after agent completes */
   scripts?: string[];

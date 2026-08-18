@@ -190,6 +190,9 @@ export async function runExperiment(
         modelPolicy,
         timeout: timeoutMs,
         apiKey,
+        sandboxTemplate: config.sandboxTemplate,
+        fixture,
+        experimentConfig: config,
         setup: config.setup,
         scripts: config.scripts,
         validation: config.validation,
@@ -384,6 +387,7 @@ export async function runSingleEval<T extends ResolvedExperimentConfig['model']>
     model: T;
     timeout: number;
     apiKey: string;
+    sandboxTemplate?: ResolvedExperimentConfig['sandboxTemplate'];
     setup?: ResolvedExperimentConfig['setup'];
     scripts?: string[];
     validation?: ResolvedExperimentConfig['validation'];
@@ -410,6 +414,22 @@ export async function runSingleEval<T extends ResolvedExperimentConfig['model']>
 		modelPolicy: 'agent-default',
 		timeout: options.timeout * 1000,
 		apiKey: options.apiKey,
+		sandboxTemplate: options.sandboxTemplate,
+		fixture,
+		experimentConfig: {
+			agent: options.agent ?? 'vercel-ai-gateway/claude-code',
+			model,
+			evals: [fixture.name],
+			runs: 1,
+			earlyExit: false,
+			scripts: options.scripts ?? [],
+			validation: options.validation ?? 'vitest',
+			timeout: options.timeout,
+			sandboxTemplate: options.sandboxTemplate,
+			setup: options.setup,
+			sandbox: options.sandbox ?? 'auto',
+			copyFiles: 'none',
+		},
 		setup: options.setup,
 		scripts: options.scripts,
 		validation: options.validation,

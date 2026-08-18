@@ -22,8 +22,15 @@ import {
   collectLocalFiles,
   splitTestFiles,
   verifyNoTestFiles,
+  resolveBackend,
   type SandboxManager,
 } from '../../sandbox.js';
+import {
+  cacheSnapshotId,
+  computeSandboxTemplateIdentity,
+  getCachedSnapshotId,
+  removeCachedSnapshotId,
+} from '../../sandbox-template.js';
 import type { DockerSandboxManager } from '../../docker-sandbox.js';
 import {
   runValidation,
@@ -50,6 +57,10 @@ type CommandResult = { stdout: string; stderr: string; exitCode: number };
 
 /** Well-known paths inside the sandbox for the runner + its result file. */
 const RUNNER_PATH = '__agent_eval__/run.mjs';
+const TEMPLATE_RUNTIME = 'node24';
+
+// Deduplicate preparation when concurrent attempts request the same identity.
+const templatePreparations = new Map<string, Promise<string>>();
 const RESULT_PATH = '__agent_eval__/agent-result.json';
 
 /**
@@ -295,16 +306,80 @@ async function runOnce(
       return { success: false, output: '', error: 'Aborted', duration: Date.now() - startTime };
     }
 
-    // 2. Create the sandbox. One sandbox serves the codegen run AND every judge
-    //    re-invocation of the runner (eval-helper.mjs); codex's shell-canary
-    //    memoization (~/.codex/agent-eval-canary.json, see codex/run.mjs) relies
-    //    on that shared lifetime — a sandbox-per-invocation change would make
-    //    every judge assertion re-pay the canary exec.
-    sandbox = await createSandbox({
-      timeout: options.timeout,
-      runtime: 'node24',
-      backend: options.sandbox,
-    });
+    // 2. Create the sandbox. With a template, prepare and snapshot once per
+    //    identity, then give every attempt an independent sandbox from it.
+    if (options.sandboxTemplate) {
+      if (!options.fixture || !options.experimentConfig) {
+        throw new Error('Reusable sandbox templates require fixture and experiment config context.');
+      }
+      const backend = resolveBackend({ backend: options.sandbox });
+      if (backend !== 'vercel') {
+        throw new Error('Reusable sandbox templates currently require the Vercel sandbox backend.');
+      }
+      const identity = await computeSandboxTemplateIdentity({
+        template: options.sandboxTemplate,
+        fixture: options.fixture,
+        config: options.experimentConfig,
+        workspaceFiles,
+        backend,
+        runtime: TEMPLATE_RUNTIME,
+      });
+
+      const prepareSnapshot = async (): Promise<string> => {
+        const cached = getCachedSnapshotId(identity);
+        if (cached) return cached;
+
+        const preparing = templatePreparations.get(identity);
+        if (preparing) return preparing;
+
+        const promise = (async () => {
+          const preparationSandbox = await createSandbox({
+            timeout: options.timeout,
+            runtime: TEMPLATE_RUNTIME,
+            backend,
+          });
+          try {
+            await preparationSandbox.uploadFiles(workspaceFiles);
+            await options.sandboxTemplate!.prepare({
+              sandbox: preparationSandbox,
+              fixture: options.fixture!,
+              config: options.experimentConfig!,
+            });
+            const snapshotId = await (preparationSandbox as SandboxManager).snapshot();
+            cacheSnapshotId(identity, snapshotId);
+            return snapshotId;
+          } catch (error) {
+            await preparationSandbox.stop().catch(() => {});
+            throw error;
+          }
+        })().finally(() => templatePreparations.delete(identity));
+        templatePreparations.set(identity, promise);
+        return promise;
+      };
+
+      let snapshotId = await prepareSnapshot();
+      try {
+        sandbox = await createSandbox({
+          timeout: options.timeout,
+          backend,
+          snapshotId,
+        });
+      } catch {
+        // Snapshots expire or may be manually deleted. Rebuild transparently.
+        removeCachedSnapshotId(identity);
+        snapshotId = await prepareSnapshot();
+        sandbox = await createSandbox({ timeout: options.timeout, backend, snapshotId });
+      }
+    } else {
+      sandbox = await createSandbox({
+        timeout: options.timeout,
+        runtime: TEMPLATE_RUNTIME,
+        backend: options.sandbox,
+      });
+    }
+
+    // One sandbox serves codegen and every judge re-invocation.
+    // codex's shell-canary memoization relies on that shared lifetime.
 
     if (aborted) {
       return {
@@ -316,9 +391,11 @@ async function runOnce(
       };
     }
 
-    // 3. Upload workspace, establish the git baseline, run user setup, relocate to
-    //    the neutral workspace. (All agent-agnostic; unchanged shared helpers.)
-    await sandbox.uploadFiles(workspaceFiles);
+    // 3. A template clone already contains the exact agent-visible fixture that
+    //    produced its identity. Non-template runs still need the initial upload.
+    if (!options.sandboxTemplate) {
+      await sandbox.uploadFiles(workspaceFiles);
+    }
     await initGitAndCommit(sandbox);
     if (options.setup) {
       await options.setup(sandbox);

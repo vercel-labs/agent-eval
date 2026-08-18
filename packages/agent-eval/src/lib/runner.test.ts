@@ -549,6 +549,9 @@ describe('runExperiment', () => {
         modelPolicy: 'agent-default',
         timeout: 600000, // Should be converted to milliseconds
         apiKey: 'my-api-key',
+        sandboxTemplate: undefined,
+        fixture: fixtures[0],
+        experimentConfig: config,
         setup: mockSetup,
         scripts: ['build', 'lint'],
         validation: undefined,

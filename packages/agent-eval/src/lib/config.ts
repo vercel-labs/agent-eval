@@ -42,6 +42,13 @@ const experimentConfigSchema = z.object({
   scripts: z.array(z.string()).optional(),
   validation: z.enum(['vitest', 'none']).optional(),
   timeout: z.number().positive().optional(),
+  sandboxTemplate: z
+    .object({
+      key: z.string().min(1),
+      identity: z.function().optional(),
+      prepare: z.function(),
+    })
+    .optional(),
   setup: z.function().optional(),
   sandbox: z.enum(['vercel', 'docker', 'auto']).optional(),
   editPrompt: z.function().args(z.string()).returns(z.string()).optional(),
@@ -116,6 +123,7 @@ export function resolveConfig(config: ExperimentConfig): ResolvedExperimentConfi
     scripts: config.scripts ?? CONFIG_DEFAULTS.scripts,
     validation: config.validation ?? CONFIG_DEFAULTS.validation,
     timeout: config.timeout ?? CONFIG_DEFAULTS.timeout,
+    sandboxTemplate: config.sandboxTemplate,
     setup: config.setup,
     sandbox: config.sandbox ?? CONFIG_DEFAULTS.sandbox,
     editPrompt: config.editPrompt,

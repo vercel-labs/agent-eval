@@ -238,7 +238,10 @@ const config: ExperimentConfig = {
 
 ```typescript
 // experiments/my-experiment.ts
-import type { ExperimentConfig } from '@vercel/agent-eval';
+import {
+  defineSandboxTemplate,
+  type ExperimentConfig,
+} from '@vercel/agent-eval';
 
 const config: ExperimentConfig = {
   // Required: which agent to use
@@ -270,7 +273,18 @@ const config: ExperimentConfig = {
   // evals: ['specific-eval'],
   // evals: (name) => name.startsWith('api-'),
 
-  // Setup function for sandbox pre-configuration
+  // Expensive setup reused through immutable Vercel Sandbox snapshots
+  sandboxTemplate: defineSandboxTemplate({
+    key: 'dependencies-v1',
+    identity: ({ config }) => ({
+      frameworkVersion: config.agentOptions?.frameworkVersion ?? 'local',
+    }),
+    prepare: async ({ sandbox }) => {
+      await sandbox.runCommand('npm', ['install']);
+    },
+  }),
+
+  // Per-attempt sandbox setup (runs after cloning the prepared snapshot)
   setup: async (sandbox) => {
     await sandbox.writeFiles({ '.env': 'API_KEY=test' });
     await sandbox.runCommand('npm', ['run', 'setup']);
@@ -458,6 +472,57 @@ const config: ExperimentConfig = {
 
 Response-only fixtures still need `PROMPT.md` and `package.json`, but they do
 not need `EVAL.ts` or `EVAL.tsx`.
+
+## Reusable Sandbox Preparation
+
+Use `defineSandboxTemplate` to run expensive setup once and give every eval
+attempt an independent sandbox cloned from the prepared state:
+
+```typescript
+import {
+  defineSandboxTemplate,
+  type ExperimentConfig,
+} from '@vercel/agent-eval';
+
+const dependencies = defineSandboxTemplate({
+  key: 'dependencies-v1',
+
+  // Optional additional context, such as an external framework version.
+  // The complete agent-visible fixture is always hashed regardless.
+  identity: ({ config }) => ({
+    frameworkVersion: config.agentOptions?.frameworkVersion ?? 'local',
+  }),
+
+  prepare: async ({ sandbox }) => {
+    await sandbox.runCommand('npm', ['install']);
+  },
+});
+
+const config: ExperimentConfig = {
+  agent: 'vercel-ai-gateway/claude-code',
+  sandbox: 'vercel',
+  sandboxTemplate: dependencies,
+
+  // Existing per-attempt setup still runs for every independent clone.
+  setup: async sandbox => {
+    await sandbox.writeFiles({ '.env.local': 'FEATURE_FLAG=true' });
+  },
+};
+
+export default config;
+```
+
+The complete agent-visible fixture always participates in the snapshot identity.
+Fixtures that differ only in withheld `PROMPT.md` and `EVAL.ts` files therefore
+share prepared state naturally, while different starting projects never do.
+The optional `identity` callback only adds contextual inputs; it cannot collapse
+different visible fixtures into one snapshot.
+
+The framework combines the fixture and additional identities with the template
+`key`, backend, runtime, and template format version. Change `key` whenever
+preparation logic changes in a way not otherwise represented. Templates currently
+require the Vercel sandbox backend; Docker fails explicitly rather than silently
+repeating preparation.
 
 ## A/B Testing
 

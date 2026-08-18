@@ -24,6 +24,7 @@ interface FingerprintableConfig {
   runs: number;
   webResearch?: boolean;
   judge?: { agent?: string; model: string };
+  sandboxTemplate?: { key: string };
 }
 
 /**
@@ -117,6 +118,9 @@ export function computeFingerprint(evalPath: string, config: RunnableExperimentC
   // unchanged. Changing the judge agent/model invalidates the cache → re-runs.
   if (config.judge) {
     configForHash.judge = { agent: config.judge.agent, model: config.judge.model };
+  }
+  if (config.sandboxTemplate) {
+    configForHash.sandboxTemplate = { key: config.sandboxTemplate.key };
   }
   hash.update(`config:${JSON.stringify(configForHash)}`);
 
