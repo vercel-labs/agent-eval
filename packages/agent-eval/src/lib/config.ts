@@ -51,6 +51,12 @@ const experimentConfigSchema = z.object({
     .optional(),
   setup: z.function().optional(),
   sandbox: z.enum(['vercel', 'docker', 'auto']).optional(),
+  interaction: z
+    .object({
+      maxTurns: z.number().int().positive().optional(),
+      respond: z.function(),
+    })
+    .optional(),
   editPrompt: z.function().args(z.string()).returns(z.string()).optional(),
   copyFiles: z.enum(['none', 'changed', 'all']).optional(),
   agentOptions: z.record(z.unknown()).optional(),
@@ -126,6 +132,7 @@ export function resolveConfig(config: ExperimentConfig): ResolvedExperimentConfi
     sandboxTemplate: config.sandboxTemplate,
     setup: config.setup,
     sandbox: config.sandbox ?? CONFIG_DEFAULTS.sandbox,
+    interaction: config.interaction,
     editPrompt: config.editPrompt,
     copyFiles: config.copyFiles ?? CONFIG_DEFAULTS.copyFiles,
     agentOptions: config.agentOptions,

@@ -12,6 +12,10 @@ export type {
   ModelPolicy,
   EvalFilter,
   ValidationMode,
+  CompletedTurnResult,
+  InteractionConfig,
+  InteractionContext,
+  InteractionTurn,
   BrandConfig,
   Sandbox,
   SetupFunction,
@@ -92,6 +96,8 @@ export { DockerSandboxManager } from './lib/docker-sandbox.js';
 
 // Re-export agent utilities
 export type { AgentRunOptions, AgentRunResult } from './lib/agents/types.js';
+export type { RunNaturalInteractionOptions } from './lib/agents/interaction.js';
+export { runNaturalInteraction } from './lib/agents/interaction.js';
 
 // Re-export transcript context constants
 export { TRANSCRIPT_CONTEXT_DIR, TRANSCRIPT_CONTEXT_PATH } from './lib/agents/shared.js';

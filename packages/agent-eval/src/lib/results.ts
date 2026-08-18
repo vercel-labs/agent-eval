@@ -65,6 +65,9 @@ export function agentResultToEvalRunData(
 	if (agentResult.modelRepair) {
 		result.modelRepair = agentResult.modelRepair;
 	}
+	if (agentResult.interaction) {
+		result.interaction = agentResult.interaction;
+	}
 
 	return {
 		result,
@@ -73,6 +76,7 @@ export function agentResultToEvalRunData(
 			Object.keys(outputContent).length > 0 ? outputContent : undefined,
 		generatedFiles: agentResult.generatedFiles,
 		deletedFiles: agentResult.deletedFiles,
+		interaction: agentResult.interaction,
 	};
 }
 

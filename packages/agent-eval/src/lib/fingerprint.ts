@@ -24,7 +24,11 @@ interface FingerprintableConfig {
   runs: number;
   webResearch?: boolean;
   judge?: { agent?: string; model: string };
+
   sandboxTemplate?: { key: string };
+
+  interaction?: { maxTurns: number };
+
 }
 
 /**
@@ -119,8 +123,12 @@ export function computeFingerprint(evalPath: string, config: RunnableExperimentC
   if (config.judge) {
     configForHash.judge = { agent: config.judge.agent, model: config.judge.model };
   }
+
   if (config.sandboxTemplate) {
     configForHash.sandboxTemplate = { key: config.sandboxTemplate.key };
+  }
+  if (config.interaction) {
+    configForHash.interaction = { maxTurns: config.interaction.maxTurns ?? 3 };
   }
   hash.update(`config:${JSON.stringify(configForHash)}`);
 

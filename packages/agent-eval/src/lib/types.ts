@@ -45,6 +45,44 @@ export type EvalFilter = (name: string) => boolean;
 
 export type ValidationMode = 'vitest' | 'none';
 
+/** Minimal result shared by AI SDK and HarnessAgent completed turns. */
+export interface CompletedTurnResult {
+  text: string;
+  [key: string]: unknown;
+}
+
+export interface InteractionTurn<
+  TResult extends CompletedTurnResult = CompletedTurnResult,
+> {
+  turn: number;
+  result: TResult;
+  userResponse?: string;
+}
+
+export interface InteractionContext<
+  TResult extends CompletedTurnResult = CompletedTurnResult,
+> {
+  /** One-based number of the completed assistant turn. */
+  turn: number;
+  /** The completed generate result. The original object is passed through. */
+  result: TResult;
+  /** Previous completed turns plus the current turn. */
+  history: readonly InteractionTurn<TResult>[];
+  fixture: EvalFixture;
+  runIndex: number;
+}
+
+export interface InteractionConfig<
+  TResult extends CompletedTurnResult = CompletedTurnResult,
+> {
+  /** Maximum assistant turns, including the initial turn. @default 3 */
+  maxTurns?: number;
+  /** Return the next user prompt, or null to finish and begin validation. */
+  respond(
+    context: InteractionContext<TResult>
+  ): string | null | Promise<string | null>;
+}
+
 export interface BrandConfig {
   id?: string;
   name: string;
@@ -152,6 +190,10 @@ export interface ExperimentConfig {
   /** Sandbox backend to use. @default 'auto' (Vercel if token present, else Docker) */
   sandbox?: SandboxBackend | 'auto';
 
+  /** Continue natural completed turns with simulated user responses. Registered
+   * agents opt into this by consuming `AgentRunOptions.interaction`. @default undefined */
+  interaction?: InteractionConfig;
+
   /** Optional function to modify the prompt before running the experiment. @default undefined */
   editPrompt?: (prompt: string) => string;
 
@@ -198,6 +240,7 @@ export interface ResolvedExperimentConfig {
   sandboxTemplate?: SandboxTemplate;
   setup?: SetupFunction;
   sandbox: SandboxBackend | 'auto';
+  interaction?: InteractionConfig;
   editPrompt?: (prompt: string) => string;
   copyFiles: 'none' | 'changed' | 'all';
   agentOptions?: Record<string, unknown>;
@@ -223,6 +266,7 @@ export interface RunnableExperimentConfig {
   sandboxTemplate?: SandboxTemplate;
   setup?: SetupFunction;
   sandbox: SandboxBackend | 'auto';
+  interaction?: InteractionConfig;
   editPrompt?: (prompt: string) => string;
   copyFiles: 'none' | 'changed' | 'all';
   agentOptions?: Record<string, unknown>;
@@ -294,6 +338,8 @@ export interface EvalRunResult {
   analysis?: Record<string, unknown>;
   /** Optional user-defined metadata attached by post-run hooks */
   metadata?: Record<string, unknown>;
+  /** Natural completed turns and simulated user responses. */
+  interaction?: { turns: InteractionTurn[] };
 }
 
 /**
@@ -315,6 +361,8 @@ export interface EvalRunData {
   generatedFiles?: Record<string, string>;
   /** Files deleted by the agent. Used for copyFiles option. */
   deletedFiles?: string[];
+  /** Natural completed turns and simulated user responses. */
+  interaction?: { turns: InteractionTurn[] };
 }
 
 /**

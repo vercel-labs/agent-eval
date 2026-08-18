@@ -67,6 +67,22 @@ describe('results utilities', () => {
       expect(runData.result.modelRepair).toBe('gpt-5.6-sol');
     });
 
+    it('preserves natural interaction history', () => {
+      const turns = [
+        { turn: 1, result: { text: 'Which region?' }, userResponse: 'Use iad1.' },
+        { turn: 2, result: { text: 'Done.' } },
+      ];
+      const runData = agentResultToEvalRunData({
+        success: true,
+        output: 'Done.',
+        duration: 100,
+        interaction: { turns },
+      });
+
+      expect(runData.interaction).toEqual({ turns });
+      expect(runData.result.interaction).toEqual({ turns });
+    });
+
     it('converts failed agent result', () => {
       const agentResult: AgentRunResult = {
         success: false,

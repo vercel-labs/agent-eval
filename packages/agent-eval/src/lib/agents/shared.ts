@@ -271,6 +271,7 @@ export async function injectTranscriptContext(
   rawTranscript: string | undefined,
   agentName: string,
   model?: string,
+  interaction?: import('../types.js').InteractionTurn[],
 ): Promise<void> {
   try {
     const transcript = rawTranscript
@@ -279,6 +280,7 @@ export async function injectTranscriptContext(
 
     const context = {
       o11y: transcript?.summary ?? null,
+      interaction: interaction ? { turns: interaction } : undefined,
     };
 
     await sandbox.writeFiles({
