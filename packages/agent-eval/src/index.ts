@@ -7,6 +7,7 @@
 // Re-export types
 export type {
   AgentType,
+  BuiltInAgentType,
   ModelTier,
   ModelPolicy,
   EvalFilter,

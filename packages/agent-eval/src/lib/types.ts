@@ -5,7 +5,7 @@
 /**
  * Supported AI agent types.
  */
-export type AgentType =
+export type BuiltInAgentType =
   | 'vercel-ai-gateway/claude-code'
   | 'claude-code'
   | 'vercel-ai-gateway/codex'
@@ -13,6 +13,12 @@ export type AgentType =
   | 'vercel-ai-gateway/opencode'
   | 'gemini'
   | 'cursor';
+
+/**
+ * An agent identifier. Built-in identifiers are suggested by TypeScript, while
+ * registered agents may use any non-empty string.
+ */
+export type AgentType = BuiltInAgentType | (string & {});
 
 /**
  * Model identifier - any string accepted.
