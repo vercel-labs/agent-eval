@@ -4,7 +4,7 @@
  */
 
 import Docker from 'dockerode';
-import { PassThrough, Writable } from 'node:stream';
+import { PassThrough } from 'node:stream';
 import * as tar from 'tar-stream';
 import type { Sandbox } from './types.js';
 import type { CommandResult, SandboxFile } from './sandbox.js';
@@ -240,13 +240,16 @@ export class DockerSandboxManager implements Sandbox {
     const stream = await exec.start({ hijack: true, stdin: false });
 
     return new Promise((resolve, reject) => {
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
       const stdoutStream = new PassThrough();
       const stderrStream = new PassThrough();
       stdoutStream.on('data', (chunk) => stdoutChunks.push(chunk));
       stderrStream.on('data', (chunk) => stderrChunks.push(chunk));
-      const stdoutChunks: Buffer[] = [];
-      const stderrChunks: Buffer[] = [];
-      // Docker multiplexes stdout/stderr in the stream
+
+      // Docker multiplexes stdout and stderr into one framed stream, and frames
+      // split across `data` events at arbitrary byte offsets. Let docker-modem
+      // own the framing rather than re-implementing it here.
       this.docker.modem.demuxStream(stream, stdoutStream, stderrStream);
 
       stream.on('end', async () => {
