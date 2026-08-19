@@ -529,12 +529,14 @@ export async function runAgent(input) {
   const agentExitCode = res.status == null ? -1 : res.status;
 
   // Capture transcript + observed model regardless of success (the old adapter did
-  // this even on the non-zero-exit path). The inline --json on stdout is the
-  // transcript; observedModel comes from the saved session file under ~/.codex.
-  const transcript = extractTranscriptFromOutput(output) ?? null;
+  // this even on the non-zero-exit path). Prefer the inline --json stdout, but
+  // fall back to the saved session file under ~/.codex; newer Codex builds may
+  // write the session transcript there without echoing the full JSONL to stdout.
+  const stdoutTranscript = extractTranscriptFromOutput(output);
   const threadId = extractCodexThreadId(output);
   const sessionTranscript = captureCodexSessionTranscript(threadId);
-  const observedModel = extractObservedModelFromCodexSession(sessionTranscript) ?? null;
+  const transcript = stdoutTranscript ?? sessionTranscript ?? null;
+  const observedModel = extractObservedModelFromCodexSession(sessionTranscript ?? stdoutTranscript) ?? null;
 
   if (res.error || agentExitCode !== 0) {
     // Mirror the old error string: last 5 lines of output, else a coded fallback.
