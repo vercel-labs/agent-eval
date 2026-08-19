@@ -166,5 +166,42 @@ describe('DockerSandboxManager', () => {
         await sandbox.stop();
       }
     }, 120000);
+
+    // Regression: Docker multiplexes stdout/stderr into a single framed stream,
+    // and large output is delivered across many `data` events that split frames
+    // at arbitrary byte offsets. The previous parser read each chunk
+    // independently and mis-read bytes that straddled a chunk boundary, silently
+    // dropping/corrupting output (e.g. truncating large file reads via `cat`).
+    // A large file round-trip reproduces the corruption on main without the fix.
+    it('reads back a large file without dropping or corrupting bytes', async () => {
+      if (skipDocker || !dockerAvailable) {
+        console.log('Skipping: Docker not available');
+        return;
+      }
+
+      const sandbox = await DockerSandboxManager.create({
+        timeout: 60000,
+        runtime: 'node24',
+      });
+
+      try {
+        // ~512KB of line-numbered content. Numbered lines make any dropped or
+        // reordered bytes detectable, and the size guarantees the output spans
+        // many stream chunks/frames.
+        const lines: string[] = [];
+        for (let i = 0; i < 8192; i++) {
+          lines.push(`line ${i.toString().padStart(6, '0')}: café[0m✓ ${'x'.repeat(48)}`);
+        }
+        const content = lines.join('\n') + '\n';
+
+        await sandbox.writeFiles({ 'large.txt': content });
+
+        const readBack = await sandbox.readFile('large.txt');
+        expect(readBack.length).toBe(content.length);
+        expect(readBack).toBe(content);
+      } finally {
+        await sandbox.stop();
+      }
+    }, 120000);
   });
 });
