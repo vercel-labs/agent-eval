@@ -238,6 +238,32 @@ describe('CLI', () => {
       const summary = JSON.parse(readFileSync(summaryPath, 'utf-8'));
       expect(summary.fingerprint).toBe('STALE_COMBINED'); // unchanged under --dry
     });
+
+    it('does not carry legacy results across a runtime compatibility boundary', () => {
+      const { projectDir, evalPath, summaryPath } = setupProject();
+      writeFileSync(
+        join(projectDir, 'experiments', 'cc.ts'),
+        `export default { agent: 'vercel-ai-gateway/codex', model: 'openai/gpt-5.2-codex', webResearch: true };`
+      );
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          totalRuns: 1,
+          passedRuns: 1,
+          passRate: '100%',
+          meanDuration: 1,
+          fingerprint: 'LEGACY_RESEARCH',
+          contentFingerprint: computeContentFingerprint(evalPath),
+        })
+      );
+
+      const r = runCli(['refingerprint'], projectDir);
+      expect(r.exitCode).toBe(0);
+      const summary = JSON.parse(readFileSync(summaryPath, 'utf-8'));
+      expect(summary.fingerprint).toBe('LEGACY_RESEARCH');
+      expect(r.stdout).toContain('left stale');
+      expect(runCli(['status', '--check'], projectDir).exitCode).toBe(1);
+    });
   });
 
   describe('staleness flow (status / refingerprint / --check / --json)', () => {

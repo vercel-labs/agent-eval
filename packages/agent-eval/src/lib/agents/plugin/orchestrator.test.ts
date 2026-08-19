@@ -29,12 +29,14 @@ describe('resolveJudgeRuntime', () => {
     expect(rt.config.runnerPath).toBe(RUNNER_PATH);
     expect(rt.config.model).toBe('claude-sonnet-4-5'); // codegen model
     expect(rt.authEnv.ANTHROPIC_AUTH_TOKEN).toBe('codegen-key'); // codegen auth
+    expect(rt.config.disableBundledSkills).toBeUndefined();
   });
 
   it('pins the judge model but reuses the codegen runner when the agent matches', () => {
     const def = getAgent('vercel-ai-gateway/claude-code').definition;
     const rt = resolveJudgeRuntime(def, {
       ...baseOptions,
+      disableBundledSkills: true,
       judge: { model: 'claude-opus-4-8' }, // agent omitted → same as codegen
     });
 
@@ -43,6 +45,7 @@ describe('resolveJudgeRuntime', () => {
     expect(rt.config.runnerPath).toBe(RUNNER_PATH);
     expect(rt.config.model).toBe('claude-opus-4-8'); // PINNED, not codegen's sonnet
     expect(rt.authEnv.ANTHROPIC_AUTH_TOKEN).toBe('codegen-key'); // same-agent auth reused
+    expect(rt.config.disableBundledSkills).toBe(true);
   });
 
   it('resolves a different judge agent with its own runner, model, and auth', () => {
@@ -50,6 +53,7 @@ describe('resolveJudgeRuntime', () => {
     const codegen = getAgent('codex').definition; // codegen is codex...
     const rt = resolveJudgeRuntime(codegen, {
       ...baseOptions,
+      disableBundledSkills: true,
       judge: { agent: 'vercel-ai-gateway/claude-code', model: 'claude-opus-4-8' }, // ...judge is Claude
     });
 
@@ -61,5 +65,17 @@ describe('resolveJudgeRuntime', () => {
     // Judge uses ITS OWN gateway auth (resolved from AI_GATEWAY_API_KEY), not codex's.
     expect(rt.authEnv.ANTHROPIC_BASE_URL).toBeTruthy();
     expect(rt.authEnv.ANTHROPIC_AUTH_TOKEN).toBe('judge-gateway-key');
+    expect(rt.config.disableBundledSkills).toBe(true);
+  });
+
+  it('rejects a pinned judge that cannot disable bundled skills', () => {
+    const codegen = getAgent('vercel-ai-gateway/claude-code').definition;
+    expect(() =>
+      resolveJudgeRuntime(codegen, {
+        ...baseOptions,
+        disableBundledSkills: true,
+        judge: { agent: 'gemini', model: 'gemini-2.5-pro' },
+      })
+    ).toThrow('Agent gemini does not support disableBundledSkills');
   });
 });

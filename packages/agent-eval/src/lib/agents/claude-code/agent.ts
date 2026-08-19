@@ -30,6 +30,7 @@ export function createClaudeCodeDefinition({ useVercelAiGateway }: { useVercelAi
     displayName: useVercelAiGateway ? 'Claude Code (Vercel AI Gateway)' : 'Claude Code',
     defaultModel: 'opus',
     o11yAgentName: 'claude-code',
+    bundledSkillsControl: 'configurable',
     // Resolve run.mjs next to this file (works in src during dev and in dist after
     // the build copies run.mjs alongside the compiled agent.js).
     runnerPath: fileURLToPath(new URL('./run.mjs', import.meta.url)),

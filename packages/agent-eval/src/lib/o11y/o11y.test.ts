@@ -223,6 +223,32 @@ describe('o11y', () => {
       expect(events[0].type).toBe('tool_result');
       expect(events[0].tool?.success).toBe(true);
     });
+
+    it('parses current Codex web search item events', () => {
+      const transcript = [
+        JSON.stringify({
+          type: 'item.started',
+          item: { id: 'item_1', type: 'web_search', query: 'Vercel AI Gateway docs' },
+        }),
+        JSON.stringify({
+          type: 'item.completed',
+          item: {
+            id: 'item_1',
+            type: 'web_search',
+            query: 'Vercel AI Gateway docs',
+            status: 'completed',
+          },
+        }),
+      ].join('\n');
+      const { events } = parseCodexTranscript(transcript);
+
+      expect(events).toHaveLength(2);
+      expect(events[0].type).toBe('tool_call');
+      expect(events[0].tool?.name).toBe('web_search');
+      expect(events[0].tool?.args?.query).toBe('Vercel AI Gateway docs');
+      expect(events[1].type).toBe('tool_result');
+      expect(events[1].tool?.success).toBe(true);
+    });
   });
 
   describe('OpenCode parser', () => {

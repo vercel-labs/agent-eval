@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildCodexExecArgs,
   buildModelRepairToml,
+  buildShellCanaryInput,
   buildShellCanaryPrompt,
   extractCodexThreadId,
   extractObservedModelFromCodexSession,
@@ -86,19 +88,66 @@ describe('generateCodexConfig', () => {
   it('omits the tools section by default', () => {
     expect(generateCodexConfig(undefined, true)).not.toContain('[tools]');
     expect(generateCodexConfig(undefined, false)).not.toContain('[tools]');
+    expect(generateCodexConfig(undefined, true)).not.toContain('web_search =');
+    expect(generateCodexConfig(undefined, true)).not.toContain('supports_standalone_web_search');
+    expect(generateCodexConfig(undefined, true)).not.toContain('[skills.bundled]');
   });
 
-  it('enables web_search when webResearch is set', () => {
+  it('enables current live web search when webResearch is set', () => {
     const gatewayConfig = generateCodexConfig(undefined, true, undefined, true);
-    expect(gatewayConfig).toContain('[tools]');
-    expect(gatewayConfig).toContain('web_search = true');
-    // The tools table must come after the provider table's keys so the
-    // provider settings are not absorbed into [tools].
-    expect(gatewayConfig.indexOf('[tools]')).toBeGreaterThan(gatewayConfig.indexOf('wire_api'));
+    expect(gatewayConfig).toContain('web_search = "live"');
+    expect(gatewayConfig).toContain('supports_standalone_web_search = true');
+    expect(gatewayConfig).not.toContain('[tools]');
+    // The top-level setting must precede the provider table or TOML absorbs it
+    // into model_providers.vercel.
+    expect(gatewayConfig.indexOf('web_search = "live"')).toBeLessThan(
+      gatewayConfig.indexOf('[model_providers.vercel]')
+    );
 
     const directConfig = generateCodexConfig(undefined, false, undefined, true);
-    expect(directConfig).toContain('[tools]');
-    expect(directConfig).toContain('web_search = true');
+    expect(directConfig).toContain('web_search = "live"');
+    expect(directConfig).not.toContain('supports_standalone_web_search');
+  });
+
+  it('disables bundled skills only when explicitly requested', () => {
+    const gatewayConfig = generateCodexConfig(undefined, true, undefined, false, true);
+    expect(gatewayConfig).toContain('[skills.bundled]');
+    expect(gatewayConfig).toContain('enabled = false');
+
+    const directConfig = generateCodexConfig(undefined, false, undefined, false, true);
+    expect(directConfig).toContain('[skills.bundled]');
+    expect(directConfig).toContain('enabled = false');
+  });
+});
+
+describe('buildCodexExecArgs', () => {
+  const baseInput = { prompt: 'where should this run?' };
+
+  it('keeps default arguments unchanged', () => {
+    expect(buildCodexExecArgs(baseInput)).toEqual([
+      'exec',
+      '--profile',
+      'default',
+      '--dangerously-bypass-approvals-and-sandbox',
+      '--json',
+      '--skip-git-repo-check',
+      'where should this run?',
+    ]);
+  });
+
+  it('passes --search only when webResearch is enabled', () => {
+    const args = buildCodexExecArgs({ ...baseInput, webResearch: true });
+    expect(args).toContain('--search');
+    expect(args).toContain('--strict-config');
+    expect(args.indexOf('--search')).toBeLessThan(args.indexOf('exec'));
+    expect(args[args.length - 1]).toBe(baseInput.prompt);
+  });
+
+  it('strictly validates opt-in bundled skill configuration', () => {
+    const args = buildCodexExecArgs({ ...baseInput, disableBundledSkills: true });
+    expect(args).toContain('--strict-config');
+    expect(args).not.toContain('--search');
+    expect(args.indexOf('--strict-config')).toBeLessThan(args.indexOf('exec'));
   });
 });
 
@@ -129,6 +178,25 @@ describe('codex shell-tool canary (native-default toolless repair)', () => {
     const prompt = buildShellCanaryPrompt(nonce);
     expect(prompt).toContain(`echo ${nonce}`);
     expect(prompt).toContain('NO-SHELL-TOOL');
+  });
+
+  it('keeps opt-in capability flags on canary executions', () => {
+    const input = buildShellCanaryInput(
+      {
+        prompt: 'real task',
+        cwd: '/workspace',
+        resultPath: '/tmp/result.json',
+        webResearch: true,
+        disableBundledSkills: true,
+        extra: { cliModel: null },
+      },
+      nonce,
+    );
+    const args = buildCodexExecArgs(input);
+
+    expect(input.prompt).toContain(nonce);
+    expect(args).toContain('--strict-config');
+    expect(args).toContain('--search');
   });
 
   it('confirms only on a completed command_execution carrying the nonce', () => {

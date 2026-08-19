@@ -276,6 +276,35 @@ function parseCodexLine(line: string): TranscriptEvent[] {
             break;
           }
 
+          case 'web_search':
+          case 'web_search_call': {
+            if (eventType === 'item.started') {
+              events.push({
+                timestamp: data.timestamp || data.ts,
+                type: 'tool_call',
+                tool: {
+                  name: 'web_search',
+                  originalName: itemType,
+                  args: { query: item.query || item.action?.query },
+                },
+                raw: data,
+              });
+            } else {
+              events.push({
+                timestamp: data.timestamp || data.ts,
+                type: 'tool_result',
+                tool: {
+                  name: 'web_search',
+                  originalName: itemType,
+                  result: item.results || item.action || item,
+                  success: item.status !== 'failed',
+                },
+                raw: data,
+              });
+            }
+            break;
+          }
+
           case 'agent_message': {
             // Agent message is an assistant message
             events.push({

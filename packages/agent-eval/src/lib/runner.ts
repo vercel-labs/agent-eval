@@ -14,7 +14,7 @@ import type {
   RunnableExperimentConfig,
   ProgressEvent,
 } from './types.js';
-import { getAgent } from './agents/index.js';
+import { assertRunBundledSkillsControl, getAgent } from './agents/index.js';
 import {
   agentResultToEvalRunData,
   createEvalSummary,
@@ -126,6 +126,12 @@ export async function runExperiment(
   const { config, fixtures, apiKey, resultsDir, experimentName, fingerprints, contentFingerprints, onProgress, smoke, rateLimiter } = options;
   const startedAt = new Date();
 
+  assertRunBundledSkillsControl(
+    config.agent,
+    config.disableBundledSkills,
+    config.judge?.agent,
+  );
+
   // Get the agent from registry
   const agent = getAgent(config.agent);
 
@@ -197,6 +203,7 @@ export async function runExperiment(
         sandbox: config.sandbox,
         agentOptions: config.agentOptions,
         webResearch: config.webResearch,
+        disableBundledSkills: config.disableBundledSkills,
         judge: config.judge,
       }),
       new Promise<never>((_, reject) => {
@@ -392,10 +399,17 @@ export async function runSingleEval<T extends ResolvedExperimentConfig['model']>
     verbose?: boolean;
     agentOptions?: ResolvedExperimentConfig['agentOptions'];
     webResearch?: ResolvedExperimentConfig['webResearch'];
+    disableBundledSkills?: ResolvedExperimentConfig['disableBundledSkills'];
     judge?: ResolvedExperimentConfig['judge'];
   }
 ): Promise<T extends Array<unknown> ? EvalRunData[] : EvalRunData> {
-  const agent = getAgent(options.agent ?? 'vercel-ai-gateway/claude-code');
+  const agentName = options.agent ?? 'vercel-ai-gateway/claude-code';
+  assertRunBundledSkillsControl(
+    agentName,
+    options.disableBundledSkills,
+    options.judge?.agent,
+  );
+  const agent = getAgent(agentName);
 
   const models: string[] = Array.isArray(options.model) ? options.model : [options.model];
   const prompt = options.editPrompt ? options.editPrompt(fixture.prompt) : fixture.prompt;
@@ -416,6 +430,7 @@ export async function runSingleEval<T extends ResolvedExperimentConfig['model']>
 		sandbox: options.sandbox,
 		agentOptions: options.agentOptions,
 		webResearch: options.webResearch,
+		disableBundledSkills: options.disableBundledSkills,
 		judge: options.judge,
 	});
 
