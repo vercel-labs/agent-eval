@@ -6,6 +6,16 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { DockerSandboxManager } from './docker-sandbox.js';
+import type { CommandResult } from './sandbox.js';
+
+/**
+ * A real 1x1 PNG. Byte 0 is 0x89, which is not a valid UTF-8 lead byte, so any
+ * UTF-8 decode of this file replaces it with U+FFFD.
+ */
+const PNG_BYTES = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64'
+);
 
 // Check if Docker is available
 async function isDockerAvailable(): Promise<boolean> {
@@ -88,6 +98,32 @@ describe('DockerSandboxManager', () => {
 
         const content2 = await sandbox.readFile('nested/file.json');
         expect(JSON.parse(content2)).toEqual({ key: 'value' });
+      } finally {
+        await sandbox.stop();
+      }
+    }, 120000);
+
+    it('reads binary files back byte-for-byte', async () => {
+      if (skipDocker || !dockerAvailable) {
+        console.log('Skipping: Docker not available');
+        return;
+      }
+
+      const sandbox = await DockerSandboxManager.create({
+        timeout: 60000,
+        runtime: 'node24',
+      });
+
+      try {
+        await sandbox.uploadFiles([{ path: 'favicon.png', content: PNG_BYTES }]);
+
+        // Proves `base64` exists in the image and that the transport survives
+        // bytes the UTF-8 path would replace with U+FFFD.
+        const bytes = await sandbox.readFileBuffer('favicon.png');
+        expect(Buffer.compare(bytes, PNG_BYTES)).toBe(0);
+
+        const asText = await sandbox.readFile('favicon.png');
+        expect(Buffer.from(asText, 'utf-8')).not.toEqual(PNG_BYTES);
       } finally {
         await sandbox.stop();
       }
@@ -203,5 +239,45 @@ describe('DockerSandboxManager', () => {
         await sandbox.stop();
       }
     }, 120000);
+  });
+
+  // These need no daemon: only `runCommand` is stubbed, so the real
+  // `readFileBuffer` implementation runs against a fake transport.
+  describe('readFileBuffer', () => {
+    function stubbedSandbox(
+      run: (command: string, args: string[]) => CommandResult
+    ): DockerSandboxManager {
+      const sandbox = Object.create(
+        DockerSandboxManager.prototype
+      ) as DockerSandboxManager;
+      sandbox.runCommand = async (command: string, args: string[] = []) =>
+        run(command, args);
+      return sandbox;
+    }
+
+    it('round-trips binary content that readFile would corrupt', async () => {
+      const calls: Array<[string, string[]]> = [];
+      const sandbox = stubbedSandbox((command, args) => {
+        calls.push([command, args]);
+        return { stdout: PNG_BYTES.toString('base64'), stderr: '', exitCode: 0 };
+      });
+
+      const content = await sandbox.readFileBuffer('public/favicon.png');
+
+      expect(calls).toEqual([['base64', ['public/favicon.png']]]);
+      expect(Buffer.compare(content, PNG_BYTES)).toBe(0);
+    });
+
+    it('throws when the file cannot be read', async () => {
+      const sandbox = stubbedSandbox(() => ({
+        stdout: '',
+        stderr: 'base64: missing.png: No such file or directory',
+        exitCode: 1,
+      }));
+
+      await expect(sandbox.readFileBuffer('missing.png')).rejects.toThrow(
+        'Failed to read file missing.png: base64: missing.png: No such file or directory'
+      );
+    });
   });
 });

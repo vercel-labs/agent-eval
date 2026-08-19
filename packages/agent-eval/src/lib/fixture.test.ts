@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 import {
   discoverFixtures,
@@ -9,9 +9,19 @@ import {
   loadAllFixtures,
   getFixtureFiles,
   readFixtureFiles,
+  copyFixtureFiles,
 } from './fixture.js';
 
 const TEST_DIR = '/tmp/eval-framework-test-fixtures';
+
+/**
+ * A real 1x1 PNG. Byte 0 is 0x89, which is not a valid UTF-8 lead byte, so any
+ * UTF-8 decode of this file replaces it with U+FFFD.
+ */
+const PNG_BYTES = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64'
+);
 
 function createTestFixture(name: string, files: Record<string, string>) {
   const fixturePath = join(TEST_DIR, name);
@@ -229,10 +239,75 @@ describe('fixture discovery and validation', () => {
       const path = join(TEST_DIR, 'readable');
       const contents = readFixtureFiles(path);
 
-      expect(contents.get('package.json')).toBe('{"name":"test"}');
-      expect(contents.get('src/index.ts')).toBe('export const x = 1;');
+      expect(contents.get('package.json')?.toString()).toBe('{"name":"test"}');
+      expect(contents.get('src/index.ts')?.toString()).toBe('export const x = 1;');
       expect(contents.has('PROMPT.md')).toBe(false);
       expect(contents.has('EVAL.ts')).toBe(false);
+    });
+
+    it('reads binary files without corrupting them', () => {
+      const path = createTestFixture('binary', {
+        'PROMPT.md': 'Task',
+        'EVAL.ts': 'test',
+      });
+      mkdirSync(join(path, 'public'), { recursive: true });
+      writeFileSync(join(path, 'public/favicon.png'), PNG_BYTES);
+
+      const contents = readFixtureFiles(path);
+
+      expect(Buffer.compare(contents.get('public/favicon.png')!, PNG_BYTES)).toBe(0);
+    });
+  });
+
+  describe('copyFixtureFiles', () => {
+    it('copies binary files byte-for-byte', () => {
+      const path = createTestFixture('copy-binary', {
+        'PROMPT.md': 'Task',
+        'EVAL.ts': 'test',
+      });
+      mkdirSync(join(path, 'public'), { recursive: true });
+      writeFileSync(join(path, 'public/favicon.png'), PNG_BYTES);
+      const dest = join(TEST_DIR, 'copy-binary-out');
+
+      copyFixtureFiles(path, dest);
+
+      expect(
+        Buffer.compare(readFileSync(join(dest, 'public/favicon.png')), PNG_BYTES)
+      ).toBe(0);
+    });
+
+    it('creates nested destination directories and skips excluded files', () => {
+      const path = createTestFixture('copy-nested', {
+        'PROMPT.md': 'Task',
+        'EVAL.ts': 'test',
+        'package.json': '{"name":"test"}',
+        'src/deep/index.ts': 'export const x = 1;',
+      });
+      const dest = join(TEST_DIR, 'copy-nested-out');
+
+      copyFixtureFiles(path, dest);
+
+      expect(readFileSync(join(dest, 'src/deep/index.ts'), 'utf-8')).toBe(
+        'export const x = 1;'
+      );
+      expect(readFileSync(join(dest, 'package.json'), 'utf-8')).toBe('{"name":"test"}');
+      expect(existsSync(join(dest, 'PROMPT.md'))).toBe(false);
+      expect(existsSync(join(dest, 'EVAL.ts'))).toBe(false);
+    });
+
+    it('overwrites files already present at the destination', () => {
+      const path = createTestFixture('copy-overwrite', {
+        'PROMPT.md': 'Task',
+        'EVAL.ts': 'test',
+        'package.json': '{"name":"fixture"}',
+      });
+      const dest = join(TEST_DIR, 'copy-overwrite-out');
+      mkdirSync(dest, { recursive: true });
+      writeFileSync(join(dest, 'package.json'), '{"name":"stale"}');
+
+      copyFixtureFiles(path, dest);
+
+      expect(readFileSync(join(dest, 'package.json'), 'utf-8')).toBe('{"name":"fixture"}');
     });
   });
 });

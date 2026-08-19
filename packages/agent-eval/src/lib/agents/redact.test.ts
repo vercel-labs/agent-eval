@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { REDACTED, redactRunResult, redactSecrets } from './redact.js';
+import { REDACTED, redactRunResult, redactSecrets, redactSecretsBuffer } from './redact.js';
 import type { AgentRunResult } from './types.js';
 
 // Shaped like the real leak: an OIDC token the framework wrote into opencode.json
 // at provider.vercel.options.apiKey, which the agent then read.
 const TOKEN = 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL29pZGMudmVyY2VsLmNvbSJ9.c2lnbmF0dXJlLWJ5dGVz';
+
+const REDACTED_BUF = Buffer.from(REDACTED, 'utf-8');
 
 describe('redactSecrets', () => {
   it('replaces every occurrence of the secret', () => {
@@ -40,6 +42,73 @@ describe('redactSecrets', () => {
   });
 });
 
+describe('redactSecretsBuffer', () => {
+  // 0x00 and 0xff are not valid UTF-8 on their own. Decoding to a string and
+  // re-encoding turns each into U+FFFD (ef bf bd), which is the corruption that
+  // byte-fidelity collection exists to prevent.
+  const BINARY_PREFIX = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe, 0x80]);
+  const BINARY_SUFFIX = Buffer.from([0xc3, 0x28, 0x00, 0x01, 0xff]);
+
+  it('redacts a secret embedded in binary content and preserves every other byte', () => {
+    const input = Buffer.concat([BINARY_PREFIX, Buffer.from(TOKEN, 'utf-8'), BINARY_SUFFIX]);
+
+    const out = redactSecretsBuffer(input, [TOKEN]);
+
+    expect(out).toEqual(Buffer.concat([BINARY_PREFIX, REDACTED_BUF, BINARY_SUFFIX]));
+    expect(out.subarray(0, BINARY_PREFIX.length)).toEqual(BINARY_PREFIX);
+    expect(out.subarray(out.length - BINARY_SUFFIX.length)).toEqual(BINARY_SUFFIX);
+    expect(out.includes(Buffer.from(TOKEN, 'utf-8'))).toBe(false);
+  });
+
+  it('does not decode the bytes it passes through', () => {
+    // Guard against "simplifying" this back to
+    // Buffer.from(redactSecrets(content.toString('utf-8'), secrets)). That
+    // variant returns these bytes mangled into U+FFFD, so this asserts the
+    // difference rather than trusting the implementation.
+    const input = Buffer.concat([BINARY_PREFIX, Buffer.from(TOKEN, 'utf-8')]);
+    const viaString = Buffer.from(redactSecrets(input.toString('utf-8'), [TOKEN]), 'utf-8');
+
+    expect(redactSecretsBuffer(input, [TOKEN]).subarray(0, BINARY_PREFIX.length)).toEqual(
+      BINARY_PREFIX
+    );
+    expect(viaString.subarray(0, BINARY_PREFIX.length)).not.toEqual(BINARY_PREFIX);
+  });
+
+  it('redacts every occurrence', () => {
+    const needle = Buffer.from(TOKEN, 'utf-8');
+    const input = Buffer.concat([needle, BINARY_PREFIX, needle, Buffer.from([0x00]), needle]);
+
+    const out = redactSecretsBuffer(input, [TOKEN]);
+
+    expect(out).toEqual(
+      Buffer.concat([
+        REDACTED_BUF,
+        BINARY_PREFIX,
+        REDACTED_BUF,
+        Buffer.from([0x00]),
+        REDACTED_BUF,
+      ])
+    );
+  });
+
+  it('returns the content untouched when the secret is absent or too short', () => {
+    const input = Buffer.concat([BINARY_PREFIX, BINARY_SUFFIX]);
+
+    expect(redactSecretsBuffer(input, [TOKEN])).toEqual(input);
+    expect(redactSecretsBuffer(input, ['', undefined, 'short'])).toEqual(input);
+  });
+
+  it('redacts a secret that contains another secret whole', () => {
+    const inner = 'inner-secret-value-0123';
+    const outer = `${inner}-plus-more-suffix`;
+    const input = Buffer.from(`v=${outer}`, 'utf-8');
+
+    expect(redactSecretsBuffer(input, [inner, outer])).toEqual(
+      Buffer.from(`v=${REDACTED}`, 'utf-8')
+    );
+  });
+});
+
 describe('redactRunResult', () => {
   const base: AgentRunResult = {
     success: true,
@@ -49,7 +118,7 @@ describe('redactRunResult', () => {
     duration: 1234,
     testResult: { success: true, output: `env had ${TOKEN}` },
     scriptsResults: { build: { success: true, output: `build saw ${TOKEN}` } },
-    generatedFiles: { 'copy.json': `{"apiKey":"${TOKEN}"}` },
+    generatedFiles: { 'copy.json': Buffer.from(`{"apiKey":"${TOKEN}"}`, 'utf-8') },
     deletedFiles: ['old.ts'],
     sandboxId: 'sbx_123',
     observedModel: 'vercel/xai/grok-4.6',
@@ -63,7 +132,9 @@ describe('redactRunResult', () => {
     expect(result.error).toBe(`auth failed for ${REDACTED}`);
     expect(result.testResult?.output).toBe(`env had ${REDACTED}`);
     expect(result.scriptsResults?.build.output).toBe(`build saw ${REDACTED}`);
-    expect(result.generatedFiles?.['copy.json']).toBe(`{"apiKey":"${REDACTED}"}`);
+    expect(result.generatedFiles?.['copy.json']?.toString('utf-8')).toBe(
+      `{"apiKey":"${REDACTED}"}`
+    );
   });
 
   it('leaves the whole result free of the secret', () => {
@@ -83,6 +154,10 @@ describe('redactRunResult', () => {
 
   it('does not mutate the input', () => {
     const input = structuredClone(base);
+    // structuredClone downgrades Buffer to a bare Uint8Array, which toEqual then
+    // reports as a difference. Restore the prototype so the assertion is about
+    // mutation, which is what this test is for.
+    input.generatedFiles = { 'copy.json': Buffer.from(base.generatedFiles!['copy.json']) };
     redactRunResult(input, [TOKEN]);
 
     expect(input).toEqual(base);

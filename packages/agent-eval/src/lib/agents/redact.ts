@@ -59,6 +59,45 @@ export function redactSecrets(
   return out;
 }
 
+const REDACTED_BYTES = Buffer.from(REDACTED, 'utf-8');
+
+/**
+ * Buffer-level equivalent of {@link redactSecrets}.
+ *
+ * `generatedFiles` holds raw bytes so that binary assets survive collection
+ * intact. Redaction therefore cannot route through a string: decoding to UTF-8
+ * and re-encoding replaces every non-UTF-8 byte with U+FFFD, which would corrupt
+ * exactly the files byte-fidelity exists to protect. Passing a Buffer to
+ * {@link redactSecrets} is worse still — Buffer has no `split`, so it throws.
+ *
+ * Credentials are ASCII, so their UTF-8 byte sequence is located and spliced out
+ * directly and every other byte is copied through untouched.
+ */
+export function redactSecretsBuffer(
+  content: Buffer,
+  secrets: readonly (string | undefined)[]
+): Buffer {
+  let out = content;
+
+  for (const secret of usableSecrets(secrets)) {
+    const needle = Buffer.from(secret, 'utf-8');
+    let found = out.indexOf(needle);
+    if (found === -1) continue;
+
+    const pieces: Buffer[] = [];
+    let cursor = 0;
+    while (found !== -1) {
+      pieces.push(out.subarray(cursor, found), REDACTED_BYTES);
+      cursor = found + needle.length;
+      found = out.indexOf(needle, cursor);
+    }
+    pieces.push(out.subarray(cursor));
+    out = Buffer.concat(pieces);
+  }
+
+  return out;
+}
+
 function redactScriptResult(
   result: ScriptResult,
   secrets: readonly (string | undefined)[]
@@ -108,7 +147,7 @@ export function redactRunResult(
     redacted.generatedFiles = Object.fromEntries(
       Object.entries(result.generatedFiles).map(([path, content]) => [
         path,
-        redactSecrets(content, secrets),
+        redactSecretsBuffer(content, secrets),
       ])
     );
   }
