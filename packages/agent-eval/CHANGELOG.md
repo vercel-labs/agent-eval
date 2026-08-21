@@ -1,5 +1,11 @@
 # @vercel/agent-eval
 
+## 2.1.0
+
+### Minor Changes
+
+- [#191](https://github.com/vercel-labs/agent-eval/pull/191) [`ceba203`](https://github.com/vercel-labs/agent-eval/commit/ceba203690479decaf63cde4297fc61761154221) Thanks [@molebox](https://github.com/molebox)! - Add opt-in isolation for agent-bundled skills and update Codex web research to use its current live-search configuration and CLI flag. Opt-in runtime compatibility is stored separately so cached legacy research results are not silently carried forward.
+
 ## 2.0.0
 
 ### Major Changes
