@@ -192,7 +192,7 @@ export function buildCodexLoginArgs() {
  * literal quotes exactly as the old shell string had them, and the prompt is a
  * plain argv element (no shell escaping needed).
  *
- * @param {{prompt:string, extra?:Record<string,unknown>}} input
+ * @param {{prompt:string, webResearch?:boolean, disableBundledSkills?:boolean, extra?:Record<string,unknown>}} input
  * @returns {string[]}
  */
 export function buildCodexExecArgs(input) {
@@ -201,7 +201,19 @@ export function buildCodexExecArgs(input) {
   const reasoningEffort = extra.reasoningEffort ?? null;
   const verbosity = extra.verbosity ?? null;
 
-  const args = ['exec', '--profile', 'default'];
+  const args = [];
+  if (input.webResearch || input.disableBundledSkills) {
+    // Opt-in capability controls must fail loudly on a CLI version that does
+    // not recognize their generated profile settings.
+    args.push('--strict-config');
+  }
+  if (input.webResearch) {
+    // Current Codex CLI flag; the generated profile also opts the custom
+    // Gateway provider into standalone live search. --search is a global
+    // option and must precede the exec subcommand.
+    args.push('--search');
+  }
+  args.push('exec', '--profile', 'default');
   if (cliModel) {
     args.push('--model', String(cliModel));
   }
@@ -280,6 +292,20 @@ export function buildShellCanaryPrompt(nonce) {
 }
 
 /**
+ * Build the canary input with the same capability flags as the real task.
+ *
+ * @param {import('../plugin/contract.js').AgentRunInput} input
+ * @param {string} nonce
+ * @returns {import('../plugin/contract.js').AgentRunInput}
+ */
+export function buildShellCanaryInput(input, nonce) {
+  return {
+    ...input,
+    prompt: buildShellCanaryPrompt(nonce),
+  };
+}
+
+/**
  * True iff the codex --json stdout proves the shell ran: a completed
  * `command_execution` item with exit_code 0 whose command or aggregated_output
  * contains the nonce. Agent messages containing the nonce do NOT count — a
@@ -339,7 +365,7 @@ export function buildModelRepairToml(observedModel) {
  * @returns {{confirmed: boolean, stdout: string, output: string}}
  */
 function runShellCanary(input, nonce) {
-  const res = spawnSync('codex', buildCodexExecArgs({ prompt: buildShellCanaryPrompt(nonce), extra: input.extra }), {
+  const res = spawnSync('codex', buildCodexExecArgs(buildShellCanaryInput(input, nonce)), {
     cwd: input.cwd,
     env: process.env,
     encoding: 'utf8',

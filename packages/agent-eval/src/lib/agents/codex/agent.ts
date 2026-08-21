@@ -80,6 +80,7 @@ function parseOptionsModel(options: AgentRunOptions): { model?: string; reasonin
  */
 const DEFAULT_REASONING_EFFORT = 'medium';
 const DEFAULT_MODEL_VERBOSITY = 'medium';
+const WEB_RESEARCH_PROTOCOL = 'live-v1';
 
 /**
  * Generate Codex profile config content.
@@ -96,33 +97,35 @@ export function generateCodexConfig(
   useVercelAiGateway: boolean,
   reasoningEffort?: string,
   webResearch?: boolean,
+  disableBundledSkills?: boolean,
 ): string {
-  // Opt-in web research. Note: through the AI Gateway (`wire_api =
-  // "responses"`), no `web_search` items have been observed — Codex instead
-  // researches via shell commands when it decides to. The setting is still
-  // written so direct-OpenAI runs and future gateway support pick it up; it
-  // is harmless when the server-side tool is unavailable.
-  const toolsSection = webResearch ? `\n[tools]\nweb_search = true\n` : '';
+  // Codex replaced the legacy boolean [tools].web_search setting with this
+  // top-level mode. Custom providers must also declare standalone support or
+  // the CLI omits the tool before it sends a Responses request.
+  const webSearchSetting = webResearch ? `web_search = "live"\n` : '';
+  const bundledSkillsSection = disableBundledSkills
+    ? `\n[skills.bundled]\nenabled = false\n`
+    : '';
   if (useVercelAiGateway) {
     // AI Gateway uses prefixed model names like "openai/gpt-5.2-codex".
     // Native-default runs intentionally omit model and reasoning overrides.
     const fullModel = model ? (model.includes('/') ? model : `openai/${model}`) : undefined;
     return `# Codex configuration for Vercel AI Gateway
 model_provider = "vercel"
-${fullModel ? `model = "${fullModel}"\n` : ''}${model ? `model_reasoning_effort = "${reasoningEffort ?? DEFAULT_REASONING_EFFORT}"\nmodel_verbosity = "${DEFAULT_MODEL_VERBOSITY}"\n` : ''}
+${fullModel ? `model = "${fullModel}"\n` : ''}${model ? `model_reasoning_effort = "${reasoningEffort ?? DEFAULT_REASONING_EFFORT}"\nmodel_verbosity = "${DEFAULT_MODEL_VERBOSITY}"\n` : ''}${webSearchSetting}
 [model_providers.vercel]
 name = "Vercel AI Gateway"
 base_url = "${AI_GATEWAY.openAiBaseUrl}"
 env_key = "${AI_GATEWAY.apiKeyEnvVar}"
 wire_api = "responses"
-${toolsSection}`;
+${webResearch ? 'supports_standalone_web_search = true\n' : ''}${bundledSkillsSection}`;
   } else {
     // Direct OpenAI API — use the built-in "openai" provider (no custom provider needed).
     // Native-default runs intentionally omit model and reasoning overrides.
     const directModel = model ? (model.includes('/') ? model.split('/').pop()! : model) : undefined;
     return `# Direct OpenAI API configuration
 model_provider = "openai"
-${directModel ? `model = "${directModel}"\n` : ''}${model ? `model_reasoning_effort = "${reasoningEffort ?? DEFAULT_REASONING_EFFORT}"\nmodel_verbosity = "${DEFAULT_MODEL_VERBOSITY}"\n` : ''}${toolsSection}`;
+${directModel ? `model = "${directModel}"\n` : ''}${model ? `model_reasoning_effort = "${reasoningEffort ?? DEFAULT_REASONING_EFFORT}"\nmodel_verbosity = "${DEFAULT_MODEL_VERBOSITY}"\n` : ''}${webSearchSetting}${bundledSkillsSection}`;
   }
 }
 
@@ -141,6 +144,7 @@ export function createCodexDefinition({ useVercelAiGateway }: { useVercelAiGatew
     displayName: useVercelAiGateway ? 'OpenAI Codex (Vercel AI Gateway)' : 'OpenAI Codex',
     defaultModel: 'openai/gpt-5.2-codex',
     o11yAgentName: 'codex',
+    bundledSkillsControl: 'configurable',
     // Resolve run.mjs next to this file (works in src during dev and in dist after
     // the build copies run.mjs alongside the compiled agent.js).
     runnerPath: fileURLToPath(new URL('./run.mjs', import.meta.url)),
@@ -167,7 +171,13 @@ export function createCodexDefinition({ useVercelAiGateway }: { useVercelAiGatew
       // value is visible in saved configs and so the CLI's own default of "low"
       // can't sneak through. For native-default runs we omit these settings.
       const parsed = parseOptionsModel(options);
-      const configContent = generateCodexConfig(parsed.model, useVercelAiGateway, parsed.reasoningEffort, options.webResearch);
+      const configContent = generateCodexConfig(
+        parsed.model,
+        useVercelAiGateway,
+        parsed.reasoningEffort,
+        options.webResearch,
+        options.disableBundledSkills,
+      );
       // Absolute `~` path writeFiles can't target → heredoc via shell. Combines the
       // old `mkdir -p ~/.codex` + `cat > ~/.codex/default.config.toml << 'EOF'`.
       return [
@@ -219,6 +229,12 @@ export function createCodexDefinition({ useVercelAiGateway }: { useVercelAiGatew
         reasoningEffort: reasoningEffort ?? null,
         verbosity: verbosity ?? null,
       };
+    },
+
+    fingerprintExtra(config): Record<string, unknown> | undefined {
+      return config.webResearch
+        ? { webResearchProtocol: WEB_RESEARCH_PROTOCOL }
+        : undefined;
     },
   };
 }

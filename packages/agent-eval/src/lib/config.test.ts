@@ -79,6 +79,16 @@ describe('validateConfig', () => {
     expect(() => validateConfig(config)).toThrow('Invalid experiment configuration');
   });
 
+  it('keeps disableBundledSkills through validation', () => {
+    const config = { agent: 'claude-code', disableBundledSkills: true };
+    expect(validateConfig(config).disableBundledSkills).toBe(true);
+  });
+
+  it('rejects non-boolean disableBundledSkills', () => {
+    const config = { agent: 'claude-code', disableBundledSkills: 'yes' };
+    expect(() => validateConfig(config)).toThrow('Invalid experiment configuration');
+  });
+
   it('accepts a pinned judge (model only, agent defaults to codegen)', () => {
     const config = { agent: 'claude-code', judge: { model: 'claude-opus-4-8' } };
     expect(validateConfig(config).judge).toEqual({ model: 'claude-opus-4-8' });
@@ -169,6 +179,31 @@ describe('resolveConfig', () => {
   it('passes webResearch through and leaves it undefined by default', () => {
     expect(resolveConfig({ agent: 'claude-code' as const }).webResearch).toBeUndefined();
     expect(resolveConfig({ agent: 'claude-code' as const, webResearch: true }).webResearch).toBe(true);
+  });
+
+  it('passes disableBundledSkills through and leaves it undefined by default', () => {
+    expect(resolveConfig({ agent: 'claude-code' as const }).disableBundledSkills).toBeUndefined();
+    expect(
+      resolveConfig({ agent: 'claude-code' as const, disableBundledSkills: true })
+        .disableBundledSkills
+    ).toBe(true);
+  });
+
+  it('accepts agents with no bundled skills and rejects unsupported agents', () => {
+    expect(
+      resolveConfig({ agent: 'vercel-ai-gateway/opencode', disableBundledSkills: true })
+        .disableBundledSkills
+    ).toBe(true);
+    expect(() =>
+      resolveConfig({ agent: 'gemini', disableBundledSkills: true })
+    ).toThrow('Agent gemini does not support disableBundledSkills');
+    expect(() =>
+      resolveConfig({
+        agent: 'vercel-ai-gateway/claude-code',
+        disableBundledSkills: true,
+        judge: { agent: 'gemini', model: 'gemini-2.5-pro' },
+      })
+    ).toThrow('Agent gemini does not support disableBundledSkills');
   });
 
   it('passes judge through and leaves it undefined by default', () => {

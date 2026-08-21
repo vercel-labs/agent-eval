@@ -168,6 +168,12 @@ export interface ExperimentConfig {
    * @default false — command construction is unchanged when omitted. */
   webResearch?: boolean;
 
+  /** Disable skills bundled by the underlying agent CLI while preserving
+   * project/user skills installed by the caller. Currently supported by Claude
+   * Code and Codex; OpenCode does not bundle skills. @default false — the
+   * underlying CLI's normal skill behavior is unchanged when omitted. */
+  disableBundledSkills?: boolean;
+
   /** Brands to track or compare in downstream analysis. @default undefined */
   brands?: BrandConfig[];
 
@@ -198,6 +204,7 @@ export interface ResolvedExperimentConfig {
   copyFiles: 'none' | 'changed' | 'all';
   agentOptions?: Record<string, unknown>;
   webResearch?: boolean;
+  disableBundledSkills?: boolean;
   brands?: BrandConfig[];
   onRunComplete?: RunCompleteHook;
   judge?: JudgeConfig;
@@ -222,6 +229,7 @@ export interface RunnableExperimentConfig {
   copyFiles: 'none' | 'changed' | 'all';
   agentOptions?: Record<string, unknown>;
   webResearch?: boolean;
+  disableBundledSkills?: boolean;
   brands?: BrandConfig[];
   onRunComplete?: RunCompleteHook;
   judge?: JudgeConfig;

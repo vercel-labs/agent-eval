@@ -10,7 +10,7 @@ import type {
   EvalFilter,
 } from './types.js';
 import { NATIVE_DEFAULT_MODEL } from './types.js';
-import { getAgent } from './agents/index.js';
+import { assertRunBundledSkillsControl } from './agents/index.js';
 
 /**
  * Default configuration values.
@@ -50,6 +50,7 @@ const experimentConfigSchema = z.object({
   // Must be in the schema: z.object strips unknown keys, so omitting it here
   // would make validateConfig silently drop the option.
   webResearch: z.boolean().optional(),
+  disableBundledSkills: z.boolean().optional(),
   brands: z.array(z.object({
     id: z.string().optional(),
     name: z.string().min(1),
@@ -101,7 +102,11 @@ export function validateConfig(config: unknown): ExperimentConfig {
  */
 export function resolveConfig(config: ExperimentConfig): ResolvedExperimentConfig {
   // Validate agent exists
-  getAgent(config.agent);
+  assertRunBundledSkillsControl(
+    config.agent,
+    config.disableBundledSkills,
+    config.judge?.agent,
+  );
 
   const modelPolicy = config.model === undefined ? 'native-default' : 'agent-default';
   const defaultModel = config.model ?? NATIVE_DEFAULT_MODEL;
@@ -122,6 +127,7 @@ export function resolveConfig(config: ExperimentConfig): ResolvedExperimentConfi
     copyFiles: config.copyFiles ?? CONFIG_DEFAULTS.copyFiles,
     agentOptions: config.agentOptions,
     webResearch: config.webResearch,
+    disableBundledSkills: config.disableBundledSkills,
     brands: config.brands,
     onRunComplete: config.onRunComplete,
     judge: config.judge,

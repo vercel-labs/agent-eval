@@ -255,6 +255,34 @@ describe('results utilities', () => {
       expect(parsedTranscript).toHaveProperty('summary');
     });
 
+    it('stores opt-in runtime compatibility in summaries', () => {
+      const config: ResolvedExperimentConfig = {
+        agent: 'vercel-ai-gateway/codex',
+        model: 'openai/gpt-5.2-codex',
+        evals: ['eval-1'],
+        runs: 1,
+        earlyExit: true,
+        scripts: [],
+        timeout: 300,
+        webResearch: true,
+      };
+      const results = createExperimentResults(
+        config,
+        [createEvalSummary('eval-1', [{ result: { status: 'passed', duration: 1 } }])],
+        new Date('2024-01-26T12:00:00Z'),
+        new Date('2024-01-26T12:01:00Z')
+      );
+      const outputDir = saveResults(results, {
+        resultsDir: TEST_DIR,
+        experimentName: 'compatibility-experiment',
+      });
+      const summary = JSON.parse(
+        readFileSync(join(outputDir, 'eval-1', 'summary.json'), 'utf-8')
+      );
+
+      expect(summary.reuseCompatibilityFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    });
+
     it('saves observed model metadata for native-default runs', () => {
       const config: ResolvedExperimentConfig = {
         agent: 'vercel-ai-gateway/opencode',
@@ -486,6 +514,21 @@ describe('results utilities', () => {
       );
 
       const result = scanReusableResults(TEST_DIR, 'my-exp', { 'eval-1': 'new-hash' });
+      expect(result.size).toBe(0);
+    });
+
+    it('skips legacy results across an enforced runtime compatibility boundary', () => {
+      const expDir = join(TEST_DIR, 'my-exp', '2024-01-26T12-00-00.000Z', 'eval-1');
+      mkdirSync(expDir, { recursive: true });
+      writeFileSync(
+        join(expDir, 'summary.json'),
+        JSON.stringify({ totalRuns: 1, passedRuns: 1, passRate: '100%', fingerprint: 'abc123' })
+      );
+
+      const result = scanReusableResults(TEST_DIR, 'my-exp', { 'eval-1': 'abc123' }, {
+        enforceReuseCompatibility: true,
+        reuseCompatibilityFingerprint: 'runtime-v1',
+      });
       expect(result.size).toBe(0);
     });
 

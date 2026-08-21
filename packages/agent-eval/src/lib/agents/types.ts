@@ -40,11 +40,14 @@ export interface AgentRunOptions {
    *   comma-separated `--allowedTools` value. The flag is variadic, so the
    *   tools MUST be one comma-separated token — separate tokens swallow the
    *   trailing positional prompt (the #141 regression).
-   * - Codex: sets `tools.web_search = true` in the generated profile config.
+   * - Codex: enables live search in the generated profile and passes `--search`.
    * - OpenCode: sets `OPENCODE_ENABLE_EXA=1` and allows the
    *   `websearch`/`webfetch` tools.
    */
   webResearch?: boolean;
+  /** Disable vendor-bundled skills without hiding caller-installed skills.
+   * Default false: existing agent behavior is unchanged. */
+  disableBundledSkills?: boolean;
   /** Agent-specific options (e.g., binaryUrl, extraProviders for opencode) */
   agentOptions?: Record<string, unknown>;
   /** Pin the agentic LLM judge to a fixed agent+model. Undefined → the judge

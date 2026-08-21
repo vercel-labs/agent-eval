@@ -19,7 +19,7 @@
  * host. See the migration notes in the PR for the full rationale.
  */
 
-import type { ModelTier } from '../../types.js';
+import type { ModelTier, RunnableExperimentConfig } from '../../types.js';
 import type { AgentRunOptions } from '../types.js';
 
 /**
@@ -79,6 +79,9 @@ export interface AgentDefinition {
   o11yAgentName: string;
   /** Absolute path to this agent's run.mjs (resolved from the definition's import.meta.url). */
   runnerPath: string;
+  /** Whether the CLI can disable vendor-bundled skills, or has none to disable.
+   * Omitted means the opt-in control is unsupported. */
+  bundledSkillsControl?: 'configurable' | 'not-applicable';
 
   /**
    * Which host env var the apiKey is read from. Mirrors the old getApiKeyEnvVar()
@@ -112,6 +115,23 @@ export interface AgentDefinition {
    * JSON). Omit (or return undefined) for agents that don't need it.
    */
   runnerExtra?(options: AgentRunOptions): Record<string, unknown>;
+
+  /**
+   * OPTIONAL agent-owned protocol/version data that affects result reuse.
+   * Returned keys are hashed into both the combined result fingerprint and
+   * the non-carryable reuse compatibility fingerprint.
+   */
+  fingerprintExtra?(config: RunnableExperimentConfig): Record<string, unknown> | undefined;
+}
+
+/** Reject an opt-in capability when an agent cannot honor it. */
+export function assertBundledSkillsControl(
+  definition: AgentDefinition,
+  requested?: boolean,
+): void {
+  if (requested && !definition.bundledSkillsControl) {
+    throw new Error(`Agent ${definition.name} does not support disableBundledSkills`);
+  }
 }
 
 /**
@@ -130,6 +150,8 @@ export interface AgentRunInput {
   modelPolicy?: string;
   /** Web-research toggle (claude --allowedTools, opencode permissions/env). */
   webResearch?: boolean;
+  /** Opt-in vendor-bundled skill isolation. */
+  disableBundledSkills?: boolean;
   /** Passthrough of agentOptions (e.g. claude effort). Secrets must NOT be in here. */
   agentOptions?: Record<string, unknown>;
   /** Absolute sandbox cwd AFTER neutral-workspace relocation (transcript paths use it). */

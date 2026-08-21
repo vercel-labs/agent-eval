@@ -20,7 +20,12 @@ import { initProject, getPostInitInstructions } from './lib/init.js';
 import { getAgent } from './lib/agents/index.js';
 import { resolveAgentApiKey } from './lib/agents/shared.js';
 import { getSandboxBackendInfo } from './lib/sandbox.js';
-import { computeFingerprint, computeContentFingerprint, decideRefingerprint } from './lib/fingerprint.js';
+import {
+  computeFingerprint,
+  computeContentFingerprint,
+  computeReuseCompatibilityFingerprint,
+  decideRefingerprint,
+} from './lib/fingerprint.js';
 import { scanReusableResults } from './lib/results.js';
 import { isClassifierEnabled, classifyFailure } from './lib/classifier.js';
 import { housekeep } from './lib/housekeeping.js';
@@ -404,6 +409,7 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
             model,
             runs: options.smoke ? 1 : config.runs,
           };
+          const reuseCompatibilityFingerprint = computeReuseCompatibilityFingerprint(modelConfig);
 
           const selectedFixtures = fixtures.filter((f) => evalNames.includes(f.name));
           const fingerprints: Record<string, string> = {};
@@ -418,7 +424,10 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
           // Scan for reusable (fresh) results.
           let fixturesToRun = selectedFixtures;
           if (!options.force && !options.smoke) {
-            const reusable = scanReusableResults(resultsDir, experimentName, fingerprints);
+            const reusable = scanReusableResults(resultsDir, experimentName, fingerprints, {
+              enforceReuseCompatibility: true,
+              reuseCompatibilityFingerprint,
+            });
             if (reusable.size > 0) {
               fixturesToRun = selectedFixtures.filter((f) => !reusable.has(f.name));
             }
@@ -578,7 +587,10 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
           }
 
           // Determine final pass/fail for this experiment+model
-          const finalReusable = scanReusableResults(resultsDir, experimentName, fingerprints);
+          const finalReusable = scanReusableResults(resultsDir, experimentName, fingerprints, {
+            enforceReuseCompatibility: true,
+            reuseCompatibilityFingerprint,
+          });
           const experimentPassed = selectedFixtures.every((f) => {
             const r = finalReusable.get(f.name);
             return r != null && r.passRate !== '0%';
@@ -719,11 +731,13 @@ async function statusCommand(
         }
         const content = computeContentFingerprint(fx.path);
         const storedContent = summary.contentFingerprint as string | undefined;
+        const reuseCompatibilityFingerprint = computeReuseCompatibilityFingerprint(modelConfig as never);
+        const reuseCompatible = summary.reuseCompatibilityFingerprint === reuseCompatibilityFingerprint;
         // Content-based: a config-only change isn't work (refingerprint carries it).
         // Legacy results (no content hash) fall back to the combined fingerprint.
-        const fresh = storedContent !== undefined
+        const fresh = reuseCompatible && (storedContent !== undefined
           ? storedContent === content
-          : summary.fingerprint === computeFingerprint(fx.path, modelConfig as never);
+          : summary.fingerprint === computeFingerprint(fx.path, modelConfig as never));
         if (fresh) cached++;
         else {
           changedEvals.push(ev);
@@ -822,10 +836,15 @@ async function carryForwardConfigChanges(
           if (!existsSync(summaryPath) || !existsSync(evalPath)) continue;
           const summary = JSON.parse(readFileSync(summaryPath, 'utf-8'));
           const decision = decideRefingerprint(
-            { fingerprint: summary.fingerprint, contentFingerprint: summary.contentFingerprint },
+            {
+              fingerprint: summary.fingerprint,
+              contentFingerprint: summary.contentFingerprint,
+              reuseCompatibilityFingerprint: summary.reuseCompatibilityFingerprint,
+            },
             {
               fingerprint: computeFingerprint(evalPath, modelConfig as never),
               contentFingerprint: computeContentFingerprint(evalPath),
+              reuseCompatibilityFingerprint: computeReuseCompatibilityFingerprint(modelConfig as never),
             }
           );
           let changed = false;

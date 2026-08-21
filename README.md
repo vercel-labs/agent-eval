@@ -419,6 +419,30 @@ Results use `modelPolicy: 'native-default'`, `requestedModel` is omitted, and
 `observedModel` is populated when the agent CLI exposes the runtime model in its
 transcript or logs. Provide `model` to force a specific model.
 
+### Opt-in runtime controls
+
+Agent Eval preserves each agent CLI's normal behavior by default. Recommendation
+and controlled-treatment evals can opt into a narrower runtime:
+
+```typescript
+const config: ExperimentConfig = {
+  agent: 'vercel-ai-gateway/claude-code',
+  disableBundledSkills: true,
+  webResearch: true,
+};
+```
+
+`disableBundledSkills` disables skills shipped by Claude Code or Codex while
+leaving caller-installed project and user skills available. OpenCode does not
+ship a bundled skill catalog, so this option does not change its runtime. The
+option is omitted by default, preserving existing arguments and agent behavior.
+Other built-in agents reject this option until they expose an equivalent control.
+
+`webResearch` remains opt-in. It allows Claude Code's `WebSearch`/`WebFetch`,
+enables Codex live search (including custom AI Gateway providers), and enables
+OpenCode's Exa-backed `websearch`/`webfetch` tools. Whether an agent chooses to
+use an available research tool remains part of the measured behavior.
+
 ### OpenCode model format
 
 OpenCode uses Vercel AI Gateway exclusively. The OpenCode CLI reads models as
@@ -604,7 +628,7 @@ Files are saved to `results/<experiment>/<timestamp>/<eval>/run-N/project/`. The
 
 ## Result Reuse
 
-The framework computes a SHA-256 fingerprint for each (eval, config) pair. The fingerprint covers all eval directory files and the config fields that affect results: `agent`, `model`, `scripts`, `timeout`, `earlyExit`, and `runs`.
+The framework computes a SHA-256 fingerprint for each (eval, config) pair. The fingerprint covers all eval directory files and result-affecting config including `agent`, `model`, `scripts`, `timeout`, `earlyExit`, `runs`, `webResearch`, `disableBundledSkills`, and a pinned `judge`.
 
 On subsequent runs, evals with a matching fingerprint and a valid cached result (at least one passing run) are skipped automatically. This means:
 
@@ -627,7 +651,7 @@ agent-eval refingerprint            # all experiments
 agent-eval refingerprint cc --dry   # preview one experiment
 ```
 
-For each cached result it compares the eval's current `contentFingerprint` to the stored one: if the content is unchanged it re-stamps the combined fingerprint (the result stays cached); if the content **changed** it leaves the result stale so it re-runs. `agent-eval status` already classifies by eval *content*, so it never reports a config-only change as work — run `refingerprint` after editing an experiment config to carry that change into the cache (`run` does this automatically).
+For each cached result it compares the eval's current `contentFingerprint` to the stored one: if the content is unchanged it re-stamps the combined fingerprint (the result stays cached); if the content **changed** it leaves the result stale so it re-runs. Opt-in runtime changes such as web research and bundled-skill isolation also store a `reuseCompatibilityFingerprint`; those boundaries are never carried forward. `agent-eval status` reports content or runtime-compatibility changes as work, while benign config-only edits stay cached. Run `refingerprint` after a benign experiment config edit to carry that change into the cache (`run` does this automatically).
 
 ### After changing or syncing evals: status → pick what to run
 

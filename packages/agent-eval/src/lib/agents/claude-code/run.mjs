@@ -35,11 +35,16 @@ import { fileURLToPath } from 'node:url';
  * `--dangerously-skip-permissions` is always emitted and terminates the variadic
  * capture before the trailing positional prompt (the #141 regression).
  *
- * @param {{prompt:string, model?:string, webResearch?:boolean, agentOptions?:Record<string,unknown>}} input
+ * @param {{prompt:string, model?:string, webResearch?:boolean, disableBundledSkills?:boolean, agentOptions?:Record<string,unknown>}} input
  * @returns {string[]}
  */
 export function buildClaudeCodeCliArgs(input) {
   const cliArgs = ['--print'];
+  if (input.disableBundledSkills) {
+    // CLI-scoped settings override only this run and preserve explicitly
+    // installed project/user skills; --bare would hide treatment skills too.
+    cliArgs.push('--settings', JSON.stringify({ disableBundledSkills: true }));
+  }
   if (input.webResearch) {
     cliArgs.push('--allowedTools', 'WebSearch,WebFetch');
   }
