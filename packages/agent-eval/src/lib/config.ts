@@ -10,7 +10,7 @@ import type {
   EvalFilter,
 } from './types.js';
 import { NATIVE_DEFAULT_MODEL } from './types.js';
-import { assertRunBundledSkillsControl } from './agents/index.js';
+import { assertRunRuntimeControls } from './agents/index.js';
 
 /**
  * Default configuration values.
@@ -102,9 +102,12 @@ export function validateConfig(config: unknown): ExperimentConfig {
  */
 export function resolveConfig(config: ExperimentConfig): ResolvedExperimentConfig {
   // Validate agent exists
-  assertRunBundledSkillsControl(
+  assertRunRuntimeControls(
     config.agent,
-    config.disableBundledSkills,
+    {
+      disableBundledSkills: config.disableBundledSkills,
+      webResearch: config.webResearch,
+    },
     config.judge?.agent,
   );
 

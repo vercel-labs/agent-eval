@@ -82,6 +82,10 @@ export interface AgentDefinition {
   /** Whether the CLI can disable vendor-bundled skills, or has none to disable.
    * Omitted means the opt-in control is unsupported. */
   bundledSkillsControl?: 'configurable' | 'not-applicable';
+  /** Whether this adapter currently supports only research-enabled runs. */
+  requiresWebResearch?: boolean;
+  /** Whether another agent may select this adapter as its pinned judge. */
+  supportsCrossAgentJudge?: boolean;
 
   /**
    * Which host env var the apiKey is read from. Mirrors the old getApiKeyEnvVar()
@@ -131,6 +135,23 @@ export function assertBundledSkillsControl(
 ): void {
   if (requested && !definition.bundledSkillsControl) {
     throw new Error(`Agent ${definition.name} does not support disableBundledSkills`);
+  }
+}
+
+/** Reject a run when an adapter requires the research tool surface. */
+export function assertWebResearchControl(
+  definition: AgentDefinition,
+  requested?: boolean,
+): void {
+  if (definition.requiresWebResearch && !requested) {
+    throw new Error(`Agent ${definition.name} requires webResearch: true`);
+  }
+}
+
+/** Reject an adapter that cannot serve as another agent's pinned judge. */
+export function assertCrossAgentJudgeSupport(definition: AgentDefinition): void {
+  if (definition.supportsCrossAgentJudge === false) {
+    throw new Error(`Agent ${definition.name} does not support cross-agent judging`);
   }
 }
 

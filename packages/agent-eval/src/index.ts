@@ -146,4 +146,5 @@ export {
   parseClaudeCodeTranscript,
   parseCodexTranscript,
   parseOpenCodeTranscript,
+  parseFxTranscript,
 } from './lib/o11y/index.js';

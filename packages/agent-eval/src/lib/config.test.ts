@@ -206,6 +206,30 @@ describe('resolveConfig', () => {
     ).toThrow('Agent gemini does not support disableBundledSkills');
   });
 
+  it('requires research mode for fx', () => {
+    expect(() => resolveConfig({ agent: 'vercel-ai-gateway/fx' })).toThrow(
+      'Agent vercel-ai-gateway/fx requires webResearch: true'
+    );
+    expect(
+      resolveConfig({
+        agent: 'vercel-ai-gateway/fx',
+        webResearch: true,
+        disableBundledSkills: true,
+      }).agent
+    ).toBe('vercel-ai-gateway/fx');
+  });
+
+  it('does not allow fx as a cross-agent judge', () => {
+    const config = {
+      agent: 'vercel-ai-gateway/claude-code' as const,
+      judge: { agent: 'vercel-ai-gateway/fx' as const, model: 'openai/gpt-5.6-sol' },
+      webResearch: true,
+    };
+    expect(() => resolveConfig(config)).toThrow(
+      'Agent vercel-ai-gateway/fx does not support cross-agent judging'
+    );
+  });
+
   it('passes judge through and leaves it undefined by default', () => {
     expect(resolveConfig({ agent: 'claude-code' as const }).judge).toBeUndefined();
     expect(

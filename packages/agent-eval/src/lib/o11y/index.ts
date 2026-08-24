@@ -22,5 +22,6 @@ export type { ParseableAgent } from './parsers/index.js';
 export { parseClaudeCodeTranscript } from './parsers/claude-code.js';
 export { parseCodexTranscript } from './parsers/codex.js';
 export { parseOpenCodeTranscript } from './parsers/opencode.js';
+export { parseFxTranscript } from './parsers/fx.js';
 export { parseGeminiTranscript } from './parsers/gemini.js';
 export { parseCursorTranscript } from './parsers/cursor.js';

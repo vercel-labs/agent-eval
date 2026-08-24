@@ -326,6 +326,7 @@ export default config;
 agent: 'vercel-ai-gateway/claude-code'  // Claude Code via AI Gateway
 agent: 'vercel-ai-gateway/codex'        // OpenAI Codex via AI Gateway
 agent: 'vercel-ai-gateway/opencode'     // OpenCode via AI Gateway
+agent: 'vercel-ai-gateway/fx'           // fx via AI Gateway (research runs)
 
 // Direct API (uses provider keys directly)
 agent: 'claude-code'  // requires ANTHROPIC_API_KEY
@@ -433,15 +434,44 @@ const config: ExperimentConfig = {
 ```
 
 `disableBundledSkills` disables skills shipped by Claude Code or Codex while
-leaving caller-installed project and user skills available. OpenCode does not
-ship a bundled skill catalog, so this option does not change its runtime. The
-option is omitted by default, preserving existing arguments and agent behavior.
-Other built-in agents reject this option until they expose an equivalent control.
+leaving caller-installed project and user skills available. OpenCode and fx do
+not ship bundled skill catalogs, so this option does not change their runtimes.
+The option is omitted by default, preserving existing arguments and agent
+behavior. Other built-in agents reject this option until they expose an
+equivalent control.
 
 `webResearch` remains opt-in. It allows Claude Code's `WebSearch`/`WebFetch`,
 enables Codex live search (including custom AI Gateway providers), and enables
 OpenCode's Exa-backed `websearch`/`webfetch` tools. Whether an agent chooses to
 use an available research tool remains part of the measured behavior.
+
+The fx adapter currently requires `webResearch: true`. fx does not yet expose a
+prompt-free way to disable every web tool while retaining unrestricted coding
+tools, so Agent Eval rejects non-research fx runs instead of silently changing
+the treatment.
+
+### Run research evals with fx
+
+fx runs through Vercel AI Gateway and uses its native `web_search` and
+`web_fetch` tools. Agent Eval pins fx `0.0.5`, verifies the downloaded Linux
+binary checksum, and captures the supported saved-session JSON transcript.
+
+```typescript
+import type { ExperimentConfig } from '@vercel/agent-eval';
+
+const config: ExperimentConfig = {
+  agent: 'vercel-ai-gateway/fx',
+  webResearch: true,
+  disableBundledSkills: true,
+};
+
+export default config;
+```
+
+The fx adapter supports Linux x86-64 and arm64 sandboxes. Agent Eval disables
+fx permission prompts inside the disposable sandbox, matching the execution
+model used by the other built-in coding agents. fx can self-grade its own runs,
+but it cannot serve as a pinned judge for a different agent.
 
 ### OpenCode model format
 
@@ -726,7 +756,9 @@ Every run requires an API key for the agent and a token for the sandbox. Classif
 
 The **classifier is optional**: if neither `AI_GATEWAY_API_KEY` nor `VERCEL_OIDC_TOKEN` is set, failure classification is skipped and all results are preserved as-is. Set either key to enable the classifier, which automatically identifies and removes non-model failures (infrastructure errors, rate limits, timeouts).
 
-OpenCode only supports Vercel AI Gateway (`vercel-ai-gateway/opencode`). There is no direct API option for OpenCode.
+OpenCode and fx only support Vercel AI Gateway
+(`vercel-ai-gateway/opencode` and `vercel-ai-gateway/fx`). There are no direct
+API variants for these agents.
 
 ### Setup
 
