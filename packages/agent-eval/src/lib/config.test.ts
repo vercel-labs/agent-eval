@@ -220,11 +220,11 @@ describe('resolveConfig', () => {
   });
 
   it('does not allow fx as a cross-agent judge', () => {
-    const config = {
-      agent: 'vercel-ai-gateway/claude-code' as const,
-      judge: { agent: 'vercel-ai-gateway/fx' as const, model: 'openai/gpt-5.6-sol' },
+    const config = validateConfig({
+      agent: 'vercel-ai-gateway/claude-code',
+      judge: { agent: 'vercel-ai-gateway/fx', model: 'openai/gpt-5.6-sol' },
       webResearch: true,
-    };
+    });
     expect(() => resolveConfig(config)).toThrow(
       'Agent vercel-ai-gateway/fx does not support cross-agent judging'
     );

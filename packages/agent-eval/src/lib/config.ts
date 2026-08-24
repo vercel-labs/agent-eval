@@ -71,6 +71,7 @@ const experimentConfigSchema = z.object({
           'vercel-ai-gateway/codex',
           'codex',
           'vercel-ai-gateway/opencode',
+          'vercel-ai-gateway/fx',
           'gemini',
           'cursor',
         ])
