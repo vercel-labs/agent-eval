@@ -1,5 +1,11 @@
 # @vercel/agent-eval
 
+## 2.2.0
+
+### Minor Changes
+
+- [#193](https://github.com/vercel-labs/agent-eval/pull/193) [`5d7aef2`](https://github.com/vercel-labs/agent-eval/commit/5d7aef26a7215b7c3862a9235c97cb3a3033c488) Thanks [@molebox](https://github.com/molebox)! - Add a Vercel AI Gateway adapter for research evals with fx, including a pinned binary installer and saved-session transcript parser.
+
 ## 2.1.0
 
 ### Minor Changes
