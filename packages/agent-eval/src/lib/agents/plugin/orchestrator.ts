@@ -42,6 +42,8 @@ import { redactRunResult } from '../redact.js';
 import { getAgent } from '../registry.js';
 import {
   assertBundledSkillsControl,
+  assertCrossAgentJudgeSupport,
+  assertWebResearchControl,
   type AgentDefinition,
   type AgentRunInput,
   type RunnerResult,
@@ -107,6 +109,7 @@ interface JudgeRuntime {
 export function resolveJudgeRuntime(def: AgentDefinition, options: AgentRunOptions): JudgeRuntime {
   const spec = options.judge;
   assertBundledSkillsControl(def, options.disableBundledSkills);
+  assertWebResearchControl(def, options.webResearch);
 
   // Same harness as codegen (default, or judge.agent omitted/equal): reuse run.mjs,
   // just pin the model when asked. Identical to pre-feature behavior when unset.
@@ -130,6 +133,7 @@ export function resolveJudgeRuntime(def: AgentDefinition, options: AgentRunOptio
   // Pinned to a DIFFERENT agent — resolve its definition + key + runner.
   const judgeDef = getAgent(spec.agent!).definition;
   assertBundledSkillsControl(judgeDef, options.disableBundledSkills);
+  assertCrossAgentJudgeSupport(judgeDef);
   const judgeApiKey = resolveAgentApiKey(judgeDef.getApiKeyEnvVar) ?? '';
   const judgeOptions: AgentRunOptions = { ...options, model: spec.model, apiKey: judgeApiKey };
   return {
@@ -250,6 +254,8 @@ export async function runWithDefinition(
   fixturePath: string,
   options: AgentRunOptions
 ): Promise<AgentRunResult> {
+  assertBundledSkillsControl(def, options.disableBundledSkills);
+  assertWebResearchControl(def, options.webResearch);
   const result = await runOnce(def, fixturePath, options);
 
   // A judge pinned to a different agent authenticates with its own key, and it can

@@ -14,6 +14,7 @@ import type {
 import { parseClaudeCodeTranscript } from './claude-code.js';
 import { parseCodexTranscript } from './codex.js';
 import { parseOpenCodeTranscript } from './opencode.js';
+import { parseFxTranscript } from './fx.js';
 import { parseGeminiTranscript } from './gemini.js';
 import { parseCursorTranscript } from './cursor.js';
 
@@ -26,6 +27,7 @@ export type ParseableAgent =
   | 'vercel-ai-gateway/codex'
   | 'codex'
   | 'vercel-ai-gateway/opencode'
+  | 'vercel-ai-gateway/fx'
   | 'gemini'
   | 'cursor';
 
@@ -36,6 +38,7 @@ const AGENT_PARSERS = {
   'claude-code': parseClaudeCodeTranscript,
   'codex': parseCodexTranscript,
   'opencode': parseOpenCodeTranscript,
+  'fx': parseFxTranscript,
   'gemini': parseGeminiTranscript,
   'cursor': parseCursorTranscript,
 } as const;
@@ -52,7 +55,11 @@ export const SUPPORTED_AGENTS = Object.keys(AGENT_PARSERS) as Array<keyof typeof
 function getParserForAgent(
   agent: string
 ): ((raw: string) => { events: TranscriptEvent[]; errors: string[] }) | null {
+  const terminalName = agent.slice(agent.lastIndexOf('/') + 1);
+  if (terminalName === 'fx') return AGENT_PARSERS.fx;
+
   for (const key of SUPPORTED_AGENTS) {
+    if (key === 'fx') continue;
     if (agent.includes(key)) {
       return AGENT_PARSERS[key];
     }

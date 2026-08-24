@@ -8,6 +8,7 @@ import type { Transcript } from './types.js';
 import { parseClaudeCodeTranscript } from './parsers/claude-code.js';
 import { parseCodexTranscript } from './parsers/codex.js';
 import { parseOpenCodeTranscript } from './parsers/opencode.js';
+import { parseFxTranscript } from './parsers/fx.js';
 import { parseGeminiTranscript } from './parsers/gemini.js';
 import { parseCursorTranscript } from './parsers/cursor.js';
 
@@ -33,6 +34,9 @@ describe('o11y', () => {
       const opencodeResult = parseTranscript(claudeTranscript, 'vercel-ai-gateway/opencode');
       expect(opencodeResult.agent).toBe('vercel-ai-gateway/opencode');
 
+      const fxResult = parseTranscript(claudeTranscript, 'vercel-ai-gateway/fx');
+      expect(fxResult.agent).toBe('vercel-ai-gateway/fx');
+
       const geminiResult = parseTranscript(claudeTranscript, 'gemini');
       expect(geminiResult.agent).toBe('gemini');
 
@@ -47,10 +51,16 @@ describe('o11y', () => {
 
       expect(result.parseSuccess).toBe(false);
       expect(result.parseErrors).toContain(
-        'No parser available for agent: unsupported-agent. Supported agents: claude-code, codex, opencode, gemini, cursor'
+        'No parser available for agent: unsupported-agent. Supported agents: claude-code, codex, opencode, fx, gemini, cursor'
       );
       expect(result.events).toEqual([]);
       expect(result.summary.totalToolCalls).toBe(0);
+    });
+
+    it('does not route custom agent names containing fx to the fx parser', () => {
+      const result = parseTranscript('{}', 'vfx-agent');
+      expect(result.parseSuccess).toBe(false);
+      expect(result.parseErrors?.[0]).toContain('No parser available for agent: vfx-agent');
     });
 
     it('includes model in result', () => {
@@ -271,6 +281,142 @@ describe('o11y', () => {
       expect(events).toHaveLength(1);
       expect(events[0].type).toBe('tool_call');
       expect(events[0].tool?.name).toBe('file_read');
+    });
+  });
+
+  describe('fx parser', () => {
+    it('parses saved messages, terminal commands, and web fetches', () => {
+      const transcript = JSON.stringify({
+        kind: 'session_detail',
+        id: 'session-1',
+        created_at_ms: 1787000000000,
+        updated_at_ms: 1787000005000,
+        history: [
+          {
+            kind: 'assistant',
+            user: { text: 'Research fx', images: [] },
+            assistant: 'The official site is https://fx.sh/.',
+            execution: {
+              schema_version: 2,
+              tool_steps: [
+                {
+                  assistant: null,
+                  tool_calls: [
+                    {
+                      id: 'terminal-1',
+                      name: 'terminal',
+                      arguments_json: JSON.stringify({
+                        request: { action: 'exec', command: 'npm test' },
+                      }),
+                      provider_result: null,
+                    },
+                    {
+                      id: 'fetch-1',
+                      name: 'web_fetch',
+                      arguments_json: JSON.stringify({ url: 'https://fx.sh/docs' }),
+                      provider_result: null,
+                    },
+                  ],
+                  tool_results: [
+                    {
+                      tool_call_id: 'terminal-1',
+                      tool_name: 'terminal',
+                      status: 'success',
+                      output: 'exit_code=0\nTests passed',
+                      created_at_ms: 1787000001000,
+                    },
+                    {
+                      tool_call_id: 'fetch-1',
+                      tool_name: 'web_fetch',
+                      status: 'success',
+                      output: '<url>https://fx.sh/docs</url>\n<status>200</status>',
+                      created_at_ms: 1787000002000,
+                    },
+                  ],
+                },
+              ],
+              files: [],
+            },
+          },
+        ],
+      });
+
+      const parsed = parseTranscript(transcript, 'vercel-ai-gateway/fx');
+      expect(parsed.parseSuccess).toBe(true);
+      expect(parsed.summary.totalTurns).toBe(1);
+      expect(parsed.summary.toolCalls.shell).toBe(1);
+      expect(parsed.summary.toolCalls.web_fetch).toBe(1);
+      expect(parsed.summary.shellCommands).toEqual([
+        { command: 'npm test', exitCode: 0, success: true },
+      ]);
+      expect(parsed.summary.webFetches).toEqual([
+        { url: 'https://fx.sh/docs', success: true },
+      ]);
+      expect(parsed.events.at(-1)?.content).toBe('The official site is https://fx.sh/.');
+    });
+
+    it('uses file evidence when a tool argument has no path', () => {
+      const transcript = JSON.stringify({
+        kind: 'session_detail',
+        history: [
+          {
+            kind: 'assistant',
+            user: { text: 'Read the config', images: [] },
+            assistant: 'Done',
+            execution: {
+              schema_version: 2,
+              tool_steps: [
+                {
+                  assistant: null,
+                  tool_calls: [
+                    { id: 'read-1', name: 'read_file', arguments_json: '{}' },
+                  ],
+                  tool_results: [],
+                },
+              ],
+              files: [
+                {
+                  path: 'src/config.ts',
+                  new_path: null,
+                  tool_call_id: 'read-1',
+                  tool_name: 'read_file',
+                  action: 'read',
+                  status: 'success',
+                },
+              ],
+            },
+          },
+        ],
+      });
+
+      const parsed = parseTranscript(transcript, 'fx');
+      expect(parsed.summary.filesRead).toEqual(['src/config.ts']);
+    });
+
+    it('parses the ask JSON fallback when session capture is unavailable', () => {
+      const transcript = JSON.stringify({
+        output: 'Found https://fx.sh/.',
+        exit_code: 0,
+        model: 'openai/gpt-5.6-sol',
+        session_id: '',
+        steps: 1,
+        tool_calls: [
+          {
+            name: 'web_fetch',
+            status: 'success',
+            web_fetch: { url: 'https://fx.sh/', status: 200 },
+          },
+        ],
+      });
+
+      const { events, errors } = parseFxTranscript(transcript);
+      expect(errors).toEqual([]);
+      expect(events.some((event) => event.type === 'message' && event.content === 'Found https://fx.sh/.')).toBe(true);
+      expect(events.find((event) => event.type === 'tool_call')?.tool?.args?._extractedUrl).toBe('https://fx.sh/');
+    });
+
+    it('reports malformed transcript JSON', () => {
+      expect(parseFxTranscript('not json').errors[0]).toContain('Failed to parse fx transcript');
     });
   });
 

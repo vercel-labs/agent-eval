@@ -14,7 +14,7 @@ import type {
   RunnableExperimentConfig,
   ProgressEvent,
 } from './types.js';
-import { assertRunBundledSkillsControl, getAgent } from './agents/index.js';
+import { assertRunRuntimeControls, getAgent } from './agents/index.js';
 import {
   agentResultToEvalRunData,
   createEvalSummary,
@@ -126,9 +126,12 @@ export async function runExperiment(
   const { config, fixtures, apiKey, resultsDir, experimentName, fingerprints, contentFingerprints, onProgress, smoke, rateLimiter } = options;
   const startedAt = new Date();
 
-  assertRunBundledSkillsControl(
+  assertRunRuntimeControls(
     config.agent,
-    config.disableBundledSkills,
+    {
+      disableBundledSkills: config.disableBundledSkills,
+      webResearch: config.webResearch,
+    },
     config.judge?.agent,
   );
 
@@ -404,9 +407,12 @@ export async function runSingleEval<T extends ResolvedExperimentConfig['model']>
   }
 ): Promise<T extends Array<unknown> ? EvalRunData[] : EvalRunData> {
   const agentName = options.agent ?? 'vercel-ai-gateway/claude-code';
-  assertRunBundledSkillsControl(
+  assertRunRuntimeControls(
     agentName,
-    options.disableBundledSkills,
+    {
+      disableBundledSkills: options.disableBundledSkills,
+      webResearch: options.webResearch,
+    },
     options.judge?.agent,
   );
   const agent = getAgent(agentName);

@@ -50,6 +50,7 @@ const hasGeminiCredentials = !!process.env.GEMINI_API_KEY && hasSandbox;
 const hasCursorCredentials = !!process.env.CURSOR_API_KEY && hasSandbox;
 // OpenCode credentials (only supports AI Gateway)
 const hasOpenCodeCredentials = hasAiGatewayCredentials;
+const hasFxCredentials = hasAiGatewayCredentials;
 
 describe.skipIf(!process.env.INTEGRATION_TEST)('integration tests', () => {
   beforeAll(() => {
@@ -1372,6 +1373,46 @@ test('contains greeting', () => {
         }
       }
     }, 300000); // 5 minute timeout
+  });
+
+  describe.skipIf(!hasFxCredentials)('fx (Vercel AI Gateway) sandbox execution', () => {
+    it('runs a research eval and captures the saved session transcript', async () => {
+      const fixtureDir = join(TEST_DIR, 'fx-web-research');
+      mkdirSync(fixtureDir, { recursive: true });
+      writeFileSync(
+        join(fixtureDir, 'PROMPT.md'),
+        'Use web search to find the official fx website. Return one source URL.'
+      );
+      writeFileSync(
+        join(fixtureDir, 'package.json'),
+        JSON.stringify({ name: 'fx-web-research', type: 'module' })
+      );
+
+      const fixture = loadFixture(TEST_DIR, 'fx-web-research', {
+        validation: 'none',
+      });
+      const result = await runSingleEval(fixture, {
+        agent: 'vercel-ai-gateway/fx',
+        model: 'openai/gpt-5.6-sol',
+        timeout: 180,
+        apiKey: process.env.AI_GATEWAY_API_KEY!,
+        scripts: [],
+        validation: 'none',
+        webResearch: true,
+        disableBundledSkills: true,
+      });
+
+      if (result.result.status === 'failed') {
+        console.error('fx web research failed:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
+      expect(result.transcript).toBeDefined();
+      const parsed = parseTranscript(result.transcript!, 'vercel-ai-gateway/fx');
+      expect(parsed.parseSuccess).toBe(true);
+      expect(parsed.summary.toolCalls.web_search).toBeGreaterThan(0);
+      expect(result.transcript).toMatch(/https?:\/\//);
+      expect(result.result.observedModel).toBe('openai/gpt-5.6-sol');
+    }, 300000);
   });
 
   // ============================================================================

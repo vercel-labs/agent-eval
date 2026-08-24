@@ -43,6 +43,7 @@ export interface AgentRunOptions {
    * - Codex: enables live search in the generated profile and passes `--search`.
    * - OpenCode: sets `OPENCODE_ENABLE_EXA=1` and allows the
    *   `websearch`/`webfetch` tools.
+   * - fx: required for this adapter; runs the native research tool surface.
    */
   webResearch?: boolean;
   /** Disable vendor-bundled skills without hiding caller-installed skills.
