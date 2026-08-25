@@ -93,6 +93,50 @@ async function detectEvalFile(sandbox: AnySandbox): Promise<string> {
 }
 
 /**
+ * Version installed when the workspace has no vitest of its own. Only a floor:
+ * anything recent satisfies the generated config, which uses nothing but
+ * `defineConfig`.
+ */
+export const FALLBACK_VITEST_VERSION = '^3';
+
+/**
+ * Guarantee the validation runner is resolvable from the workspace.
+ *
+ * Validation shells out to `npx vitest`, and the generated vitest.config.ts
+ * imports `vitest/config`, which Node resolves from the workspace. Fixtures
+ * normally supply vitest as a devDependency, but package.json belongs to the agent
+ * for the length of the run. An agent scaffolding into an empty directory often
+ * replaces that file outright rather than editing it, and its next `npm install`
+ * prunes vitest. npx then downloads vitest into its own cache, which does not
+ * satisfy the config's import, and the run dies at startup with "Cannot find
+ * module 'vitest/config'".
+ *
+ * That failure is indistinguishable from a bad result: the eval never executes, so
+ * the harness records a red for work it never graded. Installing vitest when it is
+ * missing keeps a fixture gradeable no matter what the agent did to the manifest.
+ *
+ * Nothing about this repair may show up as the agent's work: it runs before the
+ * git diff is captured, so `--no-save` keeps it out of package.json and
+ * `--no-package-lock` keeps it out of the lockfile, which is not gitignored and
+ * would otherwise be recorded as a file the agent wrote.
+ */
+export async function ensureValidationRunner(sandbox: AnySandbox): Promise<void> {
+  const present = await sandbox.runShell('test -e node_modules/vitest/package.json');
+  if (present.exitCode === 0) {
+    return;
+  }
+
+  await sandbox.runCommand('npm', [
+    'install',
+    '--no-save',
+    '--no-package-lock',
+    '--no-audit',
+    '--no-fund',
+    `vitest@${FALLBACK_VITEST_VERSION}`,
+  ]);
+}
+
+/**
  * Run validation scripts in the sandbox.
  */
 export async function runValidation(
@@ -112,6 +156,9 @@ export async function runValidation(
   if (validation === 'vitest') {
     // Detect which eval file exists (EVAL.ts or EVAL.tsx)
     const evalFile = await detectEvalFile(sandbox);
+
+    // The agent may have removed vitest from the project; put it back first.
+    await ensureValidationRunner(sandbox);
 
     // Always run vitest for the eval file (explicitly specify the file)
     const testResult = await sandbox.runCommand('npx', ['vitest', 'run', evalFile], env ? { env } : undefined);

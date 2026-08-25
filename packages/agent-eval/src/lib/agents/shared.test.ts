@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { prepareNeutralWorkspace } from './shared.js';
+import {
+  ensureValidationRunner,
+  FALLBACK_VITEST_VERSION,
+  prepareNeutralWorkspace,
+  runValidation,
+} from './shared.js';
 
 describe('prepareNeutralWorkspace', () => {
   it('copies Vercel sandboxes into /workspace and switches the working directory', async () => {
@@ -35,5 +40,59 @@ describe('prepareNeutralWorkspace', () => {
       cwd: '/home/sandbox/workspace',
       env: { USER: 'user', LOGNAME: 'user' },
     });
+  });
+});
+
+describe('ensureValidationRunner', () => {
+  const sandboxWith = (present: boolean) => ({
+    runShell: vi.fn(async () => ({ stdout: '', stderr: '', exitCode: present ? 0 : 1 })),
+    runCommand: vi.fn(async () => ({ stdout: '', stderr: '', exitCode: 0 })),
+  });
+
+  it('leaves a workspace that already has vitest alone', async () => {
+    const sandbox = sandboxWith(true);
+
+    await ensureValidationRunner(sandbox as never);
+
+    expect(sandbox.runShell).toHaveBeenCalledWith('test -e node_modules/vitest/package.json');
+    expect(sandbox.runCommand).not.toHaveBeenCalled();
+  });
+
+  it('reinstalls vitest when the agent removed it, leaving manifest and lockfile alone', async () => {
+    const sandbox = sandboxWith(false);
+
+    await ensureValidationRunner(sandbox as never);
+
+    expect(sandbox.runCommand).toHaveBeenCalledWith('npm', [
+      'install',
+      '--no-save',
+      '--no-package-lock',
+      '--no-audit',
+      '--no-fund',
+      `vitest@${FALLBACK_VITEST_VERSION}`,
+    ]);
+  });
+});
+
+describe('runValidation', () => {
+  it('restores the runner before invoking vitest', async () => {
+    const order: string[] = [];
+    const sandbox = {
+      runShell: vi.fn(async (cmd: string) => {
+        order.push(`shell:${cmd}`);
+        return { stdout: 'package.json\nEVAL.ts\n', stderr: '', exitCode: 1 };
+      }),
+      runCommand: vi.fn(async (cmd: string, args: string[]) => {
+        order.push(`${cmd} ${args.join(' ')}`);
+        return { stdout: '', stderr: '', exitCode: 0 };
+      }),
+    };
+
+    await runValidation(sandbox as never, []);
+
+    const install = order.findIndex((c) => c.startsWith('npm install --no-save'));
+    const run = order.findIndex((c) => c.startsWith('npx vitest run'));
+    expect(install).toBeGreaterThanOrEqual(0);
+    expect(run).toBeGreaterThan(install);
   });
 });
