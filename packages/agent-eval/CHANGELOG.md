@@ -1,5 +1,13 @@
 # @vercel/agent-eval
 
+## 2.2.1
+
+### Patch Changes
+
+- [#196](https://github.com/vercel-labs/agent-eval/pull/196) [`3cc55a7`](https://github.com/vercel-labs/agent-eval/commit/3cc55a77648ef3cd1b9c9b79c14bdeeca6217508) Thanks [@gaojude](https://github.com/gaojude)! - Judge matchers no longer block the vitest worker. `toSatisfyCriterion` and `toScoreAtLeast` ran the in-sandbox judge agent with `spawnSync`, freezing the worker's event loop for the length of a model run. The worker answers the main process over an RPC channel whose per-call timeout is hardcoded to 60 seconds (birpc's default — no vitest option or env var reaches it), so any judge slower than that made vitest emit an unhandled `[vitest-worker]: Timeout calling "onTaskUpdate"` and exit non-zero even when every assertion passed: a green eval recorded as a failure, and the slower the judge model, the more often. The judge now runs via async `spawn` and the matchers are async, so the event loop keeps servicing the RPC channel while the judge works. Judge calls must be awaited — `await expect(environment).toSatisfyCriterion(...)` — which is what every published example already shows.
+
+- [#195](https://github.com/vercel-labs/agent-eval/pull/195) [`2bcb34a`](https://github.com/vercel-labs/agent-eval/commit/2bcb34a79adaa3f48ce40ba541479e39faae41d8) Thanks [@gaojude](https://github.com/gaojude)! - Install vitest before validating when the agent removed it. Validation shells out to `npx vitest` and the generated `vitest.config.ts` imports `vitest/config`, resolved from the workspace — but package.json belongs to the agent for the length of a run. An agent scaffolding into an empty directory often replaces that file outright instead of editing it, its next `npm install` prunes vitest, and npx then downloads vitest into a cache that does not satisfy the config's import. The run dies at startup with `Cannot find package 'vitest'`, which is indistinguishable from a bad result: the eval never executes, yet the harness records a failure for work it never graded. `runValidation` now checks for `node_modules/vitest` first and installs it when missing, with `--no-save` and `--no-package-lock` so neither the manifest nor the lockfile enters the captured diff as if the agent had written it.
+
 ## 2.2.0
 
 ### Minor Changes
