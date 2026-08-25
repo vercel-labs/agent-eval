@@ -20,6 +20,17 @@ export default tseslint.config(
     },
   },
   {
+    // Hand-authored declaration files (e.g. eval-helper.d.mts) augment upstream
+    // interfaces — `declare module 'vitest'` must mirror Vitest's exact
+    // `Assertion<T = any>` signature for the merge to apply, so the `any` and the
+    // otherwise-unused type parameter are unavoidable, not accidental.
+    files: ['src/**/*.d.mts', 'src/**/*.d.ts'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-unused-vars': 'off',
+    },
+  },
+  {
     ignores: ['dist/**', 'node_modules/**'],
   },
 );

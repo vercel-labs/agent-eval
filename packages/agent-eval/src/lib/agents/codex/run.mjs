@@ -192,7 +192,7 @@ export function buildCodexLoginArgs() {
  * literal quotes exactly as the old shell string had them, and the prompt is a
  * plain argv element (no shell escaping needed).
  *
- * @param {{prompt:string, extra?:Record<string,unknown>}} input
+ * @param {{prompt:string, webResearch?:boolean, disableBundledSkills?:boolean, extra?:Record<string,unknown>}} input
  * @returns {string[]}
  */
 export function buildCodexExecArgs(input) {
@@ -201,7 +201,19 @@ export function buildCodexExecArgs(input) {
   const reasoningEffort = extra.reasoningEffort ?? null;
   const verbosity = extra.verbosity ?? null;
 
-  const args = ['exec', '--profile', 'default'];
+  const args = [];
+  if (input.webResearch || input.disableBundledSkills) {
+    // Opt-in capability controls must fail loudly on a CLI version that does
+    // not recognize their generated profile settings.
+    args.push('--strict-config');
+  }
+  if (input.webResearch) {
+    // Current Codex CLI flag; the generated profile also opts the custom
+    // Gateway provider into standalone live search. --search is a global
+    // option and must precede the exec subcommand.
+    args.push('--search');
+  }
+  args.push('exec', '--profile', 'default');
   if (cliModel) {
     args.push('--model', String(cliModel));
   }
@@ -280,6 +292,20 @@ export function buildShellCanaryPrompt(nonce) {
 }
 
 /**
+ * Build the canary input with the same capability flags as the real task.
+ *
+ * @param {import('../plugin/contract.js').AgentRunInput} input
+ * @param {string} nonce
+ * @returns {import('../plugin/contract.js').AgentRunInput}
+ */
+export function buildShellCanaryInput(input, nonce) {
+  return {
+    ...input,
+    prompt: buildShellCanaryPrompt(nonce),
+  };
+}
+
+/**
  * True iff the codex --json stdout proves the shell ran: a completed
  * `command_execution` item with exit_code 0 whose command or aggregated_output
  * contains the nonce. Agent messages containing the nonce do NOT count — a
@@ -339,7 +365,7 @@ export function buildModelRepairToml(observedModel) {
  * @returns {{confirmed: boolean, stdout: string, output: string}}
  */
 function runShellCanary(input, nonce) {
-  const res = spawnSync('codex', buildCodexExecArgs({ prompt: buildShellCanaryPrompt(nonce), extra: input.extra }), {
+  const res = spawnSync('codex', buildCodexExecArgs(buildShellCanaryInput(input, nonce)), {
     cwd: input.cwd,
     env: process.env,
     encoding: 'utf8',
@@ -529,12 +555,14 @@ export async function runAgent(input) {
   const agentExitCode = res.status == null ? -1 : res.status;
 
   // Capture transcript + observed model regardless of success (the old adapter did
-  // this even on the non-zero-exit path). The inline --json on stdout is the
-  // transcript; observedModel comes from the saved session file under ~/.codex.
-  const transcript = extractTranscriptFromOutput(output) ?? null;
+  // this even on the non-zero-exit path). Prefer the inline --json stdout, but
+  // fall back to the saved session file under ~/.codex; newer Codex builds may
+  // write the session transcript there without echoing the full JSONL to stdout.
+  const stdoutTranscript = extractTranscriptFromOutput(output);
   const threadId = extractCodexThreadId(output);
   const sessionTranscript = captureCodexSessionTranscript(threadId);
-  const observedModel = extractObservedModelFromCodexSession(sessionTranscript) ?? null;
+  const transcript = stdoutTranscript ?? sessionTranscript ?? null;
+  const observedModel = extractObservedModelFromCodexSession(sessionTranscript ?? stdoutTranscript) ?? null;
 
   if (res.error || agentExitCode !== 0) {
     // Mirror the old error string: last 5 lines of output, else a coded fallback.

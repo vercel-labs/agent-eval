@@ -237,8 +237,8 @@ export async function initGitAndCommit(sandbox: AnySandbox): Promise<void> {
  */
 export async function captureGeneratedFiles(
   sandbox: AnySandbox
-): Promise<{ generatedFiles: Record<string, string>; deletedFiles: string[] }> {
-  const generatedFiles: Record<string, string> = {};
+): Promise<{ generatedFiles: Record<string, Buffer>; deletedFiles: string[] }> {
+  const generatedFiles: Record<string, Buffer> = {};
   const deletedFiles: string[] = [];
 
   try {
@@ -260,7 +260,11 @@ export async function captureGeneratedFiles(
         deletedFiles.push(filePath);
       } else {
         try {
-          const content = await sandbox.readFile(filePath);
+          // Bytes, not a string: `readFile` decodes stdout as UTF-8 and would
+          // replace every non-UTF-8 byte with U+FFFD, corrupting every binary
+          // file in the agent's diff. Text is unaffected — results.ts writes
+          // the buffer straight back to disk.
+          const content = await sandbox.readFileBuffer(filePath);
           generatedFiles[filePath] = content;
         } catch {
           // Skip unreadable files

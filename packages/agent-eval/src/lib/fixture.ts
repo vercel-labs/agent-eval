@@ -2,8 +2,8 @@
  * Eval fixture discovery and validation.
  */
 
-import { readFileSync, readdirSync, statSync, existsSync } from 'fs';
-import { join, resolve } from 'path';
+import { readFileSync, readdirSync, statSync, existsSync, mkdirSync, copyFileSync } from 'fs';
+import { join, resolve, dirname } from 'path';
 import type { EvalFixture, ValidationMode } from './types.js';
 import { REQUIRED_EVAL_FILES, EXCLUDED_FILES } from './types.js';
 
@@ -260,19 +260,39 @@ export function getFixtureFiles(
 
 /**
  * Reads all fixture files into a map.
- * Keys are relative paths, values are file contents.
+ * Keys are relative paths, values are raw file contents (never decoded, so
+ * binary fixture assets survive the round trip).
  */
 export function readFixtureFiles(
   fixturePath: string,
   excludePatterns?: readonly string[]
-): Map<string, string> {
+): Map<string, Buffer> {
   const files = getFixtureFiles(fixturePath, excludePatterns);
-  const contents = new Map<string, string>();
+  const contents = new Map<string, Buffer>();
 
   for (const file of files) {
     const fullPath = join(fixturePath, file);
-    contents.set(file, readFileSync(fullPath, 'utf-8'));
+    contents.set(file, readFileSync(fullPath));
   }
 
   return contents;
+}
+
+/**
+ * Copies all fixture files into `destPath`, preserving relative layout.
+ *
+ * Prefer this over `readFixtureFiles` + `writeFileSync` when the destination is
+ * the filesystem: the bytes never enter the heap, so there is no encoding to get
+ * wrong and no need to hold an entire fixture tree in memory at once.
+ */
+export function copyFixtureFiles(
+  fixturePath: string,
+  destPath: string,
+  excludePatterns?: readonly string[]
+): void {
+  for (const file of getFixtureFiles(fixturePath, excludePatterns)) {
+    const fullPath = join(destPath, file);
+    mkdirSync(dirname(fullPath), { recursive: true });
+    copyFileSync(join(fixturePath, file), fullPath);
+  }
 }

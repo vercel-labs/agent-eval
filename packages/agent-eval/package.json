@@ -1,6 +1,6 @@
 {
   "name": "@vercel/agent-eval",
-  "version": "1.5.0",
+  "version": "2.2.0",
   "description": "Framework for testing AI coding agents in isolated sandboxes",
   "repository": {
     "type": "git",
@@ -9,6 +9,17 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./eval": {
+      "types": "./dist/lib/agents/eval-helper.d.mts",
+      "default": "./dist/lib/agents/eval-helper.mjs"
+    },
+    "./package.json": "./package.json"
+  },
   "bin": {
     "agent-eval": "dist/cli.js"
   },

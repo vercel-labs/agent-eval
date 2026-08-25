@@ -23,7 +23,8 @@ import type {
 import type { AgentRunResult } from './agents/types.js';
 import { parseTranscript, type Transcript } from './o11y/index.js';
 import { isNonModelFailure } from './classifier.js';
-import { readFixtureFiles } from './fixture.js';
+import { copyFixtureFiles } from './fixture.js';
+import { computeReuseCompatibilityFingerprint } from './fingerprint.js';
 
 /**
  * Convert AgentRunResult to EvalRunData (result + transcript).
@@ -173,6 +174,7 @@ export function saveResults(
 		// Save summary (simplified format per design)
 		const fingerprint = options.fingerprints?.[evalSummary.name];
 		const contentFingerprint = options.contentFingerprints?.[evalSummary.name];
+		const reuseCompatibilityFingerprint = computeReuseCompatibilityFingerprint(results.config);
 		const valid = options.validity?.[evalSummary.name];
 		const summaryForFile: Record<string, unknown> = {
 			totalRuns: evalSummary.totalRuns,
@@ -185,6 +187,9 @@ export function saveResults(
 		}
 		if (contentFingerprint) {
 			summaryForFile.contentFingerprint = contentFingerprint;
+		}
+		if (reuseCompatibilityFingerprint) {
+			summaryForFile.reuseCompatibilityFingerprint = reuseCompatibilityFingerprint;
 		}
 		if (valid === false) {
 			summaryForFile.valid = false;
@@ -310,12 +315,7 @@ export function saveResults(
 					const fixturePath =
 						options.fixturePaths?.[evalSummary.name];
 					if (fixturePath) {
-						const fixtureFiles = readFixtureFiles(fixturePath);
-						for (const [filePath, content] of fixtureFiles) {
-							const fullPath = join(projectDir, filePath);
-							mkdirSync(dirname(fullPath), { recursive: true });
-							writeFileSync(fullPath, content);
-						}
+						copyFixtureFiles(fixturePath, projectDir);
 					}
 
 					// Remove deleted files from the copied project
@@ -483,6 +483,12 @@ export interface ReusableResult {
 	timestamp: string;
 }
 
+export interface ReuseScanOptions {
+	/** Enforce exact opt-in runtime compatibility, including missing legacy values. */
+	enforceReuseCompatibility?: boolean;
+	reuseCompatibilityFingerprint?: string;
+}
+
 /**
  * Scan existing results for an experiment to find reusable eval results.
  *
@@ -497,6 +503,7 @@ export function scanReusableResults(
 	resultsDir: string,
 	experimentName: string,
 	fingerprints: Record<string, string>,
+	options: ReuseScanOptions = {},
 ): Map<string, ReusableResult> {
 	const reusable = new Map<string, ReusableResult>();
 	const experimentDir = join(resultsDir, experimentName);
@@ -541,6 +548,10 @@ export function scanReusableResults(
 				// re-run; "which staleness is acceptable" is the consumer's policy (via
 				// `agent-eval status --json` in CI), not the framework's.
 				if (summary.fingerprint !== expectedFingerprint) continue;
+				if (
+					options.enforceReuseCompatibility &&
+					summary.reuseCompatibilityFingerprint !== options.reuseCompatibilityFingerprint
+				) continue;
 
 				// Check validity (valid defaults to true if not explicitly set to false)
 				if (summary.valid === false) continue;

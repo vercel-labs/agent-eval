@@ -4,6 +4,7 @@
  */
 
 import Docker from 'dockerode';
+import { PassThrough } from 'node:stream';
 import * as tar from 'tar-stream';
 import type { Sandbox } from './types.js';
 import type { CommandResult, SandboxFile } from './sandbox.js';
@@ -239,52 +240,23 @@ export class DockerSandboxManager implements Sandbox {
     const stream = await exec.start({ hijack: true, stdin: false });
 
     return new Promise((resolve, reject) => {
-      let stdout = '';
-      let stderr = '';
-
-      // Docker multiplexes stdout/stderr in the stream
-      // We need to demux it
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
+      const stdoutStream = new PassThrough();
+      const stderrStream = new PassThrough();
+      stdoutStream.on('data', (chunk) => stdoutChunks.push(chunk));
+      stderrStream.on('data', (chunk) => stderrChunks.push(chunk));
 
-      stream.on('data', (chunk: Buffer) => {
-        // Docker stream format: 8-byte header + payload
-        // Header: [stream_type (1 byte), 0, 0, 0, size (4 bytes)]
-        // stream_type: 1 = stdout, 2 = stderr
-        let offset = 0;
-        while (offset < chunk.length) {
-          if (offset + 8 > chunk.length) {
-            // Incomplete header, treat rest as stdout
-            stdoutChunks.push(chunk.slice(offset));
-            break;
-          }
-
-          const streamType = chunk[offset];
-          const size = chunk.readUInt32BE(offset + 4);
-
-          if (offset + 8 + size > chunk.length) {
-            // Incomplete payload, treat rest as stdout
-            stdoutChunks.push(chunk.slice(offset + 8));
-            break;
-          }
-
-          const payload = chunk.slice(offset + 8, offset + 8 + size);
-          if (streamType === 1) {
-            stdoutChunks.push(payload);
-          } else if (streamType === 2) {
-            stderrChunks.push(payload);
-          } else {
-            // Unknown type, assume stdout
-            stdoutChunks.push(payload);
-          }
-
-          offset += 8 + size;
-        }
-      });
+      // Docker multiplexes stdout and stderr into one framed stream, and frames
+      // split across `data` events at arbitrary byte offsets. Let docker-modem
+      // own the framing rather than re-implementing it here.
+      this.docker.modem.demuxStream(stream, stdoutStream, stderrStream);
 
       stream.on('end', async () => {
-        stdout = Buffer.concat(stdoutChunks).toString('utf-8');
-        stderr = Buffer.concat(stderrChunks).toString('utf-8');
+        stdoutStream.end();
+        stderrStream.end();
+        const stdout = Buffer.concat(stdoutChunks).toString('utf-8');
+        const stderr = Buffer.concat(stderrChunks).toString('utf-8');
 
         try {
           const inspection = await exec.inspect();
@@ -318,7 +290,9 @@ export class DockerSandboxManager implements Sandbox {
   }
 
   /**
-   * Read a file from the container.
+   * Read a file from the container, decoded as UTF-8.
+   *
+   * Lossy for binary files — use `readFileBuffer` for anything that is not text.
    */
   async readFile(path: string): Promise<string> {
     const result = await this.runCommand('cat', [path]);
@@ -326,6 +300,17 @@ export class DockerSandboxManager implements Sandbox {
       throw new Error(`Failed to read file ${path}: ${result.stderr}`);
     }
     return result.stdout;
+  }
+
+  /**
+   * Read a file from the sandbox as raw bytes, through base64 encoding.
+   */
+  async readFileBuffer(path: string): Promise<Buffer> {
+    const result = await this.runCommand('base64', [path]);
+    if (result.exitCode !== 0) {
+      throw new Error(`Failed to read file ${path}: ${result.stderr}`);
+    }
+    return Buffer.from(result.stdout, 'base64');
   }
 
   /**

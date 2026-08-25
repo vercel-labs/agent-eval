@@ -11,6 +11,7 @@ export type BuiltInAgentType =
   | 'vercel-ai-gateway/codex'
   | 'codex'
   | 'vercel-ai-gateway/opencode'
+  | 'vercel-ai-gateway/fx'
   | 'gemini'
   | 'cursor';
 
@@ -63,8 +64,10 @@ export interface Sandbox {
     args?: string[],
     options?: { env?: Record<string, string>; cwd?: string }
   ): Promise<{ stdout: string; stderr: string; exitCode: number }>;
-  /** Read a file from the sandbox */
+  /** Read a file from the sandbox, decoded as UTF-8 (lossy for binary files) */
   readFile(path: string): Promise<string>;
+  /** Read a file from the sandbox as raw bytes. Use this for anything binary. */
+  readFileBuffer(path: string): Promise<Buffer>;
   /** Write files to the sandbox */
   writeFiles(files: Record<string, string>): Promise<void>;
   /** Get the sandbox working directory */
@@ -166,6 +169,12 @@ export interface ExperimentConfig {
    * @default false — command construction is unchanged when omitted. */
   webResearch?: boolean;
 
+  /** Disable skills bundled by the underlying agent CLI while preserving
+   * project/user skills installed by the caller. Currently supported by Claude
+   * Code and Codex; OpenCode does not bundle skills. @default false — the
+   * underlying CLI's normal skill behavior is unchanged when omitted. */
+  disableBundledSkills?: boolean;
+
   /** Brands to track or compare in downstream analysis. @default undefined */
   brands?: BrandConfig[];
 
@@ -196,6 +205,7 @@ export interface ResolvedExperimentConfig {
   copyFiles: 'none' | 'changed' | 'all';
   agentOptions?: Record<string, unknown>;
   webResearch?: boolean;
+  disableBundledSkills?: boolean;
   brands?: BrandConfig[];
   onRunComplete?: RunCompleteHook;
   judge?: JudgeConfig;
@@ -220,6 +230,7 @@ export interface RunnableExperimentConfig {
   copyFiles: 'none' | 'changed' | 'all';
   agentOptions?: Record<string, unknown>;
   webResearch?: boolean;
+  disableBundledSkills?: boolean;
   brands?: BrandConfig[];
   onRunComplete?: RunCompleteHook;
   judge?: JudgeConfig;
@@ -304,8 +315,8 @@ export interface EvalRunData {
     /** npm script outputs (nested to avoid collision) */
     scripts?: Record<string, string>;
   };
-  /** Files generated/modified by the agent (path -> content). Used for copyFiles option. */
-  generatedFiles?: Record<string, string>;
+  /** Files generated/modified by the agent (path -> raw content). Used for copyFiles option. */
+  generatedFiles?: Record<string, Buffer>;
   /** Files deleted by the agent. Used for copyFiles option. */
   deletedFiles?: string[];
 }

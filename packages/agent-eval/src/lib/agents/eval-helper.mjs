@@ -150,6 +150,7 @@ function runJudge(subject, criterion, opts = {}) {
   const input = {
     prompt: buildJudgePrompt(subject, criterion, verdictPath, opts),
     model: cfg.model ?? undefined,
+    disableBundledSkills: cfg.disableBundledSkills ?? undefined,
     cwd: process.cwd(),
     resultPath,
     extra: cfg.extra ?? undefined,

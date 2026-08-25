@@ -16,6 +16,7 @@ import { runSingleEval } from './lib/runner.js';
 import { loadConfig } from './lib/config.js';
 import { getSandboxBackendInfo } from './lib/sandbox.js';
 import { registerAgent } from './lib/agents/index.js';
+import { parseTranscript } from './lib/o11y/index.js';
 import type { Agent } from './lib/agents/types.js';
 import type { AgentDefinition } from './lib/agents/plugin/contract.js';
 
@@ -49,6 +50,7 @@ const hasGeminiCredentials = !!process.env.GEMINI_API_KEY && hasSandbox;
 const hasCursorCredentials = !!process.env.CURSOR_API_KEY && hasSandbox;
 // OpenCode credentials (only supports AI Gateway)
 const hasOpenCodeCredentials = hasAiGatewayCredentials;
+const hasFxCredentials = hasAiGatewayCredentials;
 
 describe.skipIf(!process.env.INTEGRATION_TEST)('integration tests', () => {
   beforeAll(() => {
@@ -183,6 +185,40 @@ describe.skipIf(!process.env.INTEGRATION_TEST)('integration tests', () => {
   });
 
   describe.skipIf(!hasAiGatewayCredentials)('Claude Code (Vercel AI Gateway) sandbox execution', () => {
+    it('can opt out of Claude Code bundled skills', async () => {
+      const fixtureDir = join(TEST_DIR, 'claude-no-bundled-skills');
+      mkdirSync(fixtureDir, { recursive: true });
+      writeFileSync(
+        join(fixtureDir, 'PROMPT.md'),
+        'Do not inspect or modify files. Reply with exactly: OK'
+      );
+      writeFileSync(
+        join(fixtureDir, 'package.json'),
+        JSON.stringify({ name: 'claude-no-bundled-skills', type: 'module' })
+      );
+
+      const fixture = loadFixture(TEST_DIR, 'claude-no-bundled-skills', {
+        validation: 'none',
+      });
+      const result = await runSingleEval(fixture, {
+        agent: 'vercel-ai-gateway/claude-code',
+        model: 'sonnet',
+        timeout: 120,
+        apiKey: process.env.AI_GATEWAY_API_KEY!,
+        scripts: [],
+        validation: 'none',
+        disableBundledSkills: true,
+      });
+
+      if (result.result.status === 'failed') {
+        console.error('Claude bundled-skills isolation failed:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
+      expect(result.transcript).toBeDefined();
+      expect(result.transcript).not.toContain('"type":"skill_listing"');
+      expect(result.transcript).not.toContain('claude-api');
+    }, 300000);
+
     it('surfaces CLI error when invalid model is provided', async () => {
       // Create a simple test fixture
       const fixtureDir = join(TEST_DIR, 'invalid-model-claude');
@@ -546,6 +582,41 @@ test('greet exists', () => {
   });
 
   describe.skipIf(!hasAiGatewayCredentials)('Codex (Vercel AI Gateway) sandbox execution', () => {
+    it('uses live web search through the AI Gateway when enabled', async () => {
+      const fixtureDir = join(TEST_DIR, 'codex-web-research');
+      mkdirSync(fixtureDir, { recursive: true });
+      writeFileSync(
+        join(fixtureDir, 'PROMPT.md'),
+        'Use the web search tool, not shell commands, to find the official Vercel AI Gateway documentation. Return one source URL.'
+      );
+      writeFileSync(
+        join(fixtureDir, 'package.json'),
+        JSON.stringify({ name: 'codex-web-research', type: 'module' })
+      );
+
+      const fixture = loadFixture(TEST_DIR, 'codex-web-research', {
+        validation: 'none',
+      });
+      const result = await runSingleEval(fixture, {
+        agent: 'vercel-ai-gateway/codex',
+        model: 'openai/gpt-5.6-sol',
+        timeout: 120,
+        apiKey: process.env.AI_GATEWAY_API_KEY!,
+        scripts: [],
+        validation: 'none',
+        webResearch: true,
+      });
+
+      if (result.result.status === 'failed') {
+        console.error('Codex web research failed:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
+      expect(result.transcript).toBeDefined();
+      const parsed = parseTranscript(result.transcript!, 'codex');
+      expect(parsed.summary.toolCalls.web_search).toBeGreaterThan(0);
+      expect(result.transcript).toMatch(/https?:\/\//);
+    }, 300000);
+
     it('can run a simple eval with Codex', async () => {
       // Create a simple test fixture
       const fixtureDir = join(TEST_DIR, 'simple-eval-codex');
@@ -1302,6 +1373,46 @@ test('contains greeting', () => {
         }
       }
     }, 300000); // 5 minute timeout
+  });
+
+  describe.skipIf(!hasFxCredentials)('fx (Vercel AI Gateway) sandbox execution', () => {
+    it('runs a research eval and captures the saved session transcript', async () => {
+      const fixtureDir = join(TEST_DIR, 'fx-web-research');
+      mkdirSync(fixtureDir, { recursive: true });
+      writeFileSync(
+        join(fixtureDir, 'PROMPT.md'),
+        'Use web search to find the official fx website. Return one source URL.'
+      );
+      writeFileSync(
+        join(fixtureDir, 'package.json'),
+        JSON.stringify({ name: 'fx-web-research', type: 'module' })
+      );
+
+      const fixture = loadFixture(TEST_DIR, 'fx-web-research', {
+        validation: 'none',
+      });
+      const result = await runSingleEval(fixture, {
+        agent: 'vercel-ai-gateway/fx',
+        model: 'openai/gpt-5.6-sol',
+        timeout: 180,
+        apiKey: process.env.AI_GATEWAY_API_KEY!,
+        scripts: [],
+        validation: 'none',
+        webResearch: true,
+        disableBundledSkills: true,
+      });
+
+      if (result.result.status === 'failed') {
+        console.error('fx web research failed:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
+      expect(result.transcript).toBeDefined();
+      const parsed = parseTranscript(result.transcript!, 'vercel-ai-gateway/fx');
+      expect(parsed.parseSuccess).toBe(true);
+      expect(parsed.summary.toolCalls.web_search).toBeGreaterThan(0);
+      expect(result.transcript).toMatch(/https?:\/\//);
+      expect(result.result.observedModel).toBe('openai/gpt-5.6-sol');
+    }, 300000);
   });
 
   // ============================================================================

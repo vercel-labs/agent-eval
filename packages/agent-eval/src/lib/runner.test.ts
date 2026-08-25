@@ -610,6 +610,51 @@ describe('runExperiment', () => {
       );
     });
 
+    it('forwards disableBundledSkills to agent.run when set', async () => {
+      const mockAgent: Agent = {
+        name: 'mock-agent',
+        displayName: 'Mock Agent',
+        getApiKeyEnvVar: () => 'MOCK_API_KEY',
+        getDefaultModel: () => 'mock-model',
+        run: vi.fn().mockResolvedValue({
+          success: true,
+          output: 'Agent output',
+          duration: 1000,
+          scriptsResults: {},
+        }),
+        definition: { bundledSkillsControl: 'configurable' } as Agent['definition'],
+      };
+      vi.spyOn(agentsIndex, 'getAgent').mockReturnValue(mockAgent);
+      const config: ResolvedExperimentConfig = {
+        agent: 'claude-code',
+        model: 'opus',
+        evals: ['test-eval'],
+        runs: 1,
+        earlyExit: false,
+        scripts: [],
+        timeout: 600,
+        disableBundledSkills: true,
+      };
+
+      await runExperiment({
+        config,
+        fixtures: [{
+          name: 'test-eval',
+          path: '/fake/path',
+          prompt: 'Test prompt for agent',
+          isModule: true,
+        }],
+        apiKey: 'my-api-key',
+        resultsDir: TEST_DIR,
+        experimentName: 'test-experiment',
+      });
+
+      expect(mockAgent.run).toHaveBeenCalledWith(
+        '/fake/path',
+        expect.objectContaining({ disableBundledSkills: true })
+      );
+    });
+
     it('does not pass a model override for native-default policy', async () => {
       const mockAgent: Agent = {
         name: 'mock-agent',

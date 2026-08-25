@@ -22,6 +22,24 @@ describe('buildClaudeCodeCliArgs', () => {
     ]);
   });
 
+  it('disables bundled skills only when explicitly requested', () => {
+    const args = buildClaudeCodeCliArgs({
+      ...baseOptions,
+      model: 'opus',
+      disableBundledSkills: true,
+    });
+
+    expect(args).toEqual([
+      '--print',
+      '--settings',
+      '{"disableBundledSkills":true}',
+      '--model',
+      'opus',
+      '--dangerously-skip-permissions',
+      'where should this run?',
+    ]);
+  });
+
   it('allows web tools as a single comma-separated --allowedTools value', () => {
     const args = buildClaudeCodeCliArgs({ ...baseOptions, model: 'opus', webResearch: true });
     expect(args).toEqual([

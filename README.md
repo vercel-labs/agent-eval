@@ -230,6 +230,8 @@ const config: ExperimentConfig = {
 - `judge.agent` is optional and defaults to the codegen agent — omit it to keep the same harness and only pin the model. When it names a different agent, that agent's CLI is installed in the sandbox automatically and its key is resolved from its own env var (falling back to `VERCEL_OIDC_TOKEN`).
 - Pinning changes the eval fingerprint, so a pinned run won't reuse self-graded cached results.
 
+**TypeScript support is built in.** Importing from `@vercel/agent-eval/eval` types the `environment`/`transcript` subjects _and_ registers the `toSatisfyCriterion` / `toScoreAtLeast` matchers on Vitest's `expect` — no manual `declare module 'vitest'` augmentation needed. The package also re-exports the `JudgeSubject` and `JudgeVerdict` types for advanced use.
+
 > **Note**: requires `validation: 'vitest'` (the default). The framework gives the eval process the run's credentials automatically so the judge can call the agent CLI in-sandbox.
 
 ## Configuration Reference
@@ -280,6 +282,7 @@ const config: ExperimentConfig = {
   editPrompt: (prompt) => `Use the skill.\n\n${prompt}`,
 
   // Custom post-run analysis hook. Can attach analysis/metadata to result.json.
+  // `runData.generatedFiles` maps path -> Buffer; call .toString('utf-8') for text.
   onRunComplete: async ({ runData }) => ({
     ...runData,
     result: {
@@ -323,6 +326,7 @@ export default config;
 agent: 'vercel-ai-gateway/claude-code'  // Claude Code via AI Gateway
 agent: 'vercel-ai-gateway/codex'        // OpenAI Codex via AI Gateway
 agent: 'vercel-ai-gateway/opencode'     // OpenCode via AI Gateway
+agent: 'vercel-ai-gateway/fx'           // fx via AI Gateway (research runs)
 
 // Direct API (uses provider keys directly)
 agent: 'claude-code'  // requires ANTHROPIC_API_KEY
@@ -415,6 +419,59 @@ const config: ExperimentConfig = {
 Results use `modelPolicy: 'native-default'`, `requestedModel` is omitted, and
 `observedModel` is populated when the agent CLI exposes the runtime model in its
 transcript or logs. Provide `model` to force a specific model.
+
+### Opt-in runtime controls
+
+Agent Eval preserves each agent CLI's normal behavior by default. Recommendation
+and controlled-treatment evals can opt into a narrower runtime:
+
+```typescript
+const config: ExperimentConfig = {
+  agent: 'vercel-ai-gateway/claude-code',
+  disableBundledSkills: true,
+  webResearch: true,
+};
+```
+
+`disableBundledSkills` disables skills shipped by Claude Code or Codex while
+leaving caller-installed project and user skills available. OpenCode and fx do
+not ship bundled skill catalogs, so this option does not change their runtimes.
+The option is omitted by default, preserving existing arguments and agent
+behavior. Other built-in agents reject this option until they expose an
+equivalent control.
+
+`webResearch` remains opt-in. It allows Claude Code's `WebSearch`/`WebFetch`,
+enables Codex live search (including custom AI Gateway providers), and enables
+OpenCode's Exa-backed `websearch`/`webfetch` tools. Whether an agent chooses to
+use an available research tool remains part of the measured behavior.
+
+The fx adapter currently requires `webResearch: true`. fx does not yet expose a
+prompt-free way to disable every web tool while retaining unrestricted coding
+tools, so Agent Eval rejects non-research fx runs instead of silently changing
+the treatment.
+
+### Run research evals with fx
+
+fx runs through Vercel AI Gateway and uses its native `web_search` and
+`web_fetch` tools. Agent Eval pins fx `0.0.5`, verifies the downloaded Linux
+binary checksum, and captures the supported saved-session JSON transcript.
+
+```typescript
+import type { ExperimentConfig } from '@vercel/agent-eval';
+
+const config: ExperimentConfig = {
+  agent: 'vercel-ai-gateway/fx',
+  webResearch: true,
+  disableBundledSkills: true,
+};
+
+export default config;
+```
+
+The fx adapter supports Linux x86-64 and arm64 sandboxes. Agent Eval disables
+fx permission prompts inside the disposable sandbox, matching the execution
+model used by the other built-in coding agents. fx can self-grade its own runs,
+but it cannot serve as a pinned judge for a different agent.
 
 ### OpenCode model format
 
@@ -597,11 +654,11 @@ const config: ExperimentConfig = {
 - **`changed`** — Copy only files that were modified, created, or deleted by the agent
 - **`all`** — Copy the complete project including both the original fixture files and agent changes
 
-Files are saved to `results/<experiment>/<timestamp>/<eval>/run-N/project/`. The framework uses git to track changes, so files must be text-based to be captured.
+Files are saved to `results/<experiment>/<timestamp>/<eval>/run-N/project/`. The framework uses git to track changes.
 
 ## Result Reuse
 
-The framework computes a SHA-256 fingerprint for each (eval, config) pair. The fingerprint covers all eval directory files and the config fields that affect results: `agent`, `model`, `scripts`, `timeout`, `earlyExit`, and `runs`.
+The framework computes a SHA-256 fingerprint for each (eval, config) pair. The fingerprint covers all eval directory files and result-affecting config including `agent`, `model`, `scripts`, `timeout`, `earlyExit`, `runs`, `webResearch`, `disableBundledSkills`, and a pinned `judge`.
 
 On subsequent runs, evals with a matching fingerprint and a valid cached result (at least one passing run) are skipped automatically. This means:
 
@@ -624,7 +681,7 @@ agent-eval refingerprint            # all experiments
 agent-eval refingerprint cc --dry   # preview one experiment
 ```
 
-For each cached result it compares the eval's current `contentFingerprint` to the stored one: if the content is unchanged it re-stamps the combined fingerprint (the result stays cached); if the content **changed** it leaves the result stale so it re-runs. `agent-eval status` already classifies by eval *content*, so it never reports a config-only change as work — run `refingerprint` after editing an experiment config to carry that change into the cache (`run` does this automatically).
+For each cached result it compares the eval's current `contentFingerprint` to the stored one: if the content is unchanged it re-stamps the combined fingerprint (the result stays cached); if the content **changed** it leaves the result stale so it re-runs. Opt-in runtime changes such as web research and bundled-skill isolation also store a `reuseCompatibilityFingerprint`; those boundaries are never carried forward. `agent-eval status` reports content or runtime-compatibility changes as work, while benign config-only edits stay cached. Run `refingerprint` after a benign experiment config edit to carry that change into the cache (`run` does this automatically).
 
 ### After changing or syncing evals: status → pick what to run
 
@@ -699,7 +756,9 @@ Every run requires an API key for the agent and a token for the sandbox. Classif
 
 The **classifier is optional**: if neither `AI_GATEWAY_API_KEY` nor `VERCEL_OIDC_TOKEN` is set, failure classification is skipped and all results are preserved as-is. Set either key to enable the classifier, which automatically identifies and removes non-model failures (infrastructure errors, rate limits, timeouts).
 
-OpenCode only supports Vercel AI Gateway (`vercel-ai-gateway/opencode`). There is no direct API option for OpenCode.
+OpenCode and fx only support Vercel AI Gateway
+(`vercel-ai-gateway/opencode` and `vercel-ai-gateway/fx`). There are no direct
+API variants for these agents.
 
 ### Setup
 

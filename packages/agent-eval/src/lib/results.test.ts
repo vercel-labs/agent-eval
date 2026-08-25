@@ -16,6 +16,15 @@ import type { EvalRunResult, EvalRunData, ResolvedExperimentConfig } from './typ
 
 const TEST_DIR = '/tmp/eval-framework-results-test';
 
+/**
+ * A real 1x1 PNG. Byte 0 is 0x89, which is not a valid UTF-8 lead byte, so any
+ * UTF-8 decode of this file replaces it with U+FFFD.
+ */
+const PNG_BYTES = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64'
+);
+
 describe('results utilities', () => {
   beforeEach(() => {
     mkdirSync(TEST_DIR, { recursive: true });
@@ -246,6 +255,34 @@ describe('results utilities', () => {
       expect(parsedTranscript).toHaveProperty('summary');
     });
 
+    it('stores opt-in runtime compatibility in summaries', () => {
+      const config: ResolvedExperimentConfig = {
+        agent: 'vercel-ai-gateway/codex',
+        model: 'openai/gpt-5.2-codex',
+        evals: ['eval-1'],
+        runs: 1,
+        earlyExit: true,
+        scripts: [],
+        timeout: 300,
+        webResearch: true,
+      };
+      const results = createExperimentResults(
+        config,
+        [createEvalSummary('eval-1', [{ result: { status: 'passed', duration: 1 } }])],
+        new Date('2024-01-26T12:00:00Z'),
+        new Date('2024-01-26T12:01:00Z')
+      );
+      const outputDir = saveResults(results, {
+        resultsDir: TEST_DIR,
+        experimentName: 'compatibility-experiment',
+      });
+      const summary = JSON.parse(
+        readFileSync(join(outputDir, 'eval-1', 'summary.json'), 'utf-8')
+      );
+
+      expect(summary.reuseCompatibilityFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    });
+
     it('saves observed model metadata for native-default runs', () => {
       const config: ResolvedExperimentConfig = {
         agent: 'vercel-ai-gateway/opencode',
@@ -335,6 +372,57 @@ describe('results utilities', () => {
         'utf-8'
       );
       expect(evalScriptOutput).toBe('npm run eval output');
+    });
+
+    it("copyFiles 'all' writes binary fixture assets and agent output byte-for-byte", () => {
+      const fixturePath = join(TEST_DIR, 'fixture');
+      mkdirSync(join(fixturePath, 'public'), { recursive: true });
+      writeFileSync(join(fixturePath, 'PROMPT.md'), 'Task');
+      writeFileSync(join(fixturePath, 'EVAL.ts'), 'test');
+      writeFileSync(join(fixturePath, 'public/favicon.png'), PNG_BYTES);
+
+      const config: ResolvedExperimentConfig = {
+        agent: 'claude-code',
+        model: 'opus',
+        evals: ['eval-1'],
+        runs: 1,
+        earlyExit: true,
+        scripts: [],
+        timeout: 300,
+        copyFiles: 'all',
+      };
+
+      const evals = [
+        createEvalSummary('eval-1', [
+          {
+            result: { status: 'passed', duration: 10 },
+            generatedFiles: { 'src/logo.png': PNG_BYTES },
+          },
+        ]),
+      ];
+
+      const results = createExperimentResults(
+        config,
+        evals,
+        new Date('2024-01-26T12:00:00Z'),
+        new Date('2024-01-26T12:01:00Z')
+      );
+
+      const outputDir = saveResults(results, {
+        resultsDir: TEST_DIR,
+        experimentName: 'binary-test',
+        fixturePaths: { 'eval-1': fixturePath },
+      });
+
+      const projectDir = join(outputDir, 'eval-1', 'run-1', 'project');
+      // Untouched fixture asset, copied through the 'all' path.
+      expect(
+        Buffer.compare(readFileSync(join(projectDir, 'public/favicon.png')), PNG_BYTES)
+      ).toBe(0);
+      // Asset the agent produced, captured out of the sandbox.
+      expect(
+        Buffer.compare(readFileSync(join(projectDir, 'src/logo.png')), PNG_BYTES)
+      ).toBe(0);
     });
   });
 
@@ -426,6 +514,21 @@ describe('results utilities', () => {
       );
 
       const result = scanReusableResults(TEST_DIR, 'my-exp', { 'eval-1': 'new-hash' });
+      expect(result.size).toBe(0);
+    });
+
+    it('skips legacy results across an enforced runtime compatibility boundary', () => {
+      const expDir = join(TEST_DIR, 'my-exp', '2024-01-26T12-00-00.000Z', 'eval-1');
+      mkdirSync(expDir, { recursive: true });
+      writeFileSync(
+        join(expDir, 'summary.json'),
+        JSON.stringify({ totalRuns: 1, passedRuns: 1, passRate: '100%', fingerprint: 'abc123' })
+      );
+
+      const result = scanReusableResults(TEST_DIR, 'my-exp', { 'eval-1': 'abc123' }, {
+        enforceReuseCompatibility: true,
+        reuseCompatibilityFingerprint: 'runtime-v1',
+      });
       expect(result.size).toBe(0);
     });
 

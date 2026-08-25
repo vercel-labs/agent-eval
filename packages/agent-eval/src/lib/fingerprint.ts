@@ -9,6 +9,7 @@ import { createHash } from 'crypto';
 import { readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import type { RunnableExperimentConfig } from './types.js';
+import { getAgent, hasAgent } from './agents/index.js';
 
 /**
  * Fields from the config that affect eval results.
@@ -23,7 +24,77 @@ interface FingerprintableConfig {
   earlyExit: boolean;
   runs: number;
   webResearch?: boolean;
+  disableBundledSkills?: boolean;
+  agentFingerprint?: Record<string, unknown>;
   judge?: { agent?: string; model: string };
+}
+
+interface ReuseCompatibilityInput {
+  webResearch?: true;
+  disableBundledSkills?: true;
+  agentFingerprint?: Record<string, unknown>;
+}
+
+function agentFingerprintExtra(config: RunnableExperimentConfig): Record<string, unknown> | undefined {
+  if (!hasAgent(config.agent)) return undefined;
+  return getAgent(config.agent).definition?.fingerprintExtra?.(config);
+}
+
+function bundledSkillsIsolationApplies(config: RunnableExperimentConfig): boolean {
+  if (!config.disableBundledSkills) return false;
+  const agentNames = new Set([config.agent, config.judge?.agent ?? config.agent]);
+  for (const agentName of agentNames) {
+    if (!hasAgent(agentName)) return true;
+    if (getAgent(agentName).definition?.bundledSkillsControl !== 'not-applicable') return true;
+  }
+  return false;
+}
+
+/** Build the config slice hashed into result-reuse fingerprints. */
+export function fingerprintConfigInput(config: RunnableExperimentConfig): FingerprintableConfig {
+  const input: FingerprintableConfig = {
+    agent: config.agent,
+    model: config.model,
+    scripts: [...config.scripts].sort(),
+    timeout: config.timeout,
+    earlyExit: config.earlyExit,
+    runs: config.runs,
+  };
+  if (config.modelPolicy === 'native-default') {
+    input.modelPolicy = config.modelPolicy;
+  }
+  if (config.webResearch) {
+    input.webResearch = true;
+  }
+  if (bundledSkillsIsolationApplies(config)) {
+    input.disableBundledSkills = true;
+  }
+  const agentFingerprint = agentFingerprintExtra(config);
+  if (agentFingerprint && Object.keys(agentFingerprint).length > 0) {
+    input.agentFingerprint = agentFingerprint;
+  }
+  if (config.judge) {
+    input.judge = { agent: config.judge.agent, model: config.judge.model };
+  }
+  return input;
+}
+
+/**
+ * Hash opt-in runtime behavior that must never be silently carried across
+ * cached results. Undefined preserves historical default behavior.
+ */
+export function computeReuseCompatibilityFingerprint(
+  config: RunnableExperimentConfig,
+): string | undefined {
+  const input: ReuseCompatibilityInput = {};
+  if (config.webResearch) input.webResearch = true;
+  if (bundledSkillsIsolationApplies(config)) input.disableBundledSkills = true;
+  const agentFingerprint = agentFingerprintExtra(config);
+  if (agentFingerprint && Object.keys(agentFingerprint).length > 0) {
+    input.agentFingerprint = agentFingerprint;
+  }
+  if (Object.keys(input).length === 0) return undefined;
+  return createHash('sha256').update(JSON.stringify(input)).digest('hex');
 }
 
 /**
@@ -95,29 +166,7 @@ export function computeFingerprint(evalPath: string, config: RunnableExperimentC
   hashEvalFiles(hash, evalPath);
 
   // Hash config fields that affect results
-  const configForHash: FingerprintableConfig = {
-    agent: config.agent,
-    model: config.model,
-    scripts: [...config.scripts].sort(),
-    timeout: config.timeout,
-    earlyExit: config.earlyExit,
-    runs: config.runs,
-  };
-  if (config.modelPolicy === 'native-default') {
-    configForHash.modelPolicy = config.modelPolicy;
-  }
-  // Included only when enabled so existing (default-off) fingerprints are
-  // unchanged, while research and non-research configs never share a
-  // fingerprint — result reuse must not serve a cached parametric-only
-  // result for a research run, or vice versa.
-  if (config.webResearch) {
-    configForHash.webResearch = true;
-  }
-  // Included only when the judge is pinned, so existing (unpinned) fingerprints are
-  // unchanged. Changing the judge agent/model invalidates the cache → re-runs.
-  if (config.judge) {
-    configForHash.judge = { agent: config.judge.agent, model: config.judge.model };
-  }
+  const configForHash = fingerprintConfigInput(config);
   hash.update(`config:${JSON.stringify(configForHash)}`);
 
   return hash.digest('hex');
@@ -144,9 +193,20 @@ export interface RefingerprintDecision {
  *     is already fully current; otherwise leave stale (we can't prove content matches)
  */
 export function decideRefingerprint(
-  stored: { fingerprint?: string; contentFingerprint?: string },
-  current: { fingerprint: string; contentFingerprint: string }
+  stored: {
+    fingerprint?: string;
+    contentFingerprint?: string;
+    reuseCompatibilityFingerprint?: string;
+  },
+  current: {
+    fingerprint: string;
+    contentFingerprint: string;
+    reuseCompatibilityFingerprint?: string;
+  }
 ): RefingerprintDecision {
+  if (stored.reuseCompatibilityFingerprint !== current.reuseCompatibilityFingerprint) {
+    return { stale: true };
+  }
   if (stored.contentFingerprint === undefined) {
     if (stored.fingerprint === current.fingerprint) {
       return { contentFingerprint: current.contentFingerprint, stale: false };

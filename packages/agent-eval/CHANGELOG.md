@@ -1,5 +1,77 @@
 # @vercel/agent-eval
 
+## 2.2.0
+
+### Minor Changes
+
+- [#193](https://github.com/vercel-labs/agent-eval/pull/193) [`5d7aef2`](https://github.com/vercel-labs/agent-eval/commit/5d7aef26a7215b7c3862a9235c97cb3a3033c488) Thanks [@molebox](https://github.com/molebox)! - Add a Vercel AI Gateway adapter for research evals with fx, including a pinned binary installer and saved-session transcript parser.
+
+## 2.1.0
+
+### Minor Changes
+
+- [#191](https://github.com/vercel-labs/agent-eval/pull/191) [`ceba203`](https://github.com/vercel-labs/agent-eval/commit/ceba203690479decaf63cde4297fc61761154221) Thanks [@molebox](https://github.com/molebox)! - Add opt-in isolation for agent-bundled skills and update Codex web research to use its current live-search configuration and CLI flag. Opt-in runtime compatibility is stored separately so cached legacy research results are not silently carried forward.
+
+## 2.0.0
+
+### Major Changes
+
+- [#177](https://github.com/vercel-labs/agent-eval/pull/177) [`3be0670`](https://github.com/vercel-labs/agent-eval/commit/3be067057d374917f352736377b6c9a3019e51fd) Thanks [@Sidnioulz](https://github.com/Sidnioulz)! - Fix silent binary-file corruption when collecting results
+
+  Collected project trees were not faithful copies. Two paths decoded every file
+  as UTF-8, replacing each invalid byte with U+FFFD — silently destroying icons,
+  images and fonts and inflating them ~1.8x:
+
+  - `captureGeneratedFiles` read the agent's diff with `sandbox.readFile`, which
+    hands back command stdout (a string).
+  - `readFixtureFiles` read fixtures with `'utf-8'`, corrupting every binary asset
+    a fixture ships when `copyFiles: 'all'` is used.
+
+  Both now preserve bytes. `Sandbox` gains `readFileBuffer(path)`, which routes
+  through `base64` so the existing transport round-trips losslessly, and the
+  `copyFiles: 'all'` fixture copy uses `copyFileSync` instead of read-then-write —
+  the bytes never enter the heap, so a whole fixture tree is no longer buffered in
+  memory.
+
+  **Breaking:** `generatedFiles` is now `Record<string, Buffer>` instead of
+  `Record<string, string>` on both `AgentRunResult` and `EvalRunData`. Code reading
+  it in an `onRunComplete` hook mostly keeps working at runtime (a `Buffer`
+  stringifies in template literals, `String(...)` and `JSON.parse(...)`), but
+  TypeScript consumers that annotate it as `string` need `.toString('utf-8')`.
+  `readFixtureFiles` likewise returns `Map<string, Buffer>`.
+
+  Credential redaction keeps working over the new byte-typed field.
+  `redactRunResult` routes `generatedFiles` through a new `redactSecretsBuffer`,
+  which locates the credential's UTF-8 byte sequence and splices it out rather than
+  decoding the file. Decoding would have reintroduced the corruption this change
+  removes, and passing a `Buffer` to the string-based `redactSecrets` throws
+  outright, since `Buffer` has no `split`.
+
+### Minor Changes
+
+- [#166](https://github.com/vercel-labs/agent-eval/pull/166) [`974cda2`](https://github.com/vercel-labs/agent-eval/commit/974cda2689d0f3caa435262cbe22d223b92da1fd) Thanks [@huang-julien](https://github.com/huang-julien)! - Ship public types for the `@vercel/agent-eval/eval` judge surface. Importing `environment`/`transcript` now also augments Vitest's `expect` with the `toSatisfyCriterion` and `toScoreAtLeast` matchers — EVAL.ts files type-check with no manual `declare module 'vitest'` boilerplate. The `eval` subpath is now a real package export (resolvable in editors, not just the in-sandbox alias), and `JudgeSubject` / `JudgeVerdict` types are exported for advanced use.
+
+### Patch Changes
+
+- [#169](https://github.com/vercel-labs/agent-eval/pull/169) [`f867b13`](https://github.com/vercel-labs/agent-eval/commit/f867b13401ce017b406f3aca203a0107f3a0fc32) Thanks [@huang-julien](https://github.com/huang-julien)! - Fall back to the saved Codex session transcript when `codex exec --json` does not
+  echo the full JSONL to stdout. The runner already read the session file under
+  `~/.codex/sessions` to detect the observed model, but discarded it for result
+  capture, so those runs recorded no transcript at all. `observedModel` now also
+  falls back to the stdout transcript when the session file is missing.
+
+- [#158](https://github.com/vercel-labs/agent-eval/pull/158) [`e37d8f0`](https://github.com/vercel-labs/agent-eval/commit/e37d8f0d7dc895725224753216bdd797f9d2766f) Thanks [@huang-julien](https://github.com/huang-julien)! - Fix corrupted command output from the Docker sandbox on large reads. Docker
+  multiplexes stdout and stderr into a single framed stream, and frames split
+  across `data` events at arbitrary byte offsets. The hand-rolled parser read each
+  chunk in isolation, so any frame straddling a chunk boundary was mis-read,
+  silently dropping and corrupting bytes (a 512KB `cat` came back short). Framing
+  is now delegated to docker-modem's `demuxStream()`.
+
+## 1.5.1
+
+### Patch Changes
+
+- [#186](https://github.com/vercel-labs/agent-eval/pull/186) [`c8ac684`](https://github.com/vercel-labs/agent-eval/commit/c8ac6841c26353c18a2481736d9b9becbf518dd9) Thanks [@gaojude](https://github.com/gaojude)! - Redact run credentials from agent run results. Agents configured through a file we write into the sandbox (opencode's `opencode.json`, codex's TOML) carry the live API key in the agent's cwd, so models read it while orienting and the value lands in the transcript — which consumers commit. Every text-bearing field of `AgentRunResult` (output, transcript, error, test and script output, generated file contents) is now scrubbed on the way out of a run. Redaction is exact-string against the key the framework injected, and happens after the in-sandbox judge reads the transcript so scoring is unaffected.
+
 ## 1.5.0
 
 ### Minor Changes

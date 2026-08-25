@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
-import { computeFingerprint, computeContentFingerprint, decideRefingerprint } from './fingerprint.js';
+import {
+  computeFingerprint,
+  computeContentFingerprint,
+  computeReuseCompatibilityFingerprint,
+  decideRefingerprint,
+  fingerprintConfigInput,
+} from './fingerprint.js';
 import type { RunnableExperimentConfig } from './types.js';
 
 const TEST_DIR = '/tmp/eval-framework-fingerprint-test';
@@ -130,6 +136,96 @@ describe('computeFingerprint', () => {
 
     const fp1 = computeFingerprint(evalDir, baseConfig);
     const fp2 = computeFingerprint(evalDir, { ...baseConfig, webResearch: true });
+
+    expect(fp1).not.toBe(fp2);
+  });
+
+  it('versions the repaired Codex web research mechanism only when opted in', () => {
+    const gateway = fingerprintConfigInput({
+      ...baseConfig,
+      agent: 'vercel-ai-gateway/codex',
+      webResearch: true,
+    });
+    const direct = fingerprintConfigInput({ ...baseConfig, agent: 'codex', webResearch: true });
+    const claude = fingerprintConfigInput({ ...baseConfig, webResearch: true });
+    const codexParametric = fingerprintConfigInput({ ...baseConfig, agent: 'codex' });
+
+    expect(gateway.agentFingerprint).toEqual({ webResearchProtocol: 'live-v1' });
+    expect(direct.agentFingerprint).toEqual({ webResearchProtocol: 'live-v1' });
+    expect(claude.agentFingerprint).toBeUndefined();
+    expect(codexParametric.agentFingerprint).toBeUndefined();
+  });
+
+  it('creates a non-carryable compatibility fingerprint only for opt-in runtime behavior', () => {
+    expect(computeReuseCompatibilityFingerprint(baseConfig)).toBeUndefined();
+    expect(
+      computeReuseCompatibilityFingerprint({ ...baseConfig, disableBundledSkills: true })
+    ).toMatch(/^[a-f0-9]{64}$/);
+
+    const legacyResearch = computeReuseCompatibilityFingerprint({
+      ...baseConfig,
+      webResearch: true,
+    });
+    const codexResearch = computeReuseCompatibilityFingerprint({
+      ...baseConfig,
+      agent: 'vercel-ai-gateway/codex',
+      webResearch: true,
+    });
+    expect(legacyResearch).toMatch(/^[a-f0-9]{64}$/);
+    expect(codexResearch).toMatch(/^[a-f0-9]{64}$/);
+    expect(codexResearch).not.toBe(legacyResearch);
+  });
+
+  it('does not create a cache boundary when bundled skills are not applicable', () => {
+    const opencode = {
+      ...baseConfig,
+      agent: 'vercel-ai-gateway/opencode',
+      disableBundledSkills: true,
+    };
+    expect(fingerprintConfigInput(opencode).disableBundledSkills).toBeUndefined();
+    expect(computeReuseCompatibilityFingerprint(opencode)).toBeUndefined();
+  });
+
+  it('creates a cache boundary when isolation applies to a pinned judge', () => {
+    const opencodeWithClaudeJudge = {
+      ...baseConfig,
+      agent: 'vercel-ai-gateway/opencode',
+      disableBundledSkills: true,
+      judge: {
+        agent: 'vercel-ai-gateway/claude-code',
+        model: 'claude-opus-4-8',
+      },
+    };
+    expect(fingerprintConfigInput(opencodeWithClaudeJudge).disableBundledSkills).toBe(true);
+    expect(computeReuseCompatibilityFingerprint(opencodeWithClaudeJudge)).toMatch(
+      /^[a-f0-9]{64}$/
+    );
+  });
+
+  it('keeps bundled-skill defaults equivalent to existing fingerprints', () => {
+    const evalDir = createEvalDir('eval-skills-default', {
+      'PROMPT.md': 'Do something',
+      'EVAL.ts': 'test code',
+      'package.json': '{"type":"module"}',
+    });
+
+    const fp1 = computeFingerprint(evalDir, baseConfig);
+    const fp2 = computeFingerprint(evalDir, { ...baseConfig, disableBundledSkills: false });
+    const fp3 = computeFingerprint(evalDir, { ...baseConfig, disableBundledSkills: undefined });
+
+    expect(fp1).toBe(fp2);
+    expect(fp1).toBe(fp3);
+  });
+
+  it('changes when bundled skills are explicitly disabled', () => {
+    const evalDir = createEvalDir('eval-skills-disabled', {
+      'PROMPT.md': 'Do something',
+      'EVAL.ts': 'test code',
+      'package.json': '{"type":"module"}',
+    });
+
+    const fp1 = computeFingerprint(evalDir, baseConfig);
+    const fp2 = computeFingerprint(evalDir, { ...baseConfig, disableBundledSkills: true });
 
     expect(fp1).not.toBe(fp2);
   });
@@ -297,6 +393,19 @@ describe('decideRefingerprint', () => {
       { fingerprint: 'same', contentFingerprint: 'C' }
     );
     expect(d).toEqual({ stale: false });
+  });
+
+  it('never carries results across an opt-in runtime compatibility boundary', () => {
+    const d = decideRefingerprint(
+      { fingerprint: 'old-combined', contentFingerprint: 'C' },
+      {
+        fingerprint: 'new-combined',
+        contentFingerprint: 'C',
+        reuseCompatibilityFingerprint: 'runtime-v1',
+      }
+    );
+    expect(d).toEqual({ stale: true });
+    expect(d.fingerprint).toBeUndefined();
   });
 
   it('leaves a changed eval STALE — never masks it', () => {

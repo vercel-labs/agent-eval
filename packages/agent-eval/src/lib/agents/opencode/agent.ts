@@ -138,6 +138,7 @@ export function createOpenCodeDefinition(): AgentDefinition {
     displayName: 'OpenCode (Vercel AI Gateway)',
     defaultModel: 'vercel/anthropic/claude-sonnet-4',
     o11yAgentName: 'vercel-ai-gateway/opencode',
+    bundledSkillsControl: 'not-applicable',
     // Resolve run.mjs next to this file (works in src during dev and in dist after
     // the build copies run.mjs alongside the compiled agent.js).
     runnerPath: fileURLToPath(new URL('./run.mjs', import.meta.url)),

@@ -40,7 +40,14 @@ import {
 } from '../shared.js';
 import { redactRunResult } from '../redact.js';
 import { getAgent } from '../registry.js';
-import type { AgentDefinition, AgentRunInput, RunnerResult } from './contract.js';
+import {
+  assertBundledSkillsControl,
+  assertCrossAgentJudgeSupport,
+  assertWebResearchControl,
+  type AgentDefinition,
+  type AgentRunInput,
+  type RunnerResult,
+} from './contract.js';
 
 /** Union of the two sandbox backends (same alias the old adapters used). */
 type AnySandbox = SandboxManager | DockerSandboxManager;
@@ -66,6 +73,8 @@ interface JudgeRuntimeConfig {
   runnerPath: string;
   /** Model the judge grades with (null → let the agent CLI default). */
   model: string | null;
+  /** Preserve the caller's opt-in bundled-skill isolation for judge runs. */
+  disableBundledSkills?: boolean;
   /** Host-computed runner extra (e.g. codex's resolved model/effort). */
   extra: Record<string, unknown> | null;
 }
@@ -99,6 +108,8 @@ interface JudgeRuntime {
  */
 export function resolveJudgeRuntime(def: AgentDefinition, options: AgentRunOptions): JudgeRuntime {
   const spec = options.judge;
+  assertBundledSkillsControl(def, options.disableBundledSkills);
+  assertWebResearchControl(def, options.webResearch);
 
   // Same harness as codegen (default, or judge.agent omitted/equal): reuse run.mjs,
   // just pin the model when asked. Identical to pre-feature behavior when unset.
@@ -113,6 +124,7 @@ export function resolveJudgeRuntime(def: AgentDefinition, options: AgentRunOptio
       config: {
         runnerPath: RUNNER_PATH,
         model: spec?.model ?? options.model ?? null,
+        disableBundledSkills: judgeOptions.disableBundledSkills,
         extra: def.runnerExtra?.(judgeOptions) ?? null,
       },
     };
@@ -120,6 +132,8 @@ export function resolveJudgeRuntime(def: AgentDefinition, options: AgentRunOptio
 
   // Pinned to a DIFFERENT agent — resolve its definition + key + runner.
   const judgeDef = getAgent(spec.agent!).definition;
+  assertBundledSkillsControl(judgeDef, options.disableBundledSkills);
+  assertCrossAgentJudgeSupport(judgeDef);
   const judgeApiKey = resolveAgentApiKey(judgeDef.getApiKeyEnvVar) ?? '';
   const judgeOptions: AgentRunOptions = { ...options, model: spec.model, apiKey: judgeApiKey };
   return {
@@ -131,6 +145,7 @@ export function resolveJudgeRuntime(def: AgentDefinition, options: AgentRunOptio
     config: {
       runnerPath: JUDGE_RUNNER_PATH,
       model: spec.model,
+      disableBundledSkills: judgeOptions.disableBundledSkills,
       extra: judgeDef.runnerExtra?.(judgeOptions) ?? null,
     },
   };
@@ -239,6 +254,8 @@ export async function runWithDefinition(
   fixturePath: string,
   options: AgentRunOptions
 ): Promise<AgentRunResult> {
+  assertBundledSkillsControl(def, options.disableBundledSkills);
+  assertWebResearchControl(def, options.webResearch);
   const result = await runOnce(def, fixturePath, options);
 
   // A judge pinned to a different agent authenticates with its own key, and it can
@@ -354,6 +371,7 @@ async function runOnce(
       model: options.model,
       modelPolicy: options.modelPolicy,
       webResearch: options.webResearch,
+      disableBundledSkills: options.disableBundledSkills,
       agentOptions: options.agentOptions,
       cwd: sandbox.getWorkingDirectory(), // post-relocation cwd; transcript paths use it
       resultPath: RESULT_PATH,
