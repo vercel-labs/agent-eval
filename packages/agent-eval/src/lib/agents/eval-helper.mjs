@@ -27,7 +27,7 @@
  * these files before validation).
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { expect } from 'vitest';
 
@@ -129,12 +129,31 @@ function readJudgeConfig() {
   }
 }
 
+/** spawn + collect, resolving on exit. Never rejects: judge failures become verdicts. */
+function spawnCollect(cmd, args) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { cwd: process.cwd(), env: process.env });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => (stdout += chunk));
+    child.stderr.on('data', (chunk) => (stderr += chunk));
+    child.on('error', (err) => resolve({ stdout, stderr: `${stderr}\n${err.message}`, status: -1 }));
+    child.on('close', (status) => resolve({ stdout, stderr, status }));
+  });
+}
+
 /**
  * Run one agentic judgment IN this sandbox by re-invoking the codegen agent's
- * runner. Blocking (spawnSync) — the test has nothing else to do while the judge
- * works, and the sandbox-level timeout bounds it. Returns {pass, score?, reason}.
+ * runner. Async ON PURPOSE, not as style: the vitest worker answers the main
+ * process over an RPC channel whose per-call timeout is hardcoded to 60s (birpc's
+ * DEFAULT_TIMEOUT — no vitest config or env var reaches it). A judge run takes
+ * however long the model takes, routinely past a minute, and the old spawnSync
+ * blocked the worker's event loop for all of it, so in-flight calls like
+ * onTaskUpdate timed out and vitest failed the file EVEN WHEN EVERY TEST PASSED.
+ * Keeping the loop alive while the judge works is the entire fix; the sandbox
+ * timeout still bounds the run. Returns {pass, score?, reason}.
  */
-function runJudge(subject, criterion, opts = {}) {
+async function runJudge(subject, criterion, opts = {}) {
   const id = nextId();
   mkdirSync(JUDGE_IO_DIR, { recursive: true });
   const verdictPath = `${JUDGE_IO_DIR}/${id}-verdict.json`;
@@ -156,12 +175,7 @@ function runJudge(subject, criterion, opts = {}) {
     extra: cfg.extra ?? undefined,
   };
 
-  const res = spawnSync('node', [runnerPath, JSON.stringify(input)], {
-    cwd: process.cwd(),
-    env: process.env,
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
-  });
+  const res = await spawnCollect('node', [runnerPath, JSON.stringify(input)]);
 
   // Prefer the verdict file the judge agent wrote; then the runner result's output
   // (the agent's final message); then raw stdout.
@@ -189,9 +203,12 @@ function subjectOf(received) {
   return received && typeof received === 'object' ? received.__judgeSubject : undefined;
 }
 
-// Sync matchers: spawnSync blocks, so these work whether or not you `await` them.
+// Async matchers — `await expect(...)`, as every example here shows. The await is
+// load-bearing: vitest does not track a custom matcher's promise, so an un-awaited
+// judge call floats free of its test — a failing verdict surfaces as an unhandled
+// rejection instead of failing the test, and a passing one is never even read.
 expect.extend({
-  toSatisfyCriterion(received, criterion) {
+  async toSatisfyCriterion(received, criterion) {
     const subject = subjectOf(received);
     if (!subject) {
       return {
@@ -200,7 +217,7 @@ expect.extend({
           'toSatisfyCriterion expects `environment` or `transcript` from @vercel/agent-eval/eval',
       };
     }
-    const v = runJudge(subject, criterion);
+    const v = await runJudge(subject, criterion);
     return {
       pass: v.pass,
       message: () =>
@@ -210,7 +227,7 @@ expect.extend({
     };
   },
 
-  toScoreAtLeast(received, criterion, threshold) {
+  async toScoreAtLeast(received, criterion, threshold) {
     const subject = subjectOf(received);
     if (!subject) {
       return {
@@ -219,7 +236,7 @@ expect.extend({
           'toScoreAtLeast expects `environment` or `transcript` from @vercel/agent-eval/eval',
       };
     }
-    const v = runJudge(subject, criterion, { numeric: true });
+    const v = await runJudge(subject, criterion, { numeric: true });
     const score = typeof v.score === 'number' ? v.score : v.pass ? 1 : 0;
     const pass = score >= threshold;
     return {

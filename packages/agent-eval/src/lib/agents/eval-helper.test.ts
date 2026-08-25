@@ -18,6 +18,8 @@ declare module 'vitest' {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   interface Assertion<T = any> {
     toContainText(needle: string | RegExp): T;
+    toSatisfyCriterion(criterion: string): Promise<T>;
+    toScoreAtLeast(criterion: string, threshold: number): Promise<T>;
   }
 }
 
@@ -198,5 +200,78 @@ describe('toContainText', () => {
     expect(() => expect(transcript).toContainText(/z*/)).toThrowError(
       /matches the empty string/
     );
+  });
+});
+
+describe('judge matchers', () => {
+  // runJudge resolves the runner and judge-config relative to cwd, exactly as it
+  // does in-sandbox, so run each test from a temp dir holding a fake runner. The
+  // fake honors the runner contract's output fallback: verdict JSON on stdout.
+  let dir: string;
+  let prevCwd: string;
+
+  beforeEach(() => {
+    prevCwd = process.cwd();
+    dir = mkdtempSync(join(tmpdir(), 'eval-helper-judge-'));
+    process.chdir(dir);
+    mkdirSync('__agent_eval__', { recursive: true });
+  });
+
+  afterEach(() => {
+    process.chdir(prevCwd);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeFakeRunner(script: string) {
+    writeFileSync('fake-runner.mjs', script);
+    writeFileSync(
+      '__agent_eval__/judge-config.json',
+      JSON.stringify({ runnerPath: 'fake-runner.mjs', model: null, extra: null })
+    );
+  }
+
+  it('resolves a passing verdict through the runner round-trip', async () => {
+    writeFakeRunner(
+      `process.stdout.write(JSON.stringify({ pass: true, reason: 'fake evidence' }));`
+    );
+    await expect(environment).toSatisfyCriterion('anything at all');
+  });
+
+  it('a failing verdict fails the assertion (and .not inverts it)', async () => {
+    writeFakeRunner(
+      `process.stdout.write(JSON.stringify({ pass: false, reason: 'nope' }));`
+    );
+    await expect(expect(environment).toSatisfyCriterion('x')).rejects.toThrow(/reason: nope/);
+    await expect(environment).not.toSatisfyCriterion('x');
+  });
+
+  it('does not block the event loop while the judge runs', async () => {
+    // The regression this guards: the vitest worker's RPC heartbeat shares this
+    // event loop, and its per-call timeout is hardcoded to 60s. A judge that
+    // blocks the loop past that fails the whole file even when every test passes.
+    // A timer firing while the judge is still out is only possible if the loop
+    // stays alive — under the old spawnSync implementation this test hangs at
+    // 'timer' until the judge returns, and the order assertion fails.
+    writeFakeRunner(
+      `setTimeout(() => {
+        process.stdout.write(JSON.stringify({ pass: true, reason: 'slow ok' }));
+      }, 300);`
+    );
+    const order: string[] = [];
+    const judged = expect(environment)
+      .toSatisfyCriterion('slow criterion')
+      .then(() => order.push('judge'));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    order.push('timer');
+    await judged;
+    expect(order).toEqual(['timer', 'judge']);
+  });
+
+  it('toScoreAtLeast compares the numeric score', async () => {
+    writeFakeRunner(
+      `process.stdout.write(JSON.stringify({ pass: true, score: 0.7, reason: 'ok' }));`
+    );
+    await expect(environment).toScoreAtLeast('quality', 0.6);
+    await expect(environment).not.toScoreAtLeast('quality', 0.8);
   });
 });
