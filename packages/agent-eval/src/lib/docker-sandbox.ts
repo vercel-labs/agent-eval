@@ -53,6 +53,14 @@ export interface DockerSandboxOptions {
 }
 
 /**
+ * Set of currently active sandbox containers, used so we can stop them all
+ * on a process-level signal (SIGINT/SIGTERM) before exiting. Without this,
+ * a Ctrl-C'd run leaks running containers because the per-agent try/finally
+ * cleanup never executes.
+ */
+const activeContainers = new Set<Docker.Container>();
+
+/**
  * Docker-based sandbox manager.
  * Creates isolated containers for running evals.
  */
@@ -103,6 +111,7 @@ export class DockerSandboxManager implements Sandbox {
     });
 
     this._containerId = this.container.id;
+    activeContainers.add(this.container);
 
     // Start the container
     await this.container.start();
@@ -385,6 +394,7 @@ export class DockerSandboxManager implements Sandbox {
    */
   async stop(): Promise<void> {
     if (this.container) {
+      activeContainers.delete(this.container);
       try {
         await this.container.stop({ t: 0 }); // Immediate stop
       } catch {
@@ -393,4 +403,28 @@ export class DockerSandboxManager implements Sandbox {
       this.container = null;
     }
   }
+}
+
+/**
+ * Stop every sandbox container created by this process that hasn't already
+ * been stopped. Intended for SIGINT/SIGTERM handlers so an interrupted run
+ * doesn't leak running containers.
+ *
+ * Returns the number of containers that were stopped.
+ */
+export async function cleanupActiveSandboxes(): Promise<number> {
+  const containers = Array.from(activeContainers);
+  activeContainers.clear();
+
+  await Promise.all(
+    containers.map(async (container) => {
+      try {
+        await container.stop({ t: 0 });
+      } catch {
+        // Container may already be stopped or removed
+      }
+    })
+  );
+
+  return containers.length;
 }
