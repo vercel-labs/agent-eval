@@ -38,9 +38,44 @@ const SANDBOX_UID = 1000;
 const SANDBOX_GID = 1000;
 
 /**
+ * Home of the image `node` user (UID 1000). Official Node images set this as
+ * the passwd home; we also export it on every sandbox-user exec so installers
+ * that write to `$HOME/.local` (Cursor CLI, custom OpenCode binaries) land in a
+ * writable directory instead of the container's root HOME (`/root`).
+ */
+export const SANDBOX_HOME = '/home/node';
+
+/**
  * Directory for npm global packages (non-root install location).
  */
-const NPM_GLOBAL_DIR = '/home/node/.npm-global';
+const NPM_GLOBAL_DIR = `${SANDBOX_HOME}/.npm-global`;
+
+/** User-local binaries. Cursor's official installer and `pip --user` write here. */
+const LOCAL_BIN_DIR = `${SANDBOX_HOME}/.local/bin`;
+
+/**
+ * PATH for sandbox-user execs. Includes npm's non-root global prefix and the
+ * user-local bin dir. Docker exec would otherwise inherit a root-oriented PATH
+ * that cannot see `~/.local/bin/agent` after `curl https://cursor.com/install`.
+ */
+export function dockerSandboxPath(): string {
+  return `${NPM_GLOBAL_DIR}/bin:${LOCAL_BIN_DIR}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`;
+}
+
+/**
+ * Env for commands run as the sandbox user. PATH is always the sandbox PATH
+ * (callers cannot override it — same as before this helper was extracted).
+ * HOME defaults to the `node` user home and can be overridden via `overrides`.
+ */
+export function dockerSandboxUserEnv(
+  overrides: Record<string, string> = {}
+): Record<string, string> {
+  return {
+    HOME: SANDBOX_HOME,
+    ...overrides,
+    PATH: dockerSandboxPath(),
+  };
+}
 
 /**
  * Options for creating a Docker sandbox.
@@ -183,11 +218,7 @@ export class DockerSandboxManager implements Sandbox {
     args: string[] = [],
     options: { env?: Record<string, string>; cwd?: string } = {}
   ): Promise<CommandResult> {
-    // Ensure npm global binaries are in PATH
-    const env = {
-      ...options.env,
-      PATH: `${NPM_GLOBAL_DIR}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
-    };
+    const env = dockerSandboxUserEnv(options.env);
 
     return this.execCommand(command, args, {
       env,
