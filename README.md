@@ -738,7 +738,12 @@ Classification uses Claude Sonnet 4.5 via the Vercel AI Gateway with sandboxed r
 After each experiment completes, the framework automatically:
 - Removes duplicate results for the same eval (keeps the newest)
 - Removes incomplete results (missing `summary.json` or transcripts)
-- Removes empty timestamp directories
+- Prunes group and timestamp directories left empty by those removals
+
+Nested evals are handled throughout: a result stored at `caching/cache-bypass/`
+is deduplicated and reused under that full name, and the `caching/` group
+directory is removed only once every eval beneath it is gone. Results that
+housekeeping keeps are never modified.
 
 ## Environment Variables
 

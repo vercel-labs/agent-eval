@@ -4,12 +4,13 @@
  * After experiments complete, consolidate results:
  * - For each (experiment, eval) pair: keep only the latest valid result
  * - Remove older duplicates and dangling/incomplete results
- * - Remove empty timestamp directories
+ * - Prune group and timestamp directories left empty by those removals
  */
 
 import { readdirSync, rmSync, existsSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { isClassifierEnabled, isNonModelFailure } from './classifier.js';
+import { findEvalResultDirs, isRunDirName } from './results.js';
 
 interface HousekeepingStats {
   removedDuplicates: number;
@@ -23,7 +24,8 @@ interface HousekeepingStats {
  *
  * For each eval: keeps the newest complete result (has summary.json and
  * at least one transcript), removes older duplicates and incomplete results.
- * Removes empty timestamp directories afterward.
+ * Group and timestamp directories left empty by those removals are then pruned;
+ * results that were kept are never modified.
  */
 export function housekeep(
   resultsDir: string,
@@ -66,17 +68,13 @@ export function housekeep(
   for (const timestamp of timestamps) {
     const tsDir = join(experimentDir, timestamp);
 
-    let evalDirs: string[];
-    try {
-      evalDirs = readdirSync(tsDir).filter((d) => !d.startsWith('.'));
-    } catch {
-      continue;
-    }
+    const evalDirs = findEvalResultDirs(tsDir);
+
+    // Group directories that a removal below may have left empty.
+    const orphanedGroups = new Set<string>();
 
     for (const evalDir of evalDirs) {
       const evalResultDir = join(tsDir, evalDir);
-
-      if (!statSync(evalResultDir).isDirectory()) continue;
 
       // Read fingerprint to distinguish different configs (e.g. smoke vs full)
       const fingerprint = readFingerprint(evalResultDir);
@@ -87,6 +85,7 @@ export function housekeep(
         if (!options?.dry) {
           rmSync(evalResultDir, { recursive: true });
         }
+        markGroupsOrphaned(evalDir, orphanedGroups);
         stats.removedDuplicates++;
         continue;
       }
@@ -100,31 +99,75 @@ export function housekeep(
         if (!options?.dry) {
           rmSync(evalResultDir, { recursive: true });
         }
+        markGroupsOrphaned(evalDir, orphanedGroups);
         stats.removedNonModelFailures++;
       } else {
         // Incomplete or smoke — remove
         if (!options?.dry) {
           rmSync(evalResultDir, { recursive: true });
         }
+        markGroupsOrphaned(evalDir, orphanedGroups);
         stats.removedIncomplete++;
       }
     }
 
-    // Check if timestamp dir is now empty
-    try {
-      const remaining = readdirSync(tsDir).filter((d) => !d.startsWith('.'));
-      if (remaining.length === 0) {
-        if (!options?.dry) {
-          rmSync(tsDir, { recursive: true });
-        }
-        stats.removedEmptyDirs++;
-      }
-    } catch {
-      // Directory already removed or inaccessible
+    // Prune group directories the removals above emptied, deepest first, then
+    // the timestamp directory itself. Only ancestors of something we deleted are
+    // considered — results we chose to keep are never walked into.
+    const deepestFirst = [...orphanedGroups].sort(
+      (a, b) => b.split('/').length - a.split('/').length
+    );
+    for (const group of deepestFirst) {
+      if (removeIfEmpty(join(tsDir, group), options?.dry)) stats.removedEmptyDirs++;
     }
+    if (removeIfEmpty(tsDir, options?.dry)) stats.removedEmptyDirs++;
   }
 
   return stats;
+}
+
+/**
+ * OS metadata files that should not keep an otherwise-empty directory alive.
+ * Deliberately an allowlist: any other dotfile (.gitignore, .github/, .env) is
+ * real content and must not be swept away with the directory holding it.
+ */
+const IGNORABLE_ENTRIES = new Set(['.DS_Store', 'Thumbs.db']);
+
+/**
+ * Record every group directory between `evalDir` and the timestamp root, so the
+ * ones a removal just emptied can be pruned.
+ */
+function markGroupsOrphaned(evalDir: string, orphaned: Set<string>): void {
+  const segments = evalDir.split('/');
+  segments.pop();
+  while (segments.length > 0) {
+    orphaned.add(segments.join('/'));
+    segments.pop();
+  }
+}
+
+/**
+ * Remove `dir` if it holds nothing but OS metadata. Returns whether it went.
+ *
+ * A directory that cannot be read is left alone: never delete contents that
+ * were never inspected.
+ */
+function removeIfEmpty(dir: string, dry = false): boolean {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return false;
+  }
+  if (entries.some((e) => !IGNORABLE_ENTRIES.has(e))) return false;
+  if (!dry) {
+    try {
+      rmSync(dir, { recursive: true });
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -163,7 +206,7 @@ function isComplete(evalResultDir: string): boolean {
   try {
     const entries = readdirSync(evalResultDir);
     for (const entry of entries) {
-      if (!entry.startsWith('run-')) continue;
+      if (!isRunDirName(entry)) continue;
       const runDir = join(evalResultDir, entry);
       if (
         existsSync(join(runDir, 'transcript-raw.jsonl')) ||
