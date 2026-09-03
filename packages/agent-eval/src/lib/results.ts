@@ -8,9 +8,9 @@ import {
 	readdirSync,
 	readFileSync,
 	existsSync,
-	statSync,
 	unlinkSync,
 } from 'fs';
+import type { Dirent } from 'fs';
 import { join, dirname } from 'path';
 import chalk from 'chalk';
 import type {
@@ -523,16 +523,11 @@ export function scanReusableResults(
 
 	for (const timestamp of timestamps) {
 		const tsDir = join(experimentDir, timestamp);
-		if (!statSync(tsDir).isDirectory()) continue;
 
-		let evalDirs: string[];
-		try {
-			evalDirs = readdirSync(tsDir).filter((d) => !d.startsWith('.'));
-		} catch {
-			continue;
-		}
-
-		for (const evalDir of evalDirs) {
+		// Walk the results actually on disk rather than probing every configured
+		// eval: an experiment with many evals and many timestamps would otherwise
+		// cost a stat per (timestamp x eval) pair on every scan.
+		for (const evalDir of findEvalResultDirs(tsDir)) {
 			// Already found a reusable result for this eval
 			if (reusable.has(evalDir)) continue;
 
@@ -586,4 +581,80 @@ export function scanReusableResults(
 	}
 
 	return reusable;
+}
+
+/**
+ * Matches the run directories saveResults creates ("run-1", "run-2", ...).
+ *
+ * Shared so everything that asks "is this a run?" agrees: when the discovery
+ * predicate and housekeeping's completeness check drift apart, a group
+ * directory can be mistaken for a result and deleted wholesale.
+ */
+export function isRunDirName(name: string): boolean {
+	return /^run-\d+$/.test(name);
+}
+
+/**
+ * Check whether a directory is an eval result directory, as opposed to a group
+ * directory that merely contains nested evals.
+ *
+ * A result has summary.json, or holds run-N/ directories from a run that
+ * crashed before the summary was written. Entries are read as dirents, so a
+ * plain file named "run-1.log" never makes its parent look like a result.
+ */
+export function isEvalResultDir(absPath: string): boolean {
+	if (existsSync(join(absPath, 'summary.json'))) return true;
+	try {
+		return readdirSync(absPath, { withFileTypes: true }).some((e) => {
+			if (!e.isDirectory() || !isRunDirName(e.name)) return false;
+			// An eval can itself be named "run-1". If the child is a result in its
+			// own right, this directory is the group above it, not a result.
+			return !isEvalResultDir(join(absPath, e.name));
+		});
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Find every eval-result directory under a timestamp directory, returning paths
+ * relative to it (e.g. "eval-1" or "caching/cache-bypass").
+ *
+ * Recurses through group directories until it reaches a result and does not
+ * descend past it. A directory holding files but no result anywhere beneath is
+ * reported as a result itself: it is debris from a run that crashed before
+ * writing run-N/, and housekeeping has to see it in order to clean it up.
+ *
+ * Entries come from dirents rather than statSync, so symlinks are not followed
+ * and a link pointing at an ancestor cannot send the walk into a loop.
+ */
+export function findEvalResultDirs(tsDir: string, prefix = ''): string[] {
+	const out: string[] = [];
+	let entries: Dirent[];
+	try {
+		entries = readdirSync(join(tsDir, prefix), { withFileTypes: true });
+	} catch {
+		return out;
+	}
+
+	let hasContent = false;
+	for (const entry of entries) {
+		if (entry.name.startsWith('.')) continue;
+		if (!entry.isDirectory()) {
+			hasContent = true;
+			continue;
+		}
+		const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+		if (isEvalResultDir(join(tsDir, rel))) {
+			out.push(rel);
+		} else {
+			out.push(...findEvalResultDirs(tsDir, rel));
+		}
+	}
+
+	// Debris from a crashed run: files, but no result directory beneath. The
+	// timestamp root is never reported this way — it is not itself an eval.
+	if (prefix && out.length === 0 && hasContent) return [prefix];
+
+	return out;
 }

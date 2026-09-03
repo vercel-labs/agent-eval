@@ -10,6 +10,8 @@ import {
   formatResultsTable,
   formatRunResult,
   scanReusableResults,
+  findEvalResultDirs,
+  isEvalResultDir,
 } from './results.js';
 import type { AgentRunResult } from './agents/types.js';
 import type { EvalRunResult, EvalRunData, ResolvedExperimentConfig } from './types.js';
@@ -619,6 +621,93 @@ describe('results utilities', () => {
       const result = scanReusableResults(TEST_DIR, 'my-exp', { 'eval-1': 'abc123' });
       expect(result.size).toBe(1);
       expect(result.get('eval-1')?.timestamp).toBe('2024-01-26T00-00-00.000Z');
+    });
+
+    it('finds reusable results for nested eval directories', () => {
+      const expDir = join(TEST_DIR, 'my-exp', '2024-01-26T12-00-00.000Z', 'caching', 'cache-bypass');
+      mkdirSync(expDir, { recursive: true });
+      writeFileSync(
+        join(expDir, 'summary.json'),
+        JSON.stringify({ totalRuns: 1, passedRuns: 1, passRate: '100%', meanDuration: 10, fingerprint: 'nested-hash' })
+      );
+
+      const result = scanReusableResults(TEST_DIR, 'my-exp', { 'caching/cache-bypass': 'nested-hash' });
+      expect(result.size).toBe(1);
+      expect(result.get('caching/cache-bypass')?.fingerprint).toBe('nested-hash');
+    });
+  });
+
+  describe('findEvalResultDirs', () => {
+    it('finds flat and nested eval result directories', () => {
+      const tsDir = join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z');
+      mkdirSync(join(tsDir, 'flat-eval'), { recursive: true });
+      writeFileSync(join(tsDir, 'flat-eval', 'summary.json'), '{}');
+
+      mkdirSync(join(tsDir, 'group', 'nested-eval'), { recursive: true });
+      writeFileSync(join(tsDir, 'group', 'nested-eval', 'summary.json'), '{}');
+
+      mkdirSync(join(tsDir, 'a', 'b', 'c', 'deep-eval'), { recursive: true });
+      writeFileSync(join(tsDir, 'a', 'b', 'c', 'deep-eval', 'summary.json'), '{}');
+
+      // Crashed run (has run-* but no summary.json)
+      mkdirSync(join(tsDir, 'group', 'crashed-eval', 'run-1'), { recursive: true });
+
+      const found = findEvalResultDirs(tsDir).sort();
+      expect(found).toEqual([
+        'a/b/c/deep-eval',
+        'flat-eval',
+        'group/crashed-eval',
+        'group/nested-eval',
+      ]);
+    });
+
+    it('identifies eval result directories with isEvalResultDir', () => {
+      const withSummary = join(TEST_DIR, 'eval-with-summary');
+      mkdirSync(withSummary, { recursive: true });
+      writeFileSync(join(withSummary, 'summary.json'), '{}');
+      expect(isEvalResultDir(withSummary)).toBe(true);
+
+      const withRun = join(TEST_DIR, 'eval-with-run', 'run-1');
+      mkdirSync(withRun, { recursive: true });
+      expect(isEvalResultDir(join(TEST_DIR, 'eval-with-run'))).toBe(true);
+
+      const empty = join(TEST_DIR, 'empty-dir');
+      mkdirSync(empty, { recursive: true });
+      expect(isEvalResultDir(empty)).toBe(false);
+    });
+
+    it('treats a nested eval named run-N as an eval, not a run directory', () => {
+      const tsDir = join(TEST_DIR, 'ts-run-named-eval');
+      mkdirSync(join(tsDir, 'caching', 'run-1'), { recursive: true });
+      writeFileSync(join(tsDir, 'caching', 'run-1', 'summary.json'), '{}');
+
+      expect(isEvalResultDir(join(tsDir, 'caching'))).toBe(false);
+      expect(findEvalResultDirs(tsDir)).toEqual(['caching/run-1']);
+    });
+
+    it('ignores files that merely look like run directories', () => {
+      const tsDir = join(TEST_DIR, 'ts-run-named-file');
+      mkdirSync(join(tsDir, 'group', 'eval-1'), { recursive: true });
+      writeFileSync(join(tsDir, 'group', 'eval-1', 'summary.json'), '{}');
+      writeFileSync(join(tsDir, 'group', 'run-1.log'), 'noise');
+
+      expect(isEvalResultDir(join(tsDir, 'group'))).toBe(false);
+      expect(findEvalResultDirs(tsDir)).toEqual(['group/eval-1']);
+    });
+
+    it('reports crashed debris so housekeeping can still clean it up', () => {
+      const tsDir = join(TEST_DIR, 'ts-debris');
+      mkdirSync(join(tsDir, 'group', 'eval-1'), { recursive: true });
+      writeFileSync(join(tsDir, 'group', 'eval-1', 'partial.log'), 'boom');
+
+      expect(findEvalResultDirs(tsDir)).toEqual(['group/eval-1']);
+    });
+
+    it('reports nothing for a tree of empty directories', () => {
+      const tsDir = join(TEST_DIR, 'ts-empty');
+      mkdirSync(join(tsDir, 'group', 'subgroup'), { recursive: true });
+
+      expect(findEvalResultDirs(tsDir)).toEqual([]);
     });
   });
 });
