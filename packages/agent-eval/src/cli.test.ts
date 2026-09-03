@@ -50,6 +50,13 @@ describe('CLI', () => {
       expect(result.stdout).toContain('init');
       expect(result.stdout).toContain('run');
     });
+
+    it('documents playground port flags', () => {
+      const result = runCli(['playground', '--help']);
+      expect(result.stdout).toContain('--port');
+      expect(result.stdout).toContain('-p');
+      expect(result.stdout).toContain('PORT');
+    });
   });
 
   describe('run command', () => {

@@ -636,6 +636,7 @@ This opens a local Next.js app with:
 Options:
 ```bash
 npx @vercel/agent-eval playground --results-dir ./results --evals-dir ./evals --port 3001
+PORT=3001 npx @vercel/agent-eval playground   # same thing via env
 ```
 
 ### File Copying

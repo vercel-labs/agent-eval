@@ -23,6 +23,8 @@ import { runWithDefinition } from '../plugin/orchestrator.js';
  * Preserved exactly from the old adapter:
  *   - install: project `npm install` (retried once) then the official install script
  *     `curl https://cursor.com/install -fsSL | bash` (a SHELL step, since it pipes).
+ *     The installer writes `~/.local/bin/agent` and exits 0 without putting that
+ *     directory on PATH, so we also assert the binary exists at that path.
  *   - no config files.
  *   - auth: CURSOR_API_KEY only (direct API, no gateway mode).
  *   - o11y parser name: 'cursor'.
@@ -56,7 +58,10 @@ export function createCursorDefinition(): AgentDefinition {
         },
         {
           kind: 'shell',
-          script: 'curl https://cursor.com/install -fsSL | bash',
+          // Official installer exits 0 even when ~/.local/bin is not on PATH.
+          // Fail here if the symlink never landed, instead of a later ENOENT.
+          script:
+            'curl https://cursor.com/install -fsSL | bash && test -x "$HOME/.local/bin/agent"',
           errorPrefix: 'Cursor CLI install failed',
           errorBody: 'stderr',
         },

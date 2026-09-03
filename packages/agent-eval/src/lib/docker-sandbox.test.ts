@@ -5,7 +5,14 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { DockerSandboxManager } from './docker-sandbox.js';
+import {
+  DockerSandboxManager,
+  SANDBOX_APT_PACKAGES,
+  SANDBOX_HOME,
+  dockerSandboxAptInstallScript,
+  dockerSandboxPath,
+  dockerSandboxUserEnv,
+} from './docker-sandbox.js';
 import type { CommandResult } from './sandbox.js';
 
 /**
@@ -27,6 +34,33 @@ async function isDockerAvailable(): Promise<boolean> {
     return false;
   }
 }
+
+describe('dockerSandboxAptInstallScript', () => {
+  it('installs curl alongside git so official installer scripts can run', () => {
+    expect(SANDBOX_APT_PACKAGES).toContain('curl');
+    expect(SANDBOX_APT_PACKAGES).toContain('git');
+    expect(SANDBOX_APT_PACKAGES).toContain('ca-certificates');
+    expect(dockerSandboxAptInstallScript()).toBe(
+      'apt-get update -qq && apt-get install -y -qq ca-certificates git curl'
+    );
+  });
+});
+
+describe('dockerSandboxUserEnv', () => {
+  it('puts the node user home and ~/.local/bin on the sandbox PATH', () => {
+    const path = dockerSandboxPath();
+    expect(path.startsWith(`${SANDBOX_HOME}/.npm-global/bin:`)).toBe(true);
+    expect(path).toContain(`${SANDBOX_HOME}/.local/bin`);
+    expect(path).toContain('/usr/bin');
+
+    const env = dockerSandboxUserEnv({ CURSOR_API_KEY: 'k', PATH: '/tmp' });
+    expect(env.HOME).toBe(SANDBOX_HOME);
+    expect(env.CURSOR_API_KEY).toBe('k');
+    // Callers cannot replace PATH — user-local bins must stay visible.
+    expect(env.PATH).toBe(path);
+    expect(env.PATH).not.toBe('/tmp');
+  });
+});
 
 describe('DockerSandboxManager', () => {
   const skipDocker = process.env.SKIP_DOCKER_TESTS === '1';
@@ -177,6 +211,41 @@ describe('DockerSandboxManager', () => {
       try {
         const result = await sandbox.runCommand('false'); // Always exits with 1
         expect(result.exitCode).toBe(1);
+      } finally {
+        await sandbox.stop();
+      }
+    }, 120000);
+
+    it('resolves user-local binaries and sets HOME for the sandbox user', async () => {
+      if (skipDocker || !dockerAvailable) {
+        console.log('Skipping: Docker not available');
+        return;
+      }
+
+      const sandbox = await DockerSandboxManager.create({
+        timeout: 60000,
+        runtime: 'node24',
+      });
+
+      try {
+        const home = await sandbox.runShell('printf %s "$HOME"');
+        expect(home.exitCode).toBe(0);
+        expect(home.stdout).toBe(SANDBOX_HOME);
+
+        const install = await sandbox.runShell(
+          'mkdir -p "$HOME/.local/bin" && printf "%s\\n" "#!/bin/sh" "echo from-local-bin" > "$HOME/.local/bin/agent-eval-path-canary" && chmod +x "$HOME/.local/bin/agent-eval-path-canary"'
+        );
+        expect(install.exitCode).toBe(0);
+
+        // Regression for Cursor: spawnSync('agent') → ENOENT when PATH omitted ~/.local/bin.
+        const result = await sandbox.runCommand('agent-eval-path-canary');
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout.trim()).toBe('from-local-bin');
+
+        // node:*-slim has no curl; Cursor's installer is `curl … | bash`.
+        const curl = await sandbox.runCommand('curl', ['--version']);
+        expect(curl.exitCode).toBe(0);
+        expect(curl.stdout).toMatch(/^curl /);
       } finally {
         await sandbox.stop();
       }

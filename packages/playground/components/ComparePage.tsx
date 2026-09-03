@@ -59,12 +59,12 @@ export function ComparePage({ options, detailsMap }: ComparePageProps) {
 
   // Merge eval names from both sides
   const allEvalNames = new Set<string>();
-  leftData?.evals.forEach((e) => allEvalNames.add(e.name));
-  rightData?.evals.forEach((e) => allEvalNames.add(e.name));
+  leftData?.evals?.forEach((e) => allEvalNames.add(e.name));
+  rightData?.evals?.forEach((e) => allEvalNames.add(e.name));
   const evalNames = Array.from(allEvalNames).sort();
 
-  const leftMap = new Map(leftData?.evals.map((e) => [e.name, e]) ?? []);
-  const rightMap = new Map(rightData?.evals.map((e) => [e.name, e]) ?? []);
+  const leftMap = new Map(leftData?.evals?.map((e) => [e.name, e]) ?? []);
+  const rightMap = new Map(rightData?.evals?.map((e) => [e.name, e]) ?? []);
 
   return (
     <div className="space-y-6">

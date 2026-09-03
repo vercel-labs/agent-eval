@@ -4,7 +4,7 @@
  * This file is shipped INTO the sandbox by the orchestrator and executed there as
  * `node __agent_eval__/run.mjs '<AgentRunInput JSON>'`. It is intentionally
  * ZERO-DEPENDENCY (only `node:*` builtins) because the sandbox only has the
- * fixture's own deps + the installed `agent` (Cursor) CLI — it cannot import
+ * fixture's own deps + the installed Cursor CLI (`~/.local/bin/agent`) — it cannot import
  * anything from the @vercel/agent-eval package.
  *
  * Dual mode:
@@ -22,8 +22,9 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -78,11 +79,52 @@ export function extractTranscriptFromOutput(output) {
 }
 
 /**
+ * Resolve the Cursor CLI binary.
+ *
+ * The official installer (`curl https://cursor.com/install`) writes
+ * `$HOME/.local/bin/agent` (and a `cursor-agent` alias) and does not add that
+ * directory to PATH. Docker sandbox execs also used to omit `~/.local/bin` from
+ * PATH, which produced `spawnSync agent ENOENT` after a successful install.
+ * Prefer the installer path; fall back to a PATH lookup of `agent`.
+ *
+ * @param {NodeJS.ProcessEnv} [env]
+ * @param {(path: string) => boolean} [exists]
+ * @returns {string}
+ */
+export function resolveCursorBin(env = process.env, exists = existsSync) {
+  const home = env.HOME || homedir();
+  const candidates = [join(home, '.local/bin/agent'), join(home, '.local/bin/cursor-agent')];
+  for (const candidate of candidates) {
+    if (exists(candidate)) {
+      return candidate;
+    }
+  }
+  return 'agent';
+}
+
+/**
+ * Env for the Cursor CLI: keep caller secrets, and put the installer bin dir
+ * first on PATH so the binary and anything it re-execs can find `agent`.
+ *
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {NodeJS.ProcessEnv}
+ */
+export function buildCursorRunEnv(env = process.env) {
+  const home = env.HOME || homedir();
+  const localBin = join(home, '.local/bin');
+  const path = env.PATH || '';
+  return {
+    ...env,
+    PATH: path ? `${localBin}${delimiter}${path}` : localBin,
+  };
+}
+
+/**
  * Run Cursor over the workspace at `input.cwd` and return a RunnerResult.
  *
  * Auth (CURSOR_API_KEY) arrives via process.env — the orchestrator sets it on the
- * `node run.mjs` invocation, and we pass process.env straight through to the CLI.
- * The runner never handles secrets itself.
+ * `node run.mjs` invocation. We forward that env with `~/.local/bin` prepended so
+ * the installer symlink is visible. The runner never handles secrets itself.
  *
  * @param {import('../plugin/contract.js').AgentRunInput} input
  * @returns {Promise<import('../plugin/contract.js').RunnerResult>}
@@ -93,10 +135,9 @@ export async function runAgent(input) {
   // spawnSync (not a shell string): the prompt is a plain argv element, so there is
   // no shell quoting/escaping to get wrong. Blocking is fine — the runner has
   // nothing else to do while the agent works. The sandbox-level timeout bounds it.
-  // The Cursor binary is named `agent` (preserved from the old adapter).
-  const res = spawnSync('agent', args, {
+  const res = spawnSync(resolveCursorBin(), args, {
     cwd: input.cwd,
-    env: process.env,
+    env: buildCursorRunEnv(),
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   });
