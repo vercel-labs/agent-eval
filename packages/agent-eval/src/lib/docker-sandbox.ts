@@ -54,6 +54,17 @@ const NPM_GLOBAL_DIR = `${SANDBOX_HOME}/.npm-global`;
 const LOCAL_BIN_DIR = `${SANDBOX_HOME}/.local/bin`;
 
 /**
+ * Packages missing from `node:*-slim`. `git` is required for the workspace
+ * baseline; `curl` is required by Cursor's official installer and OpenCode's
+ * custom-binary download. `ca-certificates` makes those HTTPS fetches work.
+ */
+export const SANDBOX_APT_PACKAGES = ['ca-certificates', 'git', 'curl'] as const;
+
+export function dockerSandboxAptInstallScript(): string {
+  return `apt-get update -qq && apt-get install -y -qq ${SANDBOX_APT_PACKAGES.join(' ')}`;
+}
+
+/**
  * PATH for sandbox-user execs. Includes npm's non-root global prefix and the
  * user-local bin dir. Docker exec would otherwise inherit a root-oriented PATH
  * that cannot see `~/.local/bin/agent` after `curl https://cursor.com/install`.
@@ -142,8 +153,13 @@ export class DockerSandboxManager implements Sandbox {
     // Start the container
     await this.container.start();
 
-    // Install CA certificates and git (slim images may not include them)
-    await this.runCommandAsRoot('bash', ['-c', 'apt-get update -qq && apt-get install -y -qq ca-certificates git > /dev/null 2>&1']);
+    // Slim images omit git/curl; swallowing apt output hid install failures and
+    // left Cursor at `curl: command not found` after a green-looking setup.
+    const packages = await this.runCommandAsRoot('bash', ['-c', dockerSandboxAptInstallScript()]);
+    if (packages.exitCode !== 0) {
+      const body = (packages.stdout + packages.stderr).trim().split('\n').slice(-10).join('\n');
+      throw new Error(`Failed to install sandbox packages:\n${body}`);
+    }
 
     // Create workspace directory owned by the non-root user (node:node in Node.js images)
     // The node user (UID 1000) already exists in node:*-slim images

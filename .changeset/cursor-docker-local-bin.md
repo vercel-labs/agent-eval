@@ -2,4 +2,4 @@
 "@vercel/agent-eval": patch
 ---
 
-Fix Cursor CLI `spawnSync agent ENOENT` on the Docker sandbox. The official installer writes `~/.local/bin/agent` and exits 0 without putting that directory on PATH; Docker exec also overwrote PATH with a root-oriented list that omitted `~/.local/bin` and left HOME as `/root`. Sandbox-user execs now set HOME to the `node` user home and include `~/.local/bin` on PATH, and the Cursor runner resolves the installer symlink directly.
+Fix Cursor CLI Docker setup: `node:*-slim` has no `curl`, so `curl https://cursor.com/install | bash` failed with `curl: command not found`, and even after a successful install `spawnSync agent` missed `~/.local/bin`. Sandbox setup now installs `curl` (and fails if apt does), sets HOME to the `node` user home, puts `~/.local/bin` on PATH, and the Cursor runner resolves the installer symlink directly.

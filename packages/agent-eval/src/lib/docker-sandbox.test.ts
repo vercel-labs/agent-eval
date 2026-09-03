@@ -7,7 +7,9 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import {
   DockerSandboxManager,
+  SANDBOX_APT_PACKAGES,
   SANDBOX_HOME,
+  dockerSandboxAptInstallScript,
   dockerSandboxPath,
   dockerSandboxUserEnv,
 } from './docker-sandbox.js';
@@ -32,6 +34,17 @@ async function isDockerAvailable(): Promise<boolean> {
     return false;
   }
 }
+
+describe('dockerSandboxAptInstallScript', () => {
+  it('installs curl alongside git so official installer scripts can run', () => {
+    expect(SANDBOX_APT_PACKAGES).toContain('curl');
+    expect(SANDBOX_APT_PACKAGES).toContain('git');
+    expect(SANDBOX_APT_PACKAGES).toContain('ca-certificates');
+    expect(dockerSandboxAptInstallScript()).toBe(
+      'apt-get update -qq && apt-get install -y -qq ca-certificates git curl'
+    );
+  });
+});
 
 describe('dockerSandboxUserEnv', () => {
   it('puts the node user home and ~/.local/bin on the sandbox PATH', () => {
@@ -228,6 +241,11 @@ describe('DockerSandboxManager', () => {
         const result = await sandbox.runCommand('agent-eval-path-canary');
         expect(result.exitCode).toBe(0);
         expect(result.stdout.trim()).toBe('from-local-bin');
+
+        // node:*-slim has no curl; Cursor's installer is `curl … | bash`.
+        const curl = await sandbox.runCommand('curl', ['--version']);
+        expect(curl.exitCode).toBe(0);
+        expect(curl.stdout).toMatch(/^curl /);
       } finally {
         await sandbox.stop();
       }
