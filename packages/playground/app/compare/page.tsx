@@ -20,7 +20,7 @@ export default async function CompareRoute() {
   // Build options and details map server-side to avoid hydration mismatch
   // (toLocaleString differs between Node.js and browser)
   const options = experiments.flatMap((exp) =>
-    exp.timestamps.map((ts) => ({
+    (exp.timestamps ?? []).map((ts) => ({
       value: `${exp.name}|||${ts}`,
       label: `${exp.name} / ${formatTimestamp(ts)}`,
     }))
@@ -28,7 +28,7 @@ export default async function CompareRoute() {
 
   const detailsMap: Record<string, ReturnType<typeof getExperimentDetail>> = {};
   for (const exp of experiments) {
-    for (const ts of exp.timestamps) {
+    for (const ts of exp.timestamps ?? []) {
       const detail = getExperimentDetail(exp.name, ts);
       if (detail) {
         detailsMap[`${exp.name}|||${ts}`] = detail;

@@ -30,6 +30,7 @@ import { scanReusableResults } from './lib/results.js';
 import { isClassifierEnabled, classifyFailure } from './lib/classifier.js';
 import { housekeep } from './lib/housekeeping.js';
 import { spawnSync } from 'child_process';
+import { resolvePlaygroundBin, resolvePlaygroundPort } from './lib/playground-cli.js';
 import { minimatch } from 'minimatch';
 import pLimit from 'p-limit';
 
@@ -252,13 +253,14 @@ program
 program
   .command('playground')
   .description('Launch the web-based playground for browsing experiment results')
-  .option('--port <port>', 'HTTP server port', '3000')
+  .option('-p, --port <port>', 'HTTP server port (or set PORT)')
   .option('--results-dir <dir>', 'Path to results directory', './results')
   .option('--evals-dir <dir>', 'Path to evals directory', './evals')
   .option('--watch', 'Enable live mode — watch results directory for changes')
-  .action(async (options: { port: string; resultsDir: string; evalsDir: string; watch?: boolean }) => {
+  .action(async (options: { port?: string; resultsDir: string; evalsDir: string; watch?: boolean }) => {
     const resultsDir = resolve(process.cwd(), options.resultsDir);
     const evalsDir = resolve(process.cwd(), options.evalsDir);
+    const port = resolvePlaygroundPort(options.port);
 
     console.log(chalk.blue('Starting Agent Eval Playground...'));
 
@@ -266,18 +268,26 @@ program
     const playgroundArgs = [
       '--results-dir', resultsDir,
       '--evals-dir', evalsDir,
-      '--port', options.port,
+      '--port', port,
     ];
     if (options.watch) {
       playgroundArgs.push('--watch');
     }
 
-    // Try to run the playground package directly, fall back to npx
-    const result = spawnSync(
-      'npx',
-      ['@vercel/agent-eval-playground', ...playgroundArgs],
-      { stdio: 'inherit', cwd: process.cwd() }
-    );
+    // Monorepo / file: checkout first (has the Next 16 routes-manifest repair),
+    // then an installed playground package, then npx.
+    const localBin = resolvePlaygroundBin(__dirname);
+    const result = localBin
+      ? spawnSync(process.execPath, [localBin, ...playgroundArgs], {
+          stdio: 'inherit',
+          cwd: process.cwd(),
+          env: process.env,
+        })
+      : spawnSync('npx', ['@vercel/agent-eval-playground', ...playgroundArgs], {
+          stdio: 'inherit',
+          cwd: process.cwd(),
+          env: process.env,
+        });
 
     process.exit(result.status ?? 1);
   });
