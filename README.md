@@ -305,6 +305,10 @@ const config: ExperimentConfig = {
   // Sandbox backend (default: 'auto' -- Vercel if token present, else Docker)
   sandbox: 'auto',
 
+  // Vercel backend only, both unset by default. See "Sandbox image and user".
+  // sandboxImage: 'vercel/sandbox/node:24',
+  // sandboxUser: 'user',
+
   // Copy project files to results directory (default: 'none')
   // 'none' - don't copy files
   // 'changed' - copy only files modified by the agent
@@ -449,6 +453,40 @@ The fx adapter currently requires `webResearch: true`. fx does not yet expose a
 prompt-free way to disable every web tool while retaining unrestricted coding
 tools, so Agent Eval rejects non-research fx runs instead of silently changing
 the treatment.
+
+### Sandbox image and user
+
+On the Vercel Sandbox backend, two further opt-in controls change the
+environment the agent observes. Both are unset by default, so existing
+experiments keep the legacy `node24` runtime and the sandbox's default account.
+
+```typescript
+const config: ExperimentConfig = {
+  agent: 'vercel-ai-gateway/claude-code',
+  sandbox: 'vercel',
+  sandboxImage: 'vercel/sandbox/node:24',
+  sandboxUser: 'user',
+};
+```
+
+`sandboxImage` boots each sandbox from a Vercel Container Registry image — a
+managed image such as `vercel/sandbox/node:24`, or your own digest-pinned
+custom image — instead of the legacy runtime. The Docker backend rejects it,
+because Docker selects its image from `runtime`. The `vercel/sandbox/universal`
+default image ships preinstalled coding agents; pin a narrower image so the
+CLIs Agent Eval installs are the ones being measured.
+
+`sandboxUser` creates a Linux user per sandbox and runs every command and file
+operation as that user, with its own home and a `~/workspace` working
+directory. Global npm installs are redirected to a user-owned prefix, and the
+`SUDO_*` variables left by the switch are cleared, so the only identity the
+agent can observe is the one you named. Command environments (including agent
+auth tokens) are delivered through a user-owned file that a bash bootstrap
+sources, never through command arguments. The Docker backend already runs as
+the unprivileged `node` user and ignores this option.
+
+Both options are part of the result-reuse fingerprint: enabling either
+invalidates cached results from the default environment.
 
 ### Run research evals with fx
 
@@ -658,7 +696,7 @@ Files are saved to `results/<experiment>/<timestamp>/<eval>/run-N/project/`. The
 
 ## Result Reuse
 
-The framework computes a SHA-256 fingerprint for each (eval, config) pair. The fingerprint covers all eval directory files and result-affecting config including `agent`, `model`, `scripts`, `timeout`, `earlyExit`, `runs`, `webResearch`, `disableBundledSkills`, and a pinned `judge`.
+The framework computes a SHA-256 fingerprint for each (eval, config) pair. The fingerprint covers all eval directory files and result-affecting config including `agent`, `model`, `scripts`, `timeout`, `earlyExit`, `runs`, `webResearch`, `disableBundledSkills`, `sandboxImage`, `sandboxUser`, and a pinned `judge`.
 
 On subsequent runs, evals with a matching fingerprint and a valid cached result (at least one passing run) are skipped automatically. This means:
 

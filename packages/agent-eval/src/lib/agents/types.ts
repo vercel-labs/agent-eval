@@ -29,6 +29,13 @@ export interface AgentRunOptions {
   signal?: AbortSignal;
   /** Sandbox backend to use */
   sandbox?: SandboxBackend | 'auto';
+  /** Vercel Container Registry image to boot the sandbox from (Vercel backend
+   * only). Default undefined: the legacy `node24` runtime is used, as before. */
+  sandboxImage?: string;
+  /** Linux user to run the agent as inside the sandbox (Vercel backend only;
+   * Docker already runs as `node`). Default undefined: the sandbox's default
+   * account is used, as before. */
+  sandboxUser?: string;
   /**
    * Enable each agent's web research tools so answers can produce
    * citation/source data. Default false: command construction is unchanged

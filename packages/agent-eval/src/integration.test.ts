@@ -219,6 +219,123 @@ describe.skipIf(!process.env.INTEGRATION_TEST)('integration tests', () => {
       expect(result.transcript).not.toContain('claude-api');
     }, 300000);
 
+    it('runs the agent as an opted-in user on an opted-in image', async () => {
+      const fixtureDir = join(TEST_DIR, 'claude-sandbox-user-image');
+      mkdirSync(fixtureDir, { recursive: true });
+      writeFileSync(
+        join(fixtureDir, 'PROMPT.md'),
+        'Run the shell command `whoami` and reply with exactly its output and nothing else.'
+      );
+      writeFileSync(
+        join(fixtureDir, 'package.json'),
+        JSON.stringify({ name: 'claude-sandbox-user-image', type: 'module' })
+      );
+
+      const fixture = loadFixture(TEST_DIR, 'claude-sandbox-user-image', {
+        validation: 'none',
+      });
+      const result = await runSingleEval(fixture, {
+        agent: 'vercel-ai-gateway/claude-code',
+        model: 'sonnet',
+        timeout: 180,
+        apiKey: process.env.AI_GATEWAY_API_KEY!,
+        scripts: [],
+        validation: 'none',
+        sandbox: 'vercel',
+        sandboxImage: 'vercel/sandbox/node:24',
+        sandboxUser: 'user',
+      });
+
+      if (result.result.status === 'failed') {
+        console.error('sandbox user/image run failed:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
+      // The agent's own shell saw the opted-in identity, not the image default
+      // (`ubuntu`) or the legacy runtime account (`vercel-sandbox`).
+      expect(result.transcript).toBeDefined();
+      expect(result.transcript).toContain('"command":"whoami"');
+      expect(result.transcript).toContain('"content":"user"');
+      expect(result.transcript).not.toMatch(/"content":"(ubuntu|vercel-sandbox)"/);
+    }, 300000);
+
+    /**
+     * Fixture for the sandbox opt-in runs below: the agent must write a file
+     * and the default vitest validation must read it back, so the full
+     * upload → agent → validation → capture pipeline is exercised.
+     */
+    function writeGreetFixture(name: string): void {
+      const fixtureDir = join(TEST_DIR, name);
+      mkdirSync(join(fixtureDir, 'src'), { recursive: true });
+      writeFileSync(
+        join(fixtureDir, 'PROMPT.md'),
+        'In src/index.ts, add an exported function called greet that returns the string "Hello!". Do not run tests.'
+      );
+      writeFileSync(
+        join(fixtureDir, 'EVAL.ts'),
+        `
+import { test, expect } from 'vitest';
+import { readFileSync } from 'fs';
+
+test('greet exists', () => {
+  const content = readFileSync('src/index.ts', 'utf-8');
+  expect(content).toContain('greet');
+});
+`
+      );
+      writeFileSync(
+        join(fixtureDir, 'package.json'),
+        JSON.stringify({ name, type: 'module', devDependencies: { vitest: '^2.1.0' } })
+      );
+      writeFileSync(join(fixtureDir, 'src/index.ts'), '// TODO: implement');
+    }
+
+    it('runs a validated eval from an opted-in image with the default account', async () => {
+      writeGreetFixture('claude-sandbox-image-only');
+      const fixture = loadFixture(TEST_DIR, 'claude-sandbox-image-only');
+
+      const result = await runSingleEval(fixture, {
+        agent: 'vercel-ai-gateway/claude-code',
+        model: 'sonnet',
+        timeout: 180,
+        apiKey: process.env.AI_GATEWAY_API_KEY!,
+        scripts: [],
+        sandbox: 'vercel',
+        sandboxImage: 'vercel/sandbox/node:24',
+      });
+
+      if (result.result.status === 'failed') {
+        console.error('image-only validated run failed:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
+      // Validation actually ran against the agent's output in the relocated workspace.
+      expect(result.outputContent?.eval).toMatch(/✓ EVAL\.ts \(1 test\)[\s\S]*Tests\s+1 passed/);
+      expect(result.generatedFiles && Object.keys(result.generatedFiles)).toContain('src/index.ts');
+    }, 300000);
+
+    it('runs a validated eval as an opted-in user on the legacy runtime', async () => {
+      writeGreetFixture('claude-sandbox-user-only');
+      const fixture = loadFixture(TEST_DIR, 'claude-sandbox-user-only');
+
+      const result = await runSingleEval(fixture, {
+        agent: 'vercel-ai-gateway/claude-code',
+        model: 'sonnet',
+        timeout: 180,
+        apiKey: process.env.AI_GATEWAY_API_KEY!,
+        scripts: [],
+        sandbox: 'vercel',
+        sandboxUser: 'user',
+      });
+
+      if (result.result.status === 'failed') {
+        console.error('user-only validated run failed:', result.result.error);
+      }
+      expect(result.result.status).toBe('passed');
+      expect(result.outputContent?.eval).toMatch(/✓ EVAL\.ts \(1 test\)[\s\S]*Tests\s+1 passed/);
+      expect(result.generatedFiles && Object.keys(result.generatedFiles)).toContain('src/index.ts');
+      // The agent's tool calls executed as the created user.
+      expect(result.transcript).not.toMatch(/"content":"vercel-sandbox"/);
+    }, 300000);
+
     it('surfaces CLI error when invalid model is provided', async () => {
       // Create a simple test fixture
       const fixtureDir = join(TEST_DIR, 'invalid-model-claude');

@@ -89,6 +89,31 @@ describe('validateConfig', () => {
     expect(() => validateConfig(config)).toThrow('Invalid experiment configuration');
   });
 
+  it('keeps sandboxImage and sandboxUser through validation and resolution', () => {
+    const config = { agent: 'claude-code', sandboxImage: 'vercel/sandbox/node:24', sandboxUser: 'user' };
+    const validated = validateConfig(config);
+    expect(validated.sandboxImage).toBe('vercel/sandbox/node:24');
+    expect(validated.sandboxUser).toBe('user');
+    const resolved = resolveConfig(validated);
+    expect(resolved.sandboxImage).toBe('vercel/sandbox/node:24');
+    expect(resolved.sandboxUser).toBe('user');
+  });
+
+  it('leaves sandboxImage and sandboxUser undefined by default', () => {
+    const resolved = resolveConfig(validateConfig({ agent: 'claude-code' }));
+    expect(resolved.sandboxImage).toBeUndefined();
+    expect(resolved.sandboxUser).toBeUndefined();
+  });
+
+  it('rejects a sandboxUser the sandbox SDK would refuse', () => {
+    expect(() => validateConfig({ agent: 'claude-code', sandboxUser: 'Agent One' })).toThrow(
+      'Invalid experiment configuration'
+    );
+    expect(() => validateConfig({ agent: 'claude-code', sandboxUser: '1user' })).toThrow(
+      'Invalid experiment configuration'
+    );
+  });
+
   it('accepts a pinned judge (model only, agent defaults to codegen)', () => {
     const config = { agent: 'claude-code', judge: { model: 'claude-opus-4-8' } };
     expect(validateConfig(config).judge).toEqual({ model: 'claude-opus-4-8' });
