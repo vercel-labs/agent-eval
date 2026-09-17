@@ -135,18 +135,39 @@ async function waitForDetachedCommand(cmd: Command): Promise<CommandResult> {
 }
 
 /**
+ * Error thrown when the Vercel sandbox session backing a run was stopped and a
+ * new session started mid-run. The run's workspace lives only in the original
+ * session, so continuing would execute later steps against an empty filesystem.
+ */
+export class SandboxSessionRecycledError extends Error {
+  constructor(sandboxName: string) {
+    super(
+      `Sandbox ${sandboxName} session was stopped and resumed mid-run; ` +
+        'the ephemeral workspace is gone, so the run cannot continue.'
+    );
+    this.name = 'SandboxSessionRecycledError';
+  }
+}
+
+/**
  * Wrapper around Vercel Sandbox providing a cleaner API.
  */
 export class SandboxManager implements Sandbox {
   private sandbox: VercelSandbox;
   private _workingDirectory: string = '/vercel/sandbox';
+  private readonly sessionId: string;
 
   constructor(sandbox: VercelSandbox) {
     this.sandbox = sandbox;
+    this.sessionId = sandbox.currentSession().sessionId;
   }
 
   /**
    * Create a new sandbox instance.
+   *
+   * Sandboxes are ephemeral: the filesystem is not snapshotted on stop, and a
+   * session that stops mid-run is treated as a hard failure rather than being
+   * transparently resumed into an empty filesystem by the SDK.
    */
   static async create(options: SandboxOptions = {}): Promise<SandboxManager> {
     const timeout = options.timeout ?? DEFAULT_SANDBOX_TIMEOUT;
@@ -156,6 +177,14 @@ export class SandboxManager implements Sandbox {
     const sandbox = await VercelSandbox.create({
       runtime,
       timeout,
+      persistent: false,
+      onResume: async (resumed) => {
+        // The SDK has already started the replacement session. Stop it before
+        // failing so an abort that races a resume cannot leave an idle session
+        // running until the sandbox timeout.
+        await resumed.stop().catch(() => {});
+        throw new SandboxSessionRecycledError(resumed.name);
+      },
       ...(credentials ?? {}),
     });
     return new SandboxManager(sandbox);
@@ -165,7 +194,18 @@ export class SandboxManager implements Sandbox {
    * Get the sandbox ID.
    */
   get sandboxId(): string {
-    return this.sandbox.sandboxId;
+    return this.sandbox.name;
+  }
+
+  /**
+   * The SDK transparently starts a new session when the previous one stopped.
+   * `onResume` rejects that in the common path; this guards the remaining case
+   * where the SDK reports a fresh session without flagging it as a resume.
+   */
+  private assertOriginalSession(): void {
+    if (this.sandbox.currentSession().sessionId !== this.sessionId) {
+      throw new SandboxSessionRecycledError(this.sandbox.name);
+    }
   }
 
   /**
@@ -176,30 +216,30 @@ export class SandboxManager implements Sandbox {
     args: string[] = [],
     options: { env?: Record<string, string>; cwd?: string } = {}
   ): Promise<CommandResult> {
-    return waitForDetachedCommand(
-      await this.sandbox.runCommand({
-        cmd: command,
-        args,
-        env: options.env,
-        cwd: options.cwd ?? this._workingDirectory,
-        detached: true,
-      })
-    );
+    const command_ = await this.sandbox.runCommand({
+      cmd: command,
+      args,
+      env: options.env,
+      cwd: options.cwd ?? this._workingDirectory,
+      detached: true,
+    });
+    this.assertOriginalSession();
+    return waitForDetachedCommand(command_);
   }
 
   /**
    * Run a shell command (through bash).
    */
   async runShell(command: string, env?: Record<string, string>, cwd?: string): Promise<CommandResult> {
-    return waitForDetachedCommand(
-      await this.sandbox.runCommand({
-        cmd: 'bash',
-        args: ['-c', command],
-        env,
-        cwd: cwd ?? this._workingDirectory,
-        detached: true,
-      })
-    );
+    const command_ = await this.sandbox.runCommand({
+      cmd: 'bash',
+      args: ['-c', command],
+      env,
+      cwd: cwd ?? this._workingDirectory,
+      detached: true,
+    });
+    this.assertOriginalSession();
+    return waitForDetachedCommand(command_);
   }
 
   /**
@@ -248,6 +288,7 @@ export class SandboxManager implements Sandbox {
     }
 
     await this.sandbox.writeFiles(sandboxFiles);
+    this.assertOriginalSession();
   }
 
   /**
@@ -260,6 +301,7 @@ export class SandboxManager implements Sandbox {
     }));
 
     await this.sandbox.writeFiles(sandboxFiles);
+    this.assertOriginalSession();
   }
 
   /**

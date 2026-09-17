@@ -64,6 +64,7 @@ export type {
 } from './lib/sandbox.js';
 export {
   SandboxManager,
+  SandboxSessionRecycledError,
   DEFAULT_SANDBOX_TIMEOUT,
   IGNORED_PATTERNS,
   TEST_FILE_PATTERNS,
