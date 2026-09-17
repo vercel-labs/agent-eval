@@ -155,12 +155,17 @@ export function resolveJudgeRuntime(def: AgentDefinition, options: AgentRunOptio
  * Run all install steps for an agent, reproducing the old per-step error wording.
  * Throws on final failure so the caller's catch turns it into an error result.
  */
-async function runInstallSteps(sandbox: AnySandbox, def: AgentDefinition, options: AgentRunOptions): Promise<void> {
+async function runInstallSteps(
+  sandbox: AnySandbox,
+  def: AgentDefinition,
+  options: AgentRunOptions,
+  env: Record<string, string>
+): Promise<void> {
   for (const step of def.install(options)) {
     const exec = (): Promise<CommandResult> =>
       step.kind === 'shell'
-        ? sandbox.runShell(step.script ?? '')
-        : sandbox.runCommand(step.cmd ?? '', step.args ?? []);
+        ? sandbox.runShell(step.script ?? '', env)
+        : sandbox.runCommand(step.cmd ?? '', step.args ?? [], { env });
 
     let result = await exec();
     // Optional single retry (the project `npm install` flakes occasionally).
@@ -180,12 +185,21 @@ async function runInstallSteps(sandbox: AnySandbox, def: AgentDefinition, option
   }
 }
 
-/** Write the agent's config files into the sandbox (codex TOML, opencode.json, …). */
-async function writeConfigFiles(sandbox: AnySandbox, def: AgentDefinition, options: AgentRunOptions): Promise<void> {
+/**
+ * Write the agent's config files into the sandbox (codex TOML, opencode.json, …).
+ * `env` carries the neutral HOME so `~` heredocs land where the runner's
+ * `homedir()` will look.
+ */
+async function writeConfigFiles(
+  sandbox: AnySandbox,
+  def: AgentDefinition,
+  options: AgentRunOptions,
+  env: Record<string, string>
+): Promise<void> {
   for (const cf of def.configFiles(options)) {
     if (cf.viaShell) {
       // Absolute `~` paths writeFiles can't target (codex heredoc).
-      await sandbox.runShell(cf.viaShell);
+      await sandbox.runShell(cf.viaShell, env);
     } else if (cf.path) {
       await sandbox.writeFiles({ [cf.path]: cf.content ?? '' });
     }
@@ -343,16 +357,18 @@ async function runOnce(
     const neutralWorkspace = await prepareNeutralWorkspace(sandbox);
 
     // 4. SETUP from the definition: install (project deps + CLI) then config files.
-    await runInstallSteps(sandbox, def, options);
-    await writeConfigFiles(sandbox, def, options);
+    //    Both run under the neutral env so `~`-relative CLI config and global
+    //    installs use the same HOME the runner and judge will resolve later.
+    await runInstallSteps(sandbox, def, options, neutralWorkspace.env);
+    await writeConfigFiles(sandbox, def, options, neutralWorkspace.env);
 
     // 4b. If the agentic judge is pinned to a DIFFERENT agent, install its CLI +
     //     config too — the codegen setup above only installed the codegen agent.
     //     (npm install of project deps re-runs idempotently; the CLI is the point.)
     const judgeRuntime = resolveJudgeRuntime(def, options);
     if (!judgeRuntime.isSelf) {
-      await runInstallSteps(sandbox, judgeRuntime.judgeDef, judgeRuntime.judgeOptions);
-      await writeConfigFiles(sandbox, judgeRuntime.judgeDef, judgeRuntime.judgeOptions);
+      await runInstallSteps(sandbox, judgeRuntime.judgeDef, judgeRuntime.judgeOptions, neutralWorkspace.env);
+      await writeConfigFiles(sandbox, judgeRuntime.judgeDef, judgeRuntime.judgeOptions, neutralWorkspace.env);
     }
 
     // 5. Guard: no stray test files leaked into the workspace before the agent runs.

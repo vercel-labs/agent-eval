@@ -3,6 +3,7 @@ import {
   captureGeneratedFiles,
   ensureValidationRunner,
   FALLBACK_VITEST_VERSION,
+  NEUTRAL_HOME,
   prepareNeutralWorkspace,
   runValidation,
 } from './shared.js';
@@ -22,11 +23,45 @@ describe('prepareNeutralWorkspace', () => {
     expect(sandbox.setWorkingDirectory).toHaveBeenCalledWith('/workspace');
     expect(result).toEqual({
       cwd: '/workspace',
-      env: { USER: 'user', LOGNAME: 'user' },
+      env: { USER: 'user', LOGNAME: 'user', HOME: NEUTRAL_HOME, MAIL: '/var/spool/mail/user' },
     });
   });
 
-  it('keeps non-Vercel sandbox working directories in place', async () => {
+  it('seeds the neutral home from the sandbox home so dotfiles and npm config survive the move', async () => {
+    const sandbox = {
+      getWorkingDirectory: vi.fn(() => '/vercel/sandbox'),
+      setWorkingDirectory: vi.fn(),
+      runShell: vi.fn(async () => ({ stdout: '', stderr: '', exitCode: 0 })),
+    };
+
+    await prepareNeutralWorkspace(sandbox as never);
+
+    const homeSeed = sandbox.runShell.mock.calls
+      .map(([cmd]) => cmd as string)
+      .find((cmd) => cmd.includes(`sudo cp -a "$HOME/." ${NEUTRAL_HOME}/`));
+    expect(homeSeed).toBeDefined();
+    expect(homeSeed).toContain(`sudo mkdir -p ${NEUTRAL_HOME}`);
+    expect(homeSeed).toContain(`sudo chown -R "$(id -u):$(id -g)" ${NEUTRAL_HOME}`);
+  });
+
+  it('fails loudly when the neutral home cannot be prepared', async () => {
+    const sandbox = {
+      getWorkingDirectory: vi.fn(() => '/vercel/sandbox'),
+      setWorkingDirectory: vi.fn(),
+      runShell: vi.fn(async (cmd: string) =>
+        cmd.includes(`sudo cp -a "$HOME/." ${NEUTRAL_HOME}/`)
+          ? { stdout: '', stderr: 'cp: cannot create directory', exitCode: 1 }
+          : { stdout: '', stderr: '', exitCode: 0 }
+      ),
+    };
+
+    await expect(prepareNeutralWorkspace(sandbox as never)).rejects.toThrow(
+      /Failed to prepare neutral home:\ncp: cannot create directory/
+    );
+    expect(sandbox.setWorkingDirectory).not.toHaveBeenCalled();
+  });
+
+  it('keeps non-Vercel sandbox working directories and home in place', async () => {
     const sandbox = {
       getWorkingDirectory: vi.fn(() => '/home/sandbox/workspace'),
       setWorkingDirectory: vi.fn(),

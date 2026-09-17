@@ -189,14 +189,33 @@ export async function runValidation(
   return results;
 }
 
+/**
+ * Neutral home for Vercel sandboxes. The default account is `vercel-sandbox`
+ * (`HOME=/home/vercel-sandbox`, `MAIL=/var/spool/mail/vercel-sandbox`), which
+ * every agent CLI sees through `homedir()` / `~` and can surface in its context.
+ * The directory is seeded from the original home so npm's `.npmrc` (absolute
+ * global prefix, already on PATH) and other dotfiles keep working unchanged.
+ */
+export const NEUTRAL_HOME = '/home/user';
+
+/**
+ * Make a sandbox look like an anonymous Linux box to the agent that runs in it.
+ *
+ * Identity env (`USER`, `LOGNAME`) is always neutralised. On Vercel sandboxes
+ * (detected by the `/vercel/` working directory) the workspace is relocated to
+ * `/workspace` and the home directory to {@link NEUTRAL_HOME}; the returned env
+ * must then be applied to EVERY sandbox command that touches the agent — install,
+ * config files, the runner, and judge validation — so `~/.codex`, `~/.claude`,
+ * global CLI installs, and `homedir()` all agree on one home.
+ */
 export async function prepareNeutralWorkspace(sandbox: AnySandbox): Promise<NeutralWorkspace> {
-  const neutralEnv = { USER: 'user', LOGNAME: 'user' };
+  const identityEnv = { USER: 'user', LOGNAME: 'user' };
   const currentWorkingDirectory = sandbox.getWorkingDirectory();
 
   await sandbox.runShell('git remote remove origin 2>/dev/null || true; rm -rf .git/logs');
 
   if (!currentWorkingDirectory.includes('/vercel/')) {
-    return { cwd: currentWorkingDirectory, env: neutralEnv };
+    return { cwd: currentWorkingDirectory, env: identityEnv };
   }
 
   const neutralWorkspacePath = '/workspace';
@@ -213,8 +232,25 @@ export async function prepareNeutralWorkspace(sandbox: AnySandbox): Promise<Neut
     throw new Error(`Failed to prepare neutral workspace:\n${output}`);
   }
 
+  // Seed the neutral home from the current one (dotfiles, .npmrc, npm cache) so
+  // tooling behaves identically; only the path the agent observes changes.
+  const homeResult = await sandbox.runShell(
+    [
+      `sudo mkdir -p ${NEUTRAL_HOME}`,
+      `sudo cp -a "$HOME/." ${NEUTRAL_HOME}/`,
+      `sudo chown -R "$(id -u):$(id -g)" ${NEUTRAL_HOME}`,
+    ].join(' && ')
+  );
+  if (homeResult.exitCode !== 0) {
+    const output = (homeResult.stdout + homeResult.stderr).trim().split('\n').slice(-10).join('\n');
+    throw new Error(`Failed to prepare neutral home:\n${output}`);
+  }
+
   sandbox.setWorkingDirectory(neutralWorkspacePath);
-  return { cwd: neutralWorkspacePath, env: neutralEnv };
+  return {
+    cwd: neutralWorkspacePath,
+    env: { ...identityEnv, HOME: NEUTRAL_HOME, MAIL: '/var/spool/mail/user' },
+  };
 }
 
 export async function initGitAndCommit(sandbox: AnySandbox): Promise<void> {
