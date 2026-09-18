@@ -204,6 +204,8 @@ export async function runExperiment(
         validation: config.validation,
         signal: attemptController.signal,
         sandbox: config.sandbox,
+        sandboxImage: config.sandboxImage,
+        sandboxUser: config.sandboxUser,
         agentOptions: config.agentOptions,
         webResearch: config.webResearch,
         disableBundledSkills: config.disableBundledSkills,
@@ -398,6 +400,8 @@ export async function runSingleEval<T extends ResolvedExperimentConfig['model']>
     scripts?: string[];
     validation?: ResolvedExperimentConfig['validation'];
     sandbox?: ResolvedExperimentConfig['sandbox'];
+    sandboxImage?: ResolvedExperimentConfig['sandboxImage'];
+    sandboxUser?: ResolvedExperimentConfig['sandboxUser'];
     editPrompt?: (prompt: string) => string;
     verbose?: boolean;
     agentOptions?: ResolvedExperimentConfig['agentOptions'];
@@ -434,6 +438,8 @@ export async function runSingleEval<T extends ResolvedExperimentConfig['model']>
 		scripts: options.scripts,
 		validation: options.validation,
 		sandbox: options.sandbox,
+		sandboxImage: options.sandboxImage,
+		sandboxUser: options.sandboxUser,
 		agentOptions: options.agentOptions,
 		webResearch: options.webResearch,
 		disableBundledSkills: options.disableBundledSkills,

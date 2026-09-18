@@ -150,6 +150,15 @@ export interface ExperimentConfig {
   /** Sandbox backend to use. @default 'auto' (Vercel if token present, else Docker) */
   sandbox?: SandboxBackend | 'auto';
 
+  /** Vercel Container Registry image to boot sandboxes from, e.g. `vercel/sandbox/node:24`
+   * or a digest-pinned custom image. Vercel backend only. @default undefined (legacy `node24` runtime) */
+  sandboxImage?: string;
+
+  /** Linux user to run the agent as inside the sandbox. Created per sandbox; the
+   * workspace moves to `/home/<user>/workspace`. Vercel backend only (Docker already
+   * runs as `node`). @default undefined (the sandbox's default account) */
+  sandboxUser?: string;
+
   /** Optional function to modify the prompt before running the experiment. @default undefined */
   editPrompt?: (prompt: string) => string;
 
@@ -201,6 +210,8 @@ export interface ResolvedExperimentConfig {
   timeout: number;
   setup?: SetupFunction;
   sandbox: SandboxBackend | 'auto';
+  sandboxImage?: string;
+  sandboxUser?: string;
   editPrompt?: (prompt: string) => string;
   copyFiles: 'none' | 'changed' | 'all';
   agentOptions?: Record<string, unknown>;
@@ -226,6 +237,8 @@ export interface RunnableExperimentConfig {
   timeout: number;
   setup?: SetupFunction;
   sandbox: SandboxBackend | 'auto';
+  sandboxImage?: string;
+  sandboxUser?: string;
   editPrompt?: (prompt: string) => string;
   copyFiles: 'none' | 'changed' | 'all';
   agentOptions?: Record<string, unknown>;

@@ -140,6 +140,39 @@ describe('computeFingerprint', () => {
     expect(fp1).not.toBe(fp2);
   });
 
+  it('keeps sandboxImage/sandboxUser-unset equivalent to existing fingerprints', () => {
+    const evalDir = createEvalDir('eval-sandbox-default', {
+      'PROMPT.md': 'Do something',
+      'EVAL.ts': 'test code',
+      'package.json': '{"type":"module"}',
+    });
+
+    const fp1 = computeFingerprint(evalDir, baseConfig);
+    const fp2 = computeFingerprint(evalDir, { ...baseConfig, sandboxImage: undefined, sandboxUser: undefined });
+
+    expect(fp1).toBe(fp2);
+    expect(computeReuseCompatibilityFingerprint({ ...baseConfig, sandboxImage: undefined })).toBeUndefined();
+  });
+
+  it('changes when a sandbox image or user is opted in (legacy-runtime results must not be reused for them)', () => {
+    const evalDir = createEvalDir('eval-sandbox-opt-in', {
+      'PROMPT.md': 'Do something',
+      'EVAL.ts': 'test code',
+      'package.json': '{"type":"module"}',
+    });
+
+    const base = computeFingerprint(evalDir, baseConfig);
+    const withImage = computeFingerprint(evalDir, { ...baseConfig, sandboxImage: 'vercel/sandbox/node:24' });
+    const withOtherImage = computeFingerprint(evalDir, { ...baseConfig, sandboxImage: 'vercel/sandbox/node:22' });
+    const withUser = computeFingerprint(evalDir, { ...baseConfig, sandboxUser: 'user' });
+
+    expect(new Set([base, withImage, withOtherImage, withUser]).size).toBe(4);
+    expect(computeReuseCompatibilityFingerprint({ ...baseConfig, sandboxImage: 'vercel/sandbox/node:24' })).not.toBe(
+      computeReuseCompatibilityFingerprint({ ...baseConfig, sandboxUser: 'user' })
+    );
+    expect(computeReuseCompatibilityFingerprint({ ...baseConfig, sandboxUser: 'user' })).toBeDefined();
+  });
+
   it('versions the repaired Codex web research mechanism only when opted in', () => {
     const gateway = fingerprintConfigInput({
       ...baseConfig,

@@ -319,7 +319,10 @@ async function runOnce(
     //    every judge assertion re-pay the canary exec.
     sandbox = await createSandbox({
       timeout: options.timeout,
-      runtime: 'node24',
+      // `image` and `runtime` are mutually exclusive; keep the legacy runtime
+      // default unless the caller opted into an image.
+      ...(options.sandboxImage ? { image: options.sandboxImage } : { runtime: 'node24' }),
+      user: options.sandboxUser,
       backend: options.sandbox,
     });
 

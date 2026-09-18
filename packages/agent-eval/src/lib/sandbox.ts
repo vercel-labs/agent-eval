@@ -3,8 +3,9 @@
  * Supports both Vercel Sandbox and Docker backends.
  */
 
-import { Sandbox as VercelSandbox, type Command } from '@vercel/sandbox';
+import { Sandbox as VercelSandbox, type Command, type SandboxUser } from '@vercel/sandbox';
 import type { Sandbox } from './types.js';
+import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { isAbsolute, join } from 'path';
 import { DockerSandboxManager } from './docker-sandbox.js';
@@ -63,8 +64,30 @@ export const TEST_FILE_PATTERNS = ['EVAL.ts', 'EVAL.tsx', 'PROMPT.md'];
 export interface SandboxOptions {
   /** Timeout in milliseconds */
   timeout?: number;
-  /** Runtime environment */
+  /**
+   * Runtime environment. Mutually exclusive with `image`.
+   * @default 'node24'
+   */
   runtime?: 'node20' | 'node24';
+  /**
+   * Vercel Container Registry image to boot the sandbox from, such as
+   * `vercel/sandbox/node:24` or a digest-pinned custom image. Vercel backend
+   * only; the Docker backend rejects it. Mutually exclusive with `runtime`.
+   * Opt-in: when omitted the sandbox uses `runtime`, exactly as before.
+   */
+  image?: string;
+  /**
+   * Linux username to run every command and file operation as, instead of
+   * the sandbox's default account. The user is created on the Vercel sandbox
+   * and the working directory moves to `/home/<user>/workspace`, which the
+   * user owns. Global npm installs are redirected to `~/.npm-global` because
+   * the runtime's default prefix is not writable by other users. Command env
+   * (including agent auth tokens) is delivered through a user-owned file that a
+   * bash bootstrap sources, so values never appear in command arguments. The
+   * Docker backend already runs as an unprivileged `node` user and ignores this.
+   * Opt-in: when omitted commands run as the default account, as before.
+   */
+  user?: string;
   /** Sandbox backend to use. 'auto' will use Vercel if token present, else Docker. @default 'auto' */
   backend?: SandboxBackend | 'auto';
   /** Optional explicit Vercel auth token for sandbox API auth */
@@ -135,37 +158,221 @@ async function waitForDetachedCommand(cmd: Command): Promise<CommandResult> {
 }
 
 /**
+ * Error thrown when the Vercel sandbox session backing a run was stopped and a
+ * new session started mid-run. The run's workspace lives only in the original
+ * session, so continuing would execute later steps against an empty filesystem.
+ */
+export class SandboxSessionRecycledError extends Error {
+  constructor(sandboxName: string) {
+    super(
+      `Sandbox ${sandboxName} session was stopped and resumed mid-run; ` +
+        'the ephemeral workspace is gone, so the run cannot continue.'
+    );
+    this.name = 'SandboxSessionRecycledError';
+  }
+}
+
+/**
  * Wrapper around Vercel Sandbox providing a cleaner API.
  */
 export class SandboxManager implements Sandbox {
   private sandbox: VercelSandbox;
   private _workingDirectory: string = '/vercel/sandbox';
+  private readonly sessionId: string;
+  /** Where commands and file writes execute: the sandbox itself, or a created user. */
+  private context: Pick<VercelSandbox, 'runCommand' | 'writeFiles'>;
+  /** Set once `runAsUser` has switched the execution context to a created user. */
+  private user: SandboxUser | undefined;
+  /** Env applied to every command; only populated when running as a created user. */
+  private baseEnv: Record<string, string> = {};
+  /** Env files already written for the user, keyed by their content hash. */
+  private readonly envFiles = new Map<string, string>();
 
   constructor(sandbox: VercelSandbox) {
     this.sandbox = sandbox;
+    this.context = sandbox;
+    this.sessionId = sandbox.currentSession().sessionId;
   }
 
   /**
    * Create a new sandbox instance.
+   *
+   * Sandboxes are ephemeral: the filesystem is not snapshotted on stop, and a
+   * session that stops mid-run is treated as a hard failure rather than being
+   * transparently resumed into an empty filesystem by the SDK.
    */
   static async create(options: SandboxOptions = {}): Promise<SandboxManager> {
+    if (options.image && options.runtime) {
+      throw new Error('SandboxOptions.image and SandboxOptions.runtime are mutually exclusive');
+    }
     const timeout = options.timeout ?? DEFAULT_SANDBOX_TIMEOUT;
-    const runtime = options.runtime ?? 'node24';
+    const environment = options.image ? { image: options.image } : { runtime: options.runtime ?? 'node24' };
     const credentials = resolveVercelSandboxCredentials(options);
 
     const sandbox = await VercelSandbox.create({
-      runtime,
+      ...environment,
       timeout,
+      persistent: false,
+      onResume: async (resumed) => {
+        // The SDK has already started the replacement session. Stop it before
+        // failing so an abort that races a resume cannot leave an idle session
+        // running until the sandbox timeout.
+        await resumed.stop().catch(() => {});
+        throw new SandboxSessionRecycledError(resumed.name);
+      },
       ...(credentials ?? {}),
     });
-    return new SandboxManager(sandbox);
+    const manager = new SandboxManager(sandbox);
+    try {
+      if (options.user) {
+        await manager.runAsUser(options.user);
+      } else if (options.image) {
+        // Legacy runtimes ship with `/vercel/sandbox`; images boot with whatever
+        // WORKDIR they define (the managed ones use `/vercel`), so the default
+        // working directory has to be created before the first command uses it.
+        await manager.ensureWorkingDirectory();
+      }
+    } catch (err) {
+      await sandbox.stop().catch(() => {});
+      throw err;
+    }
+    return manager;
+  }
+
+  private async ensureWorkingDirectory(): Promise<void> {
+    const result = await waitForDetachedCommand(
+      await this.sandbox.runCommand({
+        cmd: 'mkdir',
+        args: ['-p', this._workingDirectory],
+        cwd: '/',
+        detached: true,
+      })
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(`Failed to create sandbox working directory ${this._workingDirectory}:\n${result.stderr.trim()}`);
+    }
   }
 
   /**
    * Get the sandbox ID.
    */
   get sandboxId(): string {
-    return this.sandbox.sandboxId;
+    return this.sandbox.name;
+  }
+
+  /**
+   * The image the sandbox booted from, digest-pinned by the SDK, or undefined
+   * for legacy runtime-based sandboxes. Useful for recording provenance.
+   */
+  get image(): string | undefined {
+    return this.sandbox.image;
+  }
+
+  /**
+   * Create `username` and route all subsequent commands and file operations
+   * through it. The default account's `/vercel/sandbox` is not writable by
+   * other users, so the working directory moves to `~/workspace`. Global npm
+   * installs get a user-owned prefix, and the `SUDO_*` variables the SDK's
+   * `sudo -u` transition leaves behind are cleared so the new identity is the
+   * only one the agent can observe.
+   */
+  private async runAsUser(username: string): Promise<void> {
+    const user: SandboxUser = await this.sandbox.createUser(username);
+    const workspace = `${user.homeDir}/workspace`;
+    const npmPrefix = `${user.homeDir}/.npm-global`;
+
+    const setup = await waitForDetachedCommand(
+      await user.runCommand({
+        cmd: 'bash',
+        args: [
+          '-c',
+          [
+            `mkdir -p "${workspace}" "${npmPrefix}/bin"`,
+            `printf 'prefix=%s\\n' "${npmPrefix}" > "${user.homeDir}/.npmrc"`,
+            'printf %s "$PATH"',
+          ].join(' && '),
+        ],
+        detached: true,
+      })
+    );
+    if (setup.exitCode !== 0) {
+      throw new Error(`Failed to prepare sandbox user ${username}:\n${(setup.stdout + setup.stderr).trim()}`);
+    }
+
+    this.baseEnv = {
+      PATH: `${npmPrefix}/bin:${setup.stdout.trim()}`,
+      SUDO_USER: '',
+      SUDO_UID: '',
+      SUDO_GID: '',
+      SUDO_COMMAND: '',
+    };
+    this.user = user;
+    this.context = user;
+    this._workingDirectory = workspace;
+  }
+
+  /**
+   * Build the SDK command for `cmd args` with `env` applied.
+   *
+   * Default account: env travels in the API request's dedicated env field.
+   * Created user: the SDK would fold env into the argv of a `sudo -u` process
+   * (`env KEY=VAL ...`), where it is visible in the process list and persisted
+   * in the sandbox's command records. Agent auth tokens ride in env, so instead
+   * write the variables to a user-owned file once per distinct env set and
+   * source it from a bash bootstrap; argv then carries only the file path.
+   */
+  private async prepareCommand(
+    cmd: string,
+    args: string[],
+    env: Record<string, string> | undefined,
+    cwd: string
+  ): Promise<{ cmd: string; args: string[]; env?: Record<string, string>; cwd: string; detached: true }> {
+    if (!this.user) {
+      return { cmd, args, env, cwd, detached: true };
+    }
+    const merged = { ...this.baseEnv, ...(env ?? {}) };
+    const envFile = await this.materializeEnv(this.user, merged);
+    return {
+      cmd: 'bash',
+      // `set -a` exports every assignment sourced from the file; `shift` drops
+      // the file path so `exec "$@"` runs exactly the requested command.
+      args: ['-c', 'set -a && . "$1" && set +a && shift && exec "$@"', 'bash', envFile, cmd, ...args],
+      cwd,
+      detached: true,
+    };
+  }
+
+  private async materializeEnv(user: SandboxUser, env: Record<string, string>): Promise<string> {
+    const lines = Object.entries(env)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([key, value]) => {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+          throw new Error(`Invalid environment variable name for sandbox command: ${JSON.stringify(key)}`);
+        }
+        // Single quotes make the value literal; embedded single quotes close,
+        // escape, and reopen the quoting.
+        return `${key}='${value.replace(/'/g, `'\\''`)}'`;
+      });
+    const content = `${lines.join('\n')}\n`;
+    const hash = createHash('sha256').update(content).digest('hex').slice(0, 16);
+    const cached = this.envFiles.get(hash);
+    if (cached) return cached;
+
+    const path = `${user.homeDir}/.agent-eval/env-${hash}.sh`;
+    await user.writeFiles([{ path, content: Buffer.from(content, 'utf-8') }]);
+    this.envFiles.set(hash, path);
+    return path;
+  }
+
+  /**
+   * The SDK transparently starts a new session when the previous one stopped.
+   * `onResume` rejects that in the common path; this guards the remaining case
+   * where the SDK reports a fresh session without flagging it as a resume.
+   */
+  private assertOriginalSession(): void {
+    if (this.sandbox.currentSession().sessionId !== this.sessionId) {
+      throw new SandboxSessionRecycledError(this.sandbox.name);
+    }
   }
 
   /**
@@ -176,30 +383,22 @@ export class SandboxManager implements Sandbox {
     args: string[] = [],
     options: { env?: Record<string, string>; cwd?: string } = {}
   ): Promise<CommandResult> {
-    return waitForDetachedCommand(
-      await this.sandbox.runCommand({
-        cmd: command,
-        args,
-        env: options.env,
-        cwd: options.cwd ?? this._workingDirectory,
-        detached: true,
-      })
+    const command_ = await this.context.runCommand(
+      await this.prepareCommand(command, args, options.env, options.cwd ?? this._workingDirectory)
     );
+    this.assertOriginalSession();
+    return waitForDetachedCommand(command_);
   }
 
   /**
    * Run a shell command (through bash).
    */
   async runShell(command: string, env?: Record<string, string>, cwd?: string): Promise<CommandResult> {
-    return waitForDetachedCommand(
-      await this.sandbox.runCommand({
-        cmd: 'bash',
-        args: ['-c', command],
-        env,
-        cwd: cwd ?? this._workingDirectory,
-        detached: true,
-      })
+    const command_ = await this.context.runCommand(
+      await this.prepareCommand('bash', ['-c', command], env, cwd ?? this._workingDirectory)
     );
+    this.assertOriginalSession();
+    return waitForDetachedCommand(command_);
   }
 
   /**
@@ -247,7 +446,8 @@ export class SandboxManager implements Sandbox {
       });
     }
 
-    await this.sandbox.writeFiles(sandboxFiles);
+    await this.context.writeFiles(sandboxFiles);
+    this.assertOriginalSession();
   }
 
   /**
@@ -259,7 +459,8 @@ export class SandboxManager implements Sandbox {
       content: typeof f.content === 'string' ? Buffer.from(f.content, 'utf-8') : f.content,
     }));
 
-    await this.sandbox.writeFiles(sandboxFiles);
+    await this.context.writeFiles(sandboxFiles);
+    this.assertOriginalSession();
   }
 
   /**
@@ -377,6 +578,14 @@ export async function createSandbox(
   const backend = resolveBackend(options);
 
   if (backend === 'docker') {
+    if (options.image) {
+      throw new Error(
+        'SandboxOptions.image is only supported by the Vercel sandbox backend; ' +
+          'the Docker backend selects its image from `runtime`.'
+      );
+    }
+    // `user` is intentionally ignored: the Docker backend already runs as the
+    // unprivileged `node` user, which is what the option asks for.
     return DockerSandboxManager.create({
       timeout: options.timeout,
       runtime: options.runtime,
@@ -386,6 +595,8 @@ export async function createSandbox(
   return SandboxManager.create({
     timeout: options.timeout,
     runtime: options.runtime,
+    image: options.image,
+    user: options.user,
   });
 }
 

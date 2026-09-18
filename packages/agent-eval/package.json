@@ -40,7 +40,7 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2.12",
-    "@vercel/sandbox": "^1.2.0",
+    "@vercel/sandbox": "^3.3.0",
     "ai": "^5.0.11",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",

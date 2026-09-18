@@ -172,4 +172,44 @@ describe.skipIf(!process.env.SANDBOX_INTEGRATION_TEST)('sandbox integration', ()
 
     await sandbox.stop();
   });
+
+  it('runs as the opted-in user with a user-owned workspace and working npm globals', async () => {
+    const { SandboxManager } = await import('./sandbox.js');
+
+    const sandbox = await SandboxManager.create({ timeout: 180000, user: 'user' });
+    try {
+      // SUDO_USER is what the SDK's `sudo -u` transition would otherwise leak
+      // (the default account name); it must be empty, not merely different.
+      const identity = await sandbox.runShell('whoami; echo "$HOME"; pwd; echo "sudo=[${SUDO_USER}]"');
+      expect(identity.exitCode).toBe(0);
+      expect(identity.stdout.split('\n').slice(0, 4)).toEqual(['user', '/home/user', '/home/user/workspace', 'sudo=[]']);
+
+      await sandbox.writeFiles({ 'src/a.txt': 'owned' });
+      const owner = await sandbox.runShell('stat -c %U src/a.txt && cat src/a.txt');
+      expect(owner.stdout.trim().split('\n')).toEqual(['user', 'owned']);
+
+      const npmGlobal = await sandbox.runShell(
+        'npm install -g --no-fund --no-audit is-odd >/dev/null 2>&1 && command -v is-odd || echo "no-bin"; npm config get prefix'
+      );
+      expect(npmGlobal.exitCode).toBe(0);
+      expect(npmGlobal.stdout).toContain('/home/user/.npm-global');
+    } finally {
+      await sandbox.stop();
+    }
+  }, 240000);
+
+  it('boots from an opted-in image', async () => {
+    const { SandboxManager } = await import('./sandbox.js');
+
+    const sandbox = await SandboxManager.create({ timeout: 120000, image: 'vercel/sandbox/node:24' });
+    try {
+      expect(sandbox.image).toMatch(/^vercel\/sandbox\/node@sha256:/);
+      const os = await sandbox.runShell('. /etc/os-release && echo "$ID"; node -v');
+      expect(os.exitCode).toBe(0);
+      expect(os.stdout.split('\n')[0]).toBe('ubuntu');
+      expect(os.stdout.split('\n')[1]).toMatch(/^v24\./);
+    } finally {
+      await sandbox.stop();
+    }
+  }, 180000);
 });

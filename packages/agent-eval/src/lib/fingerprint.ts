@@ -25,6 +25,8 @@ interface FingerprintableConfig {
   runs: number;
   webResearch?: boolean;
   disableBundledSkills?: boolean;
+  sandboxImage?: string;
+  sandboxUser?: string;
   agentFingerprint?: Record<string, unknown>;
   judge?: { agent?: string; model: string };
 }
@@ -32,6 +34,8 @@ interface FingerprintableConfig {
 interface ReuseCompatibilityInput {
   webResearch?: true;
   disableBundledSkills?: true;
+  sandboxImage?: string;
+  sandboxUser?: string;
   agentFingerprint?: Record<string, unknown>;
 }
 
@@ -69,6 +73,14 @@ export function fingerprintConfigInput(config: RunnableExperimentConfig): Finger
   if (bundledSkillsIsolationApplies(config)) {
     input.disableBundledSkills = true;
   }
+  // The sandbox image and user change the OS, filesystem, identity, and PATH
+  // the agent observes, so results are not interchangeable across them.
+  if (config.sandboxImage) {
+    input.sandboxImage = config.sandboxImage;
+  }
+  if (config.sandboxUser) {
+    input.sandboxUser = config.sandboxUser;
+  }
   const agentFingerprint = agentFingerprintExtra(config);
   if (agentFingerprint && Object.keys(agentFingerprint).length > 0) {
     input.agentFingerprint = agentFingerprint;
@@ -89,6 +101,8 @@ export function computeReuseCompatibilityFingerprint(
   const input: ReuseCompatibilityInput = {};
   if (config.webResearch) input.webResearch = true;
   if (bundledSkillsIsolationApplies(config)) input.disableBundledSkills = true;
+  if (config.sandboxImage) input.sandboxImage = config.sandboxImage;
+  if (config.sandboxUser) input.sandboxUser = config.sandboxUser;
   const agentFingerprint = agentFingerprintExtra(config);
   if (agentFingerprint && Object.keys(agentFingerprint).length > 0) {
     input.agentFingerprint = agentFingerprint;
