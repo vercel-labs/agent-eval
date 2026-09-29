@@ -1,5 +1,11 @@
 # @vercel/agent-eval
 
+## 2.4.0
+
+### Minor Changes
+
+- [#203](https://github.com/vercel-labs/agent-eval/pull/203) [`d66813d`](https://github.com/vercel-labs/agent-eval/commit/d66813ddfbce968e6ee12fc82c3997ca0665befd) Thanks [@aurorascharff](https://github.com/aurorascharff)! - Update the built-in fx adapter to fx 0.0.11 and support explicit reasoning effort through `agentOptions.effort`.
+
 ## 2.3.0
 
 ### Minor Changes
