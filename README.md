@@ -491,14 +491,16 @@ invalidates cached results from the default environment.
 ### Run research evals with fx
 
 fx runs through Vercel AI Gateway and uses its native `web_search` and
-`web_fetch` tools. Agent Eval pins fx `0.0.5`, verifies the downloaded Linux
-binary checksum, and captures the supported saved-session JSON transcript.
+`web_fetch` tools. Agent Eval pins fx `0.0.11`, verifies the downloaded Linux
+binary checksum, and captures the supported saved-session JSON transcript. Set
+`agentOptions.effort` to pass an explicit reasoning effort to `fx ask`.
 
 ```typescript
 import type { ExperimentConfig } from '@vercel/agent-eval';
 
 const config: ExperimentConfig = {
   agent: 'vercel-ai-gateway/fx',
+  agentOptions: { effort: 'high' },
   webResearch: true,
   disableBundledSkills: true,
 };

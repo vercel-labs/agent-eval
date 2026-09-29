@@ -7,9 +7,13 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** @param {{prompt:string}} input */
+/** @param {{prompt:string, agentOptions?:Record<string,unknown>}} input */
 export function buildFxCliArgs(input) {
-  return ['ask', '--yolo', '--json', '--no-color', '--', input.prompt];
+  const args = ['ask', '--yolo', '--json', '--no-color'];
+  const effort = input.agentOptions?.effort;
+  if (typeof effort === 'string' && effort) args.push('--effort', effort);
+  args.push('--', input.prompt);
+  return args;
 }
 
 /** @param {string} raw */
