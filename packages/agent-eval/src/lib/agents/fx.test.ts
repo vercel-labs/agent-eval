@@ -32,6 +32,11 @@ describe('fx definition', () => {
       fxVersion: FX_VERSION,
       fxRuntimeProtocol: 'ask-json-session-v1',
     });
+    expect(definition.fingerprintExtra!({ agentOptions: { effort: 'high' } } as never)).toEqual({
+      fxVersion: FX_VERSION,
+      fxRuntimeProtocol: 'ask-json-session-v1',
+      effort: 'high',
+    });
   });
 
   it('installs a checksum-verified binary for both Linux architectures', () => {
@@ -61,6 +66,22 @@ describe('fx runner helpers', () => {
       '--yolo',
       '--json',
       '--no-color',
+      '--',
+      'research this',
+    ]);
+  });
+
+  it('passes an explicit reasoning effort to fx', () => {
+    expect(buildFxCliArgs({
+      prompt: 'research this',
+      agentOptions: { effort: 'high' },
+    })).toEqual([
+      'ask',
+      '--yolo',
+      '--json',
+      '--no-color',
+      '--effort',
+      'high',
       '--',
       'research this',
     ]);

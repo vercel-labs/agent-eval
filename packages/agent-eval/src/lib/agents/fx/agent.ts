@@ -10,11 +10,11 @@ import { AI_GATEWAY } from '../shared.js';
 import type { AgentDefinition, InstallStep } from '../plugin/contract.js';
 import { runWithDefinition } from '../plugin/orchestrator.js';
 
-export const FX_VERSION = '0.0.5';
+export const FX_VERSION = '0.0.11';
 
 export const FX_RELEASE_SHA256 = {
-  x64: 'd5639d173267774aa8228a474baf619a7076ac41a91023915007c865143429b1',
-  arm64: '8bbcde6a41256c4fac4e0a022291cf02740419e27afabde3b8f45e7a4e393edb',
+  x64: '0438a067df1e2b0e2d85f1e018795b7fe5a4b5fafb37f4a590a733917e53943b',
+  arm64: '0067d2156ac31956f52bb0b7b69722733d2756a373f47c4456681b1490b458fe',
 } as const;
 
 const FX_RUNTIME_PROTOCOL = 'ask-json-session-v1';
@@ -128,10 +128,12 @@ export function createFxDefinition(): AgentDefinition {
       return { [AI_GATEWAY.apiKeyEnvVar]: options.apiKey };
     },
 
-    fingerprintExtra(): Record<string, unknown> {
+    fingerprintExtra(config): Record<string, unknown> {
+      const effort = config.agentOptions?.effort;
       return {
         fxVersion: FX_VERSION,
         fxRuntimeProtocol: FX_RUNTIME_PROTOCOL,
+        ...(typeof effort === 'string' && effort ? { effort } : {}),
       };
     },
   };
