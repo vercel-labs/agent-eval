@@ -89,8 +89,7 @@ export function resolveOpenCodeModel(
 export function generateOpenCodeConfig(
   extraProviders?: Record<string, OpenCodeProviderConfig>,
   apiKey?: string,
-  timeoutMs?: number,
-  webResearch?: boolean
+  timeoutMs?: number
 ): string {
   const vercelBase: Record<string, unknown> = {
     options: {
@@ -112,14 +111,10 @@ export function generateOpenCodeConfig(
   return JSON.stringify({
     $schema: 'https://opencode.ai/config.json',
     provider: providers,
-    permission: {
-      write: 'allow',
-      edit: 'allow',
-      bash: 'allow',
-      // OpenCode has no native web search; Exa-backed search is enabled via
-      // OPENCODE_ENABLE_EXA=1 alongside these tool permissions.
-      ...(webResearch ? { webfetch: 'allow', websearch: 'allow' } : {}),
-    },
+    // Agent Eval runs OpenCode non-interactively in a disposable sandbox.
+    // A per-tool allowlist can leave newer permission categories at "ask",
+    // which becomes an unanswerable rejection instead of a prompt.
+    permission: 'allow',
   }, null, 2);
 }
 
@@ -129,8 +124,8 @@ export function generateOpenCodeConfig(
  * Auth is single-mode: the Vercel AI Gateway. authEnv() also carries the Exa
  * websearch toggle (OPENCODE_ENABLE_EXA) when webResearch is on — it rides in
  * process.env alongside the gateway key, exactly as the old adapter set it on the
- * CLI's spawn env. The matching tool permissions are written into opencode.json by
- * generateOpenCodeConfig.
+ * CLI's spawn env. The sandbox config allows all tools because the run is
+ * non-interactive.
  */
 export function createOpenCodeDefinition(): AgentDefinition {
   return {
@@ -208,8 +203,7 @@ export function createOpenCodeDefinition(): AgentDefinition {
       const content = generateOpenCodeConfig(
         extraProviders,
         options.apiKey,
-        options.timeout,
-        options.webResearch
+        options.timeout
       );
       return [{ path: 'opencode.json', content }];
     },
