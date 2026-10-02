@@ -1,5 +1,11 @@
 # @vercel/agent-eval
 
+## 2.4.1
+
+### Patch Changes
+
+- [#205](https://github.com/vercel-labs/agent-eval/pull/205) [`bc5c5d0`](https://github.com/vercel-labs/agent-eval/commit/bc5c5d01fa295e3c758df9e5f9f2ae4bcd6e0ddf) Thanks [@aurorascharff](https://github.com/aurorascharff)! - Allow OpenCode tools in non-interactive evaluation sandboxes so permission prompts cannot reject a run.
+
 ## 2.4.0
 
 ### Minor Changes
