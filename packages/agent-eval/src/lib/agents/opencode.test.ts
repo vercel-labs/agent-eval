@@ -12,26 +12,9 @@ import {
 import { createOpenCodeDefinition, generateOpenCodeConfig, resolveOpenCodeModel } from './opencode/agent.js';
 
 describe('generateOpenCodeConfig', () => {
-  it('grants only the default tool permissions when webResearch is off', () => {
+  it('allows every tool in the non-interactive sandbox', () => {
     const config = JSON.parse(generateOpenCodeConfig(undefined, 'test-key'));
-    expect(config.permission).toEqual({ write: 'allow', edit: 'allow', bash: 'allow' });
-  });
-
-  it('allows websearch and webfetch when webResearch is set', () => {
-    const config = JSON.parse(generateOpenCodeConfig(undefined, 'test-key', undefined, true));
-    expect(config.permission).toEqual({
-      write: 'allow',
-      edit: 'allow',
-      bash: 'allow',
-      webfetch: 'allow',
-      websearch: 'allow',
-    });
-  });
-
-  it('keeps provider configuration unchanged when webResearch is set', () => {
-    const withResearch = JSON.parse(generateOpenCodeConfig(undefined, 'test-key', undefined, true));
-    const without = JSON.parse(generateOpenCodeConfig(undefined, 'test-key'));
-    expect(withResearch.provider).toEqual(without.provider);
+    expect(config.permission).toBe('allow');
   });
 });
 
