@@ -17,6 +17,7 @@ import { parseOpenCodeTranscript } from './opencode.js';
 import { parseFxTranscript } from './fx.js';
 import { parseGeminiTranscript } from './gemini.js';
 import { parseCursorTranscript } from './cursor.js';
+import { parsePiCodingAgentTranscript } from './pi-coding-agent.js';
 
 /**
  * Supported agent types for parsing.
@@ -29,7 +30,8 @@ export type ParseableAgent =
   | 'vercel-ai-gateway/opencode'
   | 'vercel-ai-gateway/fx'
   | 'gemini'
-  | 'cursor';
+  | 'cursor'
+  | 'vercel-ai-gateway/pi-coding-agent';
 
 /**
  * Parser registry mapping agent key patterns to their parsers.
@@ -41,6 +43,7 @@ const AGENT_PARSERS = {
   'fx': parseFxTranscript,
   'gemini': parseGeminiTranscript,
   'cursor': parseCursorTranscript,
+  'pi-coding-agent': parsePiCodingAgentTranscript,
 } as const;
 
 /**

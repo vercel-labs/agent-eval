@@ -11,6 +11,7 @@ import { parseOpenCodeTranscript } from './parsers/opencode.js';
 import { parseFxTranscript } from './parsers/fx.js';
 import { parseGeminiTranscript } from './parsers/gemini.js';
 import { parseCursorTranscript } from './parsers/cursor.js';
+import { parsePiCodingAgentTranscript } from './parsers/pi-coding-agent.js';
 
 describe('o11y', () => {
   describe('parseTranscript', () => {
@@ -51,7 +52,7 @@ describe('o11y', () => {
 
       expect(result.parseSuccess).toBe(false);
       expect(result.parseErrors).toContain(
-        'No parser available for agent: unsupported-agent. Supported agents: claude-code, codex, opencode, fx, gemini, cursor'
+        'No parser available for agent: unsupported-agent. Supported agents: claude-code, codex, opencode, fx, gemini, cursor, pi-coding-agent'
       );
       expect(result.events).toEqual([]);
       expect(result.summary.totalToolCalls).toBe(0);
@@ -906,6 +907,169 @@ describe('o11y', () => {
       expect(result.summary.toolCalls.file_read).toBe(1);
       expect(result.summary.totalToolCalls).toBe(1);
       expect(result.summary.filesRead).toContain('a.ts');
+    });
+  });
+
+  describe('PI coding agent parser', () => {
+    // Shapes captured from a real `pi --mode json` run (pi 0.73.1).
+    const usage = { input: 10, output: 3, cacheRead: 0, cacheWrite: 0, totalTokens: 13 };
+    const assistant = (content: unknown[], extra: Record<string, unknown> = {}) => ({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content,
+        api: 'openai-completions',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-5',
+        usage,
+        stopReason: 'toolUse',
+        timestamp: 1789740860145,
+        ...extra,
+      },
+    });
+    const toolResult = (toolCallId: string, toolName: string, text: string, isError = false) => ({
+      type: 'message_end',
+      message: { role: 'toolResult', toolCallId, toolName, content: [{ type: 'text', text }], isError, timestamp: 1789740860168 },
+    });
+    const jsonl = (...events: unknown[]) => events.map((event) => JSON.stringify(event)).join('\n');
+
+    const writeCall = { type: 'toolCall', id: 'call_1', name: 'write', arguments: { path: 'hello.txt', content: 'hi' } };
+    const bashCall = { type: 'toolCall', id: 'call_2', name: 'bash', arguments: { command: 'ls && exit 3' } };
+
+    it('parses the user prompt', () => {
+      const { events } = parsePiCodingAgentTranscript(
+        jsonl({ type: 'message_end', message: { role: 'user', content: [{ type: 'text', text: 'make hello.txt' }], timestamp: 1789740860106 } })
+      );
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ type: 'message', role: 'user', content: 'make hello.txt' });
+      expect(events[0].timestamp).toBe(new Date(1789740860106).toISOString());
+    });
+
+    it('parses toolCall blocks into tool calls with extracted path/command', () => {
+      const { events } = parsePiCodingAgentTranscript(jsonl(assistant([writeCall]), assistant([bashCall])));
+      const calls = events.filter((e) => e.type === 'tool_call');
+
+      expect(calls).toHaveLength(2);
+      expect(calls[0].tool).toMatchObject({ name: 'file_write', originalName: 'write' });
+      expect(calls[0].tool?.args?._extractedPath).toBe('hello.txt');
+      expect(calls[1].tool).toMatchObject({ name: 'shell', originalName: 'bash' });
+      expect(calls[1].tool?.args?._extractedCommand).toBe('ls && exit 3');
+    });
+
+    it('maps every built-in PI tool', () => {
+      const names = ['read', 'write', 'edit', 'bash', 'grep', 'find', 'ls', 'custom_tool'];
+      const { events } = parsePiCodingAgentTranscript(
+        jsonl(assistant(names.map((name, i) => ({ type: 'toolCall', id: `c${i}`, name, arguments: {} }))))
+      );
+
+      expect(events.filter((e) => e.type === 'tool_call').map((e) => e.tool?.name)).toEqual([
+        'file_read', 'file_write', 'file_edit', 'shell', 'grep', 'glob', 'list_dir', 'unknown',
+      ]);
+    });
+
+    it('parses tool results, including bash exit codes', () => {
+      const { events } = parsePiCodingAgentTranscript(
+        jsonl(
+          toolResult('call_1', 'write', 'Successfully wrote 2 bytes to hello.txt'),
+          toolResult('call_2', 'bash', 'hello.txt\n\n\nCommand exited with code 3', true),
+          toolResult('call_3', 'bash', 'ok')
+        )
+      );
+      const results = events.filter((e) => e.type === 'tool_result');
+
+      expect(results[0].tool).toMatchObject({ name: 'file_write', success: true, result: 'Successfully wrote 2 bytes to hello.txt' });
+      expect(results[1].tool).toMatchObject({ name: 'shell', success: false });
+      expect(results[1].tool?.result).toMatchObject({ exitCode: 3 });
+      expect(results[2].tool?.result).toEqual({ output: 'ok', exitCode: 0 });
+    });
+
+    it('does not read an exit code out of a successful command\'s output', () => {
+      const { events } = parsePiCodingAgentTranscript(jsonl(toolResult('call_1', 'bash', 'Command exited with code 3\n')));
+
+      expect(events[0].tool).toMatchObject({ success: true, result: { exitCode: 0 } });
+    });
+
+    it('pairs results with their calls when one message carries several tool calls', () => {
+      const failing = { type: 'toolCall', id: 'call_a', name: 'bash', arguments: { command: 'exit 3' } };
+      const passing = { type: 'toolCall', id: 'call_b', name: 'bash', arguments: { command: 'echo ok' } };
+      const transcript = jsonl(
+        assistant([failing, passing]),
+        toolResult('call_a', 'bash', 'Command exited with code 3', true),
+        toolResult('call_b', 'bash', 'ok')
+      );
+
+      expect(parsePiCodingAgentTranscript(transcript).events.map((e) => e.type)).toEqual([
+        'tool_call', 'tool_result', 'tool_call', 'tool_result', 'message',
+      ]);
+      expect(parseTranscript(transcript, 'vercel-ai-gateway/pi-coding-agent').summary.shellCommands).toEqual([
+        { command: 'exit 3', success: false, exitCode: 3 },
+        { command: 'echo ok', success: true, exitCode: 0 },
+      ]);
+    });
+
+    it('parses thinking and text blocks, counting one turn per assistant message', () => {
+      const transcript = jsonl(
+        assistant([{ type: 'thinking', thinking: 'Plan the file.' }, writeCall]),
+        assistant([{ type: 'text', text: 'All done.' }], { stopReason: 'stop' })
+      );
+      const { events } = parsePiCodingAgentTranscript(transcript);
+
+      expect(events.find((e) => e.type === 'thinking')?.content).toBe('Plan the file.');
+      expect(events.filter((e) => e.type === 'message' && e.role === 'assistant').map((e) => e.content)).toEqual(['', 'All done.']);
+      expect(parseTranscript(transcript, 'vercel-ai-gateway/pi-coding-agent').summary.totalTurns).toBe(2);
+    });
+
+    it('surfaces provider errors and exhausted retries', () => {
+      const { events } = parsePiCodingAgentTranscript(
+        jsonl(
+          assistant([], { stopReason: 'error', errorMessage: 'Connection error.' }),
+          { type: 'auto_retry_end', success: false, attempt: 3, finalError: 'Connection error.' },
+          { type: 'auto_retry_end', success: true, attempt: 1 }
+        )
+      );
+
+      expect(events.filter((e) => e.type === 'error').map((e) => e.content)).toEqual(['Connection error.', 'Connection error.']);
+    });
+
+    it('does not double count an unfiltered stream (turn_end/agent_end/message_update repeat messages)', () => {
+      const message = assistant([writeCall]);
+      const { events } = parsePiCodingAgentTranscript(
+        jsonl(
+          { type: 'session', version: 3, id: 'abc', cwd: '/workspace' },
+          { type: 'message_start', message: message.message },
+          { type: 'message_update', message: message.message, assistantMessageEvent: { type: 'toolcall_delta' } },
+          message,
+          { type: 'tool_execution_start', toolCallId: 'call_1', toolName: 'write', args: writeCall.arguments },
+          { type: 'tool_execution_end', toolCallId: 'call_1', toolName: 'write', result: {}, isError: false },
+          toolResult('call_1', 'write', 'ok'),
+          { type: 'turn_end', message: message.message, toolResults: [] },
+          { type: 'agent_end', messages: [message.message] }
+        )
+      );
+
+      expect(events.filter((e) => e.type === 'tool_call')).toHaveLength(1);
+      expect(events.filter((e) => e.type === 'tool_result')).toHaveLength(1);
+    });
+
+    it('routes the PI agent to the PI parser and summarizes it', () => {
+      const transcript = jsonl(
+        assistant([writeCall]),
+        toolResult('call_1', 'write', 'ok'),
+        assistant([bashCall]),
+        toolResult('call_2', 'bash', 'Command exited with code 3', true)
+      );
+
+      const { summary, parseSuccess } = parseTranscript(transcript, 'vercel-ai-gateway/pi-coding-agent');
+      expect(parseSuccess).toBe(true);
+      expect(summary.toolCalls.file_write).toBe(1);
+      expect(summary.filesModified).toEqual(['hello.txt']);
+      expect(summary.shellCommands).toEqual([{ command: 'ls && exit 3', success: false, exitCode: 3 }]);
+    });
+
+    it('skips unparseable lines', () => {
+      const { events } = parsePiCodingAgentTranscript('not json\n' + jsonl(assistant([{ type: 'text', text: 'hi' }])));
+      expect(events).toHaveLength(1);
     });
   });
 

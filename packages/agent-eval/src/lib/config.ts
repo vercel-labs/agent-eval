@@ -77,6 +77,7 @@ const experimentConfigSchema = z.object({
           'vercel-ai-gateway/fx',
           'gemini',
           'cursor',
+          'vercel-ai-gateway/pi-coding-agent',
         ])
         .optional(),
       model: z.string(),

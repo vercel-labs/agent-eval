@@ -13,7 +13,8 @@ export type BuiltInAgentType =
   | 'vercel-ai-gateway/opencode'
   | 'vercel-ai-gateway/fx'
   | 'gemini'
-  | 'cursor';
+  | 'cursor'
+  | 'vercel-ai-gateway/pi-coding-agent';
 
 /**
  * An agent identifier. Built-in identifiers are suggested by TypeScript, while
