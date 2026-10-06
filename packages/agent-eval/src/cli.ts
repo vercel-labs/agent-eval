@@ -26,7 +26,7 @@ import {
   computeReuseCompatibilityFingerprint,
   decideRefingerprint,
 } from './lib/fingerprint.js';
-import { scanReusableResults } from './lib/results.js';
+import { scanReusableResults, findEvalResultDirs } from './lib/results.js';
 import { isClassifierEnabled, classifyFailure } from './lib/classifier.js';
 import { housekeep } from './lib/housekeeping.js';
 import { spawnSync } from 'child_process';
@@ -830,7 +830,7 @@ async function carryForwardConfigChanges(
       for (const timestamp of readdirSync(expResultsDir)) {
         const tsDir = join(expResultsDir, timestamp);
         if (!statSync(tsDir).isDirectory()) continue;
-        for (const evalName of readdirSync(tsDir)) {
+        for (const evalName of findEvalResultDirs(tsDir)) {
           const summaryPath = join(tsDir, evalName, 'summary.json');
           const evalPath = join(evalsDir, evalName);
           if (!existsSync(summaryPath) || !existsSync(evalPath)) continue;

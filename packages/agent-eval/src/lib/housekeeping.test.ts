@@ -171,4 +171,83 @@ describe('housekeep', () => {
     expect(stats.removedNonModelFailures).toBe(0);
     expect(existsSync(evalDir)).toBe(true);
   });
+
+  it('handles nested eval directories without deleting parent groups', () => {
+    // Newer timestamp with two nested evals under 'caching'
+    createResult(join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z', 'caching', 'cache-bypass'), {});
+    createResult(join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z', 'caching', 'cached-handler'), {});
+
+    // Older timestamp with duplicate
+    createResult(join(TEST_DIR, 'exp', '2024-01-25T12-00-00.000Z', 'caching', 'cache-bypass'), {});
+
+    const stats = housekeep(TEST_DIR, 'exp');
+
+    expect(stats.removedDuplicates).toBe(1);
+    expect(stats.removedIncomplete).toBe(0);
+
+    // Newer results should exist
+    expect(existsSync(join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z', 'caching', 'cache-bypass'))).toBe(true);
+    expect(existsSync(join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z', 'caching', 'cached-handler'))).toBe(true);
+
+    // Older duplicate should be removed
+    expect(existsSync(join(TEST_DIR, 'exp', '2024-01-25T12-00-00.000Z', 'caching', 'cache-bypass'))).toBe(false);
+    // And empty old timestamp dir should be removed
+    expect(existsSync(join(TEST_DIR, 'exp', '2024-01-25T12-00-00.000Z'))).toBe(false);
+  });
+
+  it('removes incomplete nested results and cleans up empty parent directories', () => {
+    const incompleteDir = join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z', 'group', 'subgroup', 'eval-1');
+    mkdirSync(incompleteDir, { recursive: true });
+    // Write run-1 without summary.json (crashed/incomplete run)
+    mkdirSync(join(incompleteDir, 'run-1'), { recursive: true });
+
+    const stats = housekeep(TEST_DIR, 'exp');
+
+    expect(stats.removedIncomplete).toBe(1);
+    // subgroup, group, and the timestamp dir
+    expect(stats.removedEmptyDirs).toBe(3);
+    expect(existsSync(join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z'))).toBe(false);
+  });
+
+  it('leaves kept results untouched, including empty and hidden contents', () => {
+    const evalDir = join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z', 'eval-1');
+    createResult(evalDir, {});
+    // saveResults creates run-N/outputs/ unconditionally, often with nothing in it
+    const outputs = join(evalDir, 'run-1', 'outputs');
+    mkdirSync(outputs, { recursive: true });
+    // A copied fixture whose only contents are dotfiles
+    const workflows = join(evalDir, 'run-1', 'project', '.github', 'workflows');
+    mkdirSync(workflows, { recursive: true });
+    writeFileSync(join(workflows, 'ci.yml'), 'name: ci\n');
+
+    const stats = housekeep(TEST_DIR, 'exp');
+
+    expect(stats.removedEmptyDirs).toBe(0);
+    expect(existsSync(outputs)).toBe(true);
+    expect(existsSync(join(workflows, 'ci.yml'))).toBe(true);
+  });
+
+  it('removes crashed eval directories that never got a run dir', () => {
+    const tsDir = join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z');
+    const crashed = join(tsDir, 'group', 'eval-1');
+    mkdirSync(crashed, { recursive: true });
+    writeFileSync(join(crashed, 'partial.log'), 'boom\n');
+
+    const stats = housekeep(TEST_DIR, 'exp');
+
+    expect(stats.removedIncomplete).toBe(1);
+    expect(existsSync(tsDir)).toBe(false);
+  });
+
+  it('does not delete a group directory whose eval is named like a run', () => {
+    const tsDir = join(TEST_DIR, 'exp', '2024-01-26T12-00-00.000Z');
+    createResult(join(tsDir, 'caching', 'run-1'), {});
+    createResult(join(tsDir, 'caching', 'cache-bypass'), {});
+
+    const stats = housekeep(TEST_DIR, 'exp');
+
+    expect(stats.removedIncomplete).toBe(0);
+    expect(existsSync(join(tsDir, 'caching', 'run-1', 'summary.json'))).toBe(true);
+    expect(existsSync(join(tsDir, 'caching', 'cache-bypass', 'summary.json'))).toBe(true);
+  });
 });
