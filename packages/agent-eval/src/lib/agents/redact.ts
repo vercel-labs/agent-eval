@@ -23,6 +23,12 @@
  * JWT prefix match flags). The tradeoff is that a credential the framework never
  * saw is not covered: if a run refreshes its own token mid-flight, only the value
  * we started with is redacted.
+ *
+ * "Exact" includes the forms a JSON encoder gives the value. Transcripts are
+ * JSON: a credential containing a quote, a backslash, a newline, or non-ASCII
+ * text appears escaped there (`a\"b`, `line1\nline2`, `\u00e9`), and a literal
+ * match on the raw value would miss it while anyone could decode it back. See
+ * {@link encodedForms}.
  */
 import type { AgentRunResult, ScriptResult } from './types.js';
 
@@ -36,51 +42,94 @@ export const REDACTED = '[REDACTED]';
  */
 const MIN_SECRET_LENGTH = 16;
 
-/** Usable secrets, deduped and ordered longest-first so overlaps redact whole. */
-function usableSecrets(secrets: readonly (string | undefined)[]): string[] {
-  const seen = new Set<string>();
-  for (const s of secrets) {
-    if (s && s.length >= MIN_SECRET_LENGTH) seen.add(s);
-  }
-  return [...seen].sort((a, b) => b.length - a.length);
+/** Escape one UTF-16 code unit as `\uXXXX`. */
+function unicodeEscape(code: number, upper: boolean): string {
+  const hex = code.toString(16).padStart(4, '0');
+  return `\\u${upper ? hex.toUpperCase() : hex}`;
 }
 
-/** Replace every occurrence of each secret with {@link REDACTED}. */
-export function redactSecrets(
-  text: string,
-  secrets: readonly (string | undefined)[]
-): string {
+const SHORT_ESCAPES: Record<string, string> = {
+  '"': '\\"',
+  '\\': '\\\\',
+  '\n': '\\n',
+  '\r': '\\r',
+  '\t': '\\t',
+  '\b': '\\b',
+  '\f': '\\f',
+};
+
+/**
+ * JSON string escaping with configurable `\uXXXX` coverage: control
+ * characters always, plus whatever `escapeAlso` selects.
+ */
+function escapeJson(text: string, escapeAlso: (code: number) => boolean, upper: boolean): string {
+  let out = '';
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const code = text.charCodeAt(i);
+    if (SHORT_ESCAPES[char]) out += SHORT_ESCAPES[char];
+    else if (code < 0x20 || escapeAlso(code)) out += unicodeEscape(code, upper);
+    else out += char;
+  }
+  return out;
+}
+
+/**
+ * The text a secret can turn into inside JSON output: as written, escaped once
+ * by the encoders the agent CLIs and common tools use, and escaped twice (JSON
+ * inside a JSON string, such as a tool's JSON output recorded in a JSONL
+ * transcript).
+ *
+ * Encoders agree on quotes, backslashes, and control characters but differ on
+ * the rest, so each style is covered: plain (JavaScript, Rust), ASCII-only with
+ * `\u` escapes for every non-ASCII character (Python's default), HTML-safe
+ * `<`, `>`, `&`, U+2028, and U+2029 (Go's default), and escaped slashes. Hex
+ * digits appear in both cases. A secret made only of characters no encoder
+ * escapes has a single form: itself.
+ */
+export function encodedForms(secret: string): string[] {
+  const htmlUnsafe = (code: number) => code === 0x3c || code === 0x3e || code === 0x26 || code === 0x2028 || code === 0x2029;
+  const nonAscii = (code: number) => code > 0x7f;
+  const plain = JSON.stringify(secret).slice(1, -1);
+  const once = new Set<string>([plain, plain.replace(/\//g, '\\/')]);
+  for (const upper of [false, true]) {
+    once.add(escapeJson(secret, nonAscii, upper));
+    once.add(escapeJson(secret, htmlUnsafe, upper));
+  }
+  const forms = new Set<string>([secret, ...once]);
+  for (const form of once) forms.add(JSON.stringify(form).slice(1, -1));
+  return [...forms];
+}
+
+/**
+ * Every string to replace for these secrets: each usable secret in all of its
+ * encoded forms, deduped and ordered longest-first so overlaps redact whole.
+ */
+function redactionNeedles(secrets: readonly (string | undefined)[]): string[] {
+  const needles = new Set<string>();
+  for (const secret of secrets) {
+    if (!secret || secret.length < MIN_SECRET_LENGTH) continue;
+    for (const form of encodedForms(secret)) needles.add(form);
+  }
+  return [...needles].sort((a, b) => b.length - a.length);
+}
+
+function replaceText(text: string, needles: readonly string[]): string {
   let out = text;
-  for (const secret of usableSecrets(secrets)) {
+  for (const needle of needles) {
     // split/join rather than RegExp: the secret is arbitrary text and must not be
     // interpreted as a pattern.
-    out = out.split(secret).join(REDACTED);
+    out = out.split(needle).join(REDACTED);
   }
   return out;
 }
 
 const REDACTED_BYTES = Buffer.from(REDACTED, 'utf-8');
 
-/**
- * Buffer-level equivalent of {@link redactSecrets}.
- *
- * `generatedFiles` holds raw bytes so that binary assets survive collection
- * intact. Redaction therefore cannot route through a string: decoding to UTF-8
- * and re-encoding replaces every non-UTF-8 byte with U+FFFD, which would corrupt
- * exactly the files byte-fidelity exists to protect. Passing a Buffer to
- * {@link redactSecrets} is worse still — Buffer has no `split`, so it throws.
- *
- * Credentials are ASCII, so their UTF-8 byte sequence is located and spliced out
- * directly and every other byte is copied through untouched.
- */
-export function redactSecretsBuffer(
-  content: Buffer,
-  secrets: readonly (string | undefined)[]
-): Buffer {
+function replaceBuffer(content: Buffer, needles: readonly string[]): Buffer {
   let out = content;
-
-  for (const secret of usableSecrets(secrets)) {
-    const needle = Buffer.from(secret, 'utf-8');
+  for (const text of needles) {
+    const needle = Buffer.from(text, 'utf-8');
     let found = out.indexOf(needle);
     if (found === -1) continue;
 
@@ -94,15 +143,38 @@ export function redactSecretsBuffer(
     pieces.push(out.subarray(cursor));
     out = Buffer.concat(pieces);
   }
-
   return out;
 }
 
-function redactScriptResult(
-  result: ScriptResult,
+/** Replace every occurrence of each secret, in any of its {@link encodedForms}, with {@link REDACTED}. */
+export function redactSecrets(
+  text: string,
   secrets: readonly (string | undefined)[]
-): ScriptResult {
-  return { ...result, output: redactSecrets(result.output, secrets) };
+): string {
+  return replaceText(text, redactionNeedles(secrets));
+}
+
+/**
+ * Buffer-level equivalent of {@link redactSecrets}.
+ *
+ * `generatedFiles` holds raw bytes so that binary assets survive collection
+ * intact. Redaction therefore cannot route through a string: decoding to UTF-8
+ * and re-encoding replaces every non-UTF-8 byte with U+FFFD, which would corrupt
+ * exactly the files byte-fidelity exists to protect. Passing a Buffer to
+ * {@link redactSecrets} is worse still — Buffer has no `split`, so it throws.
+ *
+ * Each secret form's UTF-8 byte sequence is located and spliced out directly,
+ * and every other byte is copied through untouched.
+ */
+export function redactSecretsBuffer(
+  content: Buffer,
+  secrets: readonly (string | undefined)[]
+): Buffer {
+  return replaceBuffer(content, redactionNeedles(secrets));
+}
+
+function redactScriptResult(result: ScriptResult, needles: readonly string[]): ScriptResult {
+  return { ...result, output: replaceText(result.output, needles) };
 }
 
 /**
@@ -119,27 +191,28 @@ export function redactRunResult(
   result: AgentRunResult,
   secrets: readonly (string | undefined)[]
 ): AgentRunResult {
-  if (usableSecrets(secrets).length === 0) return result;
+  const needles = redactionNeedles(secrets);
+  if (needles.length === 0) return result;
 
   const redacted: AgentRunResult = {
     ...result,
-    output: redactSecrets(result.output, secrets),
+    output: replaceText(result.output, needles),
   };
 
   if (result.transcript !== undefined) {
-    redacted.transcript = redactSecrets(result.transcript, secrets);
+    redacted.transcript = replaceText(result.transcript, needles);
   }
   if (result.error !== undefined) {
-    redacted.error = redactSecrets(result.error, secrets);
+    redacted.error = replaceText(result.error, needles);
   }
   if (result.testResult) {
-    redacted.testResult = redactScriptResult(result.testResult, secrets);
+    redacted.testResult = redactScriptResult(result.testResult, needles);
   }
   if (result.scriptsResults) {
     redacted.scriptsResults = Object.fromEntries(
       Object.entries(result.scriptsResults).map(([name, script]) => [
         name,
-        redactScriptResult(script, secrets),
+        redactScriptResult(script, needles),
       ])
     );
   }
@@ -147,7 +220,7 @@ export function redactRunResult(
     redacted.generatedFiles = Object.fromEntries(
       Object.entries(result.generatedFiles).map(([path, content]) => [
         path,
-        redactSecretsBuffer(content, secrets),
+        replaceBuffer(content, needles),
       ])
     );
   }
@@ -166,13 +239,13 @@ export function redactRunResult(
  * Date) is passed through by reference. The input is not mutated.
  */
 export function redactValue<T>(value: T, secrets: readonly (string | undefined)[]): T {
-  const usable = usableSecrets(secrets);
-  if (usable.length === 0) return value;
+  const needles = redactionNeedles(secrets);
+  if (needles.length === 0) return value;
 
   const copies = new Map<object, unknown>();
   const visit = (current: unknown): unknown => {
-    if (typeof current === 'string') return redactSecrets(current, usable);
-    if (Buffer.isBuffer(current)) return redactSecretsBuffer(current, usable);
+    if (typeof current === 'string') return replaceText(current, needles);
+    if (Buffer.isBuffer(current)) return replaceBuffer(current, needles);
     if (current === null || typeof current !== 'object') return current;
     if (copies.has(current)) return copies.get(current);
 

@@ -525,7 +525,7 @@ The variables are set on the agent process and nowhere else:
 
 - Values travel only in the process environment, never in command arguments. With `sandboxUser` set, they go through the same user-owned env file as the agent's auth token.
 - Validation (EVAL.ts and `scripts`) and judge runs don't receive them. Those run in the same sandbox, though, so anything the agent wrote to disk is still there, and with `sandboxUser` so is the env file that delivered the values.
-- Every value is redacted from `result.json`, transcripts, test and script outputs, copied project files, and reporter payloads, the same way the agent's API key is. Values shorter than 16 characters are not redacted, because matching short strings would shred unrelated text, so keep anything secret at least that long.
+- Every value is redacted from `result.json`, transcripts, test and script outputs, copied project files, and reporter payloads, the same way the agent's API key is. That includes the escaped forms JSON gives a value containing quotes, backslashes, newlines, or non-ASCII characters, such as a multiline private key printed into a JSON transcript. Values shorter than 16 characters are not redacted, because matching short strings would shred unrelated text, so keep anything secret at least that long.
 - A key may not collide with the agent's own authentication variables or the workspace identity variables (`USER`, `LOGNAME`). A collision is an error, not a silent override. Variables the sandbox already sets, such as `PATH`, are replaced, so avoid them unless that's the point.
 - Only the sorted key names are part of the result-reuse fingerprint. Rotating a token keeps cached results; adding or removing a variable re-runs them.
 

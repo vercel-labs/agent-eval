@@ -110,6 +110,34 @@ describe('agentEnv', () => {
     expect(everything).not.toContain(DEPLOY_TOKEN);
   });
 
+  it('is redacted from JSON output even when the value contains characters JSON escapes', async () => {
+    // A PEM-style key: newlines, plus a quote and a backslash for good measure.
+    const privateKey = '-----BEGIN KEY-----\nMIIBVgIBADANBgkqhkiG9w0BAQEFAASC\n"quoted"\\end\n-----END KEY-----';
+    const def: AgentDefinition = {
+      ...leakyAgent(),
+      runnerPath: writeTestRunner(
+        workDir,
+        `
+        const key = process.env.SIGNING_KEY;
+        writeFileSync('signing.json', JSON.stringify({ key }));
+        result.output = JSON.stringify({ printed: key });
+        result.transcript = [
+          JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: key }] } }),
+          JSON.stringify({ type: 'tool_result', content: JSON.stringify({ env: { SIGNING_KEY: key } }) }),
+        ].join('\\n');
+        `
+      ),
+    };
+
+    const result = await runWithDefinition(def, fixtureDir, { ...options, agentEnv: { SIGNING_KEY: privateKey } });
+
+    const [assistant, toolResult] = result.transcript!.split('\n').map((line) => JSON.parse(line));
+    expect(assistant.message.content[0].text).toBe(REDACTED);
+    expect(JSON.parse(toolResult.content).env.SIGNING_KEY).toBe(REDACTED);
+    expect(JSON.parse(result.output).printed).toBe(REDACTED);
+    expect(JSON.parse(result.generatedFiles!['signing.json'].toString('utf-8')).key).toBe(REDACTED);
+  });
+
   it('is not given to validation: neither the EVAL.ts process nor npm scripts', async () => {
     writeFileSync(join(fixtureDir, 'EVAL.ts'), "import { test } from 'vitest';\ntest('deployed', () => {});\n");
     // A stand-in vitest, installed as a project dependency, that reports which

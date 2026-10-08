@@ -629,6 +629,58 @@ describe('results utilities', () => {
         Buffer.compare(readFileSync(join(projectDir, 'src/logo.png')), PNG_BYTES)
       ).toBe(0);
     });
+
+    it('never writes or deletes outside the run\'s project directory, whatever paths the capture reports', () => {
+      // The capture runs in the agent's sandbox, where the agent can replace git.
+      // Its paths are untrusted, and copyFiles writes and deletes on this machine.
+      const fixturePath = join(TEST_DIR, 'fixture');
+      mkdirSync(fixturePath, { recursive: true });
+      writeFileSync(join(fixturePath, 'PROMPT.md'), 'Task');
+      const victim = join(TEST_DIR, 'victim.txt');
+      writeFileSync(victim, 'keep me');
+
+      const config: ResolvedExperimentConfig = {
+        agent: 'claude-code',
+        model: 'opus',
+        evals: ['eval-1'],
+        runs: 1,
+        earlyExit: true,
+        scripts: [],
+        timeout: 300,
+        copyFiles: 'all',
+      };
+      const results = createExperimentResults(
+        config,
+        [
+          createEvalSummary('eval-1', [
+            {
+              result: { status: 'passed', duration: 10 },
+              generatedFiles: {
+                'src/ok.ts': Buffer.from('ok'),
+                // From run-N/project, five levels up is resultsDir itself.
+                '../../../../../escaped.txt': Buffer.from('pwned'),
+                [join(TEST_DIR, 'absolute.txt')]: Buffer.from('pwned'),
+              },
+              deletedFiles: ['../../../../../victim.txt', victim],
+            },
+          ]),
+        ],
+        new Date('2024-01-26T12:00:00Z'),
+        new Date('2024-01-26T12:01:00Z')
+      );
+
+      const outputDir = saveResults(results, {
+        resultsDir: TEST_DIR,
+        experimentName: 'traversal-test',
+        fixturePaths: { 'eval-1': fixturePath },
+      });
+
+      const projectDir = join(outputDir, 'eval-1', 'run-1', 'project');
+      expect(readFileSync(join(projectDir, 'src/ok.ts'), 'utf-8')).toBe('ok');
+      expect(existsSync(join(TEST_DIR, 'escaped.txt'))).toBe(false);
+      expect(existsSync(join(projectDir, TEST_DIR, 'absolute.txt'))).toBe(false);
+      expect(readFileSync(victim, 'utf-8')).toBe('keep me');
+    });
   });
 
   describe('formatResultsTable', () => {
