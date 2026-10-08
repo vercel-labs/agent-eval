@@ -7,7 +7,8 @@
  * - Messages, tool calls, and results are separate events
  */
 
-import type { TranscriptEvent, ToolName } from '../types.js';
+import type { TokenUsage, TranscriptEvent, ToolName } from '../types.js';
+import { asRecord, compactUsage, parseJsonLine, reportedNumber, sumUsage } from '../usage.js';
 
 /**
  * Map OpenCode tool names to canonical names.
@@ -166,11 +167,10 @@ function parseOpenCodeLine(line: string): TranscriptEvent[] {
         break;
       }
 
-      // Step events - extract cost/token info if needed
+      // Step events carry no conversation content; step_finish token usage is
+      // read separately by extractStepFinishUsage.
       case 'step_start':
       case 'step_finish': {
-        // These are metadata events, skip for now
-        // Could extract token usage from step_finish if needed
         break;
       }
 
@@ -301,11 +301,56 @@ function parseOpenCodeLine(line: string): TranscriptEvent[] {
 }
 
 /**
+ * Read token usage from `step_finish` events.
+ *
+ * OpenCode emits one `step_finish` per model call, with that call's
+ * `part.tokens` (`input`, `output`, `reasoning`, `cache.read`, `cache.write`,
+ * and, in newer versions, `total`) and `part.cost`. Steps are de-duplicated by
+ * part id and summed. A field is reported only when every step reports it, so
+ * runs from versions without `tokens.total` have no `totalTokens`: those
+ * versions disagree about whether `output` includes reasoning, so the parts
+ * can't be summed safely.
+ *
+ * `part.cost` is OpenCode's own figure, from its model pricing data. OpenCode
+ * reports 0 for models it has no pricing for.
+ */
+export function extractStepFinishUsage(raw: string): TokenUsage | undefined {
+  const steps = new Map<string, TokenUsage>();
+  let anonymous = 0;
+
+  for (const line of raw.split('\n')) {
+    const data = parseJsonLine(line);
+    if (data?.type !== 'step_finish') continue;
+    const part = asRecord(data.part);
+    const tokens = asRecord(part?.tokens);
+    if (!part || !tokens) continue;
+    const cache = asRecord(tokens.cache);
+
+    const usage = compactUsage({
+      inputTokens: reportedNumber(tokens.input),
+      outputTokens: reportedNumber(tokens.output),
+      reasoningTokens: reportedNumber(tokens.reasoning),
+      cacheReadTokens: reportedNumber(cache?.read),
+      cacheWriteTokens: reportedNumber(cache?.write),
+      totalTokens: reportedNumber(tokens.total),
+      costUsd: reportedNumber(part.cost),
+    });
+    if (!usage) continue;
+
+    const id = typeof part.id === 'string' && part.id ? part.id : `#${anonymous++}`;
+    steps.set(id, usage);
+  }
+
+  return sumUsage([...steps.values()]);
+}
+
+/**
  * Parse OpenCode JSONL transcript into normalized events.
  */
 export function parseOpenCodeTranscript(raw: string): {
   events: TranscriptEvent[];
   errors: string[];
+  usage?: TokenUsage;
 } {
   const events: TranscriptEvent[] = [];
   const errors: string[] = [];
@@ -352,5 +397,6 @@ export function parseOpenCodeTranscript(raw: string): {
     }
   }
 
-  return { events, errors };
+  const usage = extractStepFinishUsage(raw);
+  return usage ? { events, errors, usage } : { events, errors };
 }

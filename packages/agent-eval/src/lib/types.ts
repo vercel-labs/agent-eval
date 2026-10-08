@@ -2,6 +2,8 @@
  * Core types for the eval framework.
  */
 
+import type { TokenUsage } from './o11y/types.js';
+
 /**
  * Supported AI agent types.
  */
@@ -296,6 +298,9 @@ export interface EvalRunResult {
   observedModel?: string;
   /** Codex only: model re-stated explicitly by the shell-tool repair (evidence the run needed it) */
   modelRepair?: string;
+  /** Token usage of the code-generation run, when the agent reports it. Judge
+   * assertions re-invoke the agent separately and are not included. */
+  usage?: TokenUsage;
   /** Path to parsed transcript file (relative to run directory) */
   transcriptPath?: string;
   /** Path to raw transcript file (relative to run directory) */
@@ -348,8 +353,38 @@ export interface EvalSummary {
   passRate: number;
   /** Mean duration across all runs */
   meanDuration: number;
+  /** Token usage across runs. Present only when at least one run reported usage. */
+  usage?: UsageSummary;
   /** Individual run data (internal, not all fields saved to summary.json) */
   runs: EvalRunData[];
+}
+
+/**
+ * Token usage aggregated over the runs of one eval, as written to summary.json.
+ *
+ * Token figures cover the runs that reported usage (`runsWithUsage`). A token
+ * field appears only when every one of those runs reported it, so a total never
+ * silently mixes reported and missing values.
+ */
+export interface UsageSummary {
+  /** Number of runs that reported token usage. */
+  runsWithUsage: number;
+  /** Sum of `totalTokens` over the runs that reported usage. */
+  totalTokens?: number;
+  /** `totalTokens` divided by `runsWithUsage`. */
+  meanTotalTokens?: number;
+  /** Sum of `inputTokens`. */
+  inputTokens?: number;
+  /** Sum of `outputTokens`. */
+  outputTokens?: number;
+  /** Sum of `cacheReadTokens`. */
+  cacheReadTokens?: number;
+  /** Sum of `cacheWriteTokens`. */
+  cacheWriteTokens?: number;
+  /** Sum of `reasoningTokens`. */
+  reasoningTokens?: number;
+  /** Sum of `costUsd`, only when every run in the eval reported a cost. */
+  costUsd?: number;
 }
 
 /**

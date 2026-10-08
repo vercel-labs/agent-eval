@@ -93,6 +93,34 @@ export interface ShellCommandInfo {
 }
 
 /**
+ * Token usage for one agent run, read from what the agent CLI itself reports.
+ *
+ * Every field is optional: a field is set only when the transcript exposes it,
+ * and nothing is estimated or derived from a price table. Agent CLIs count
+ * tokens differently, so compare `totalTokens` across agents and treat the
+ * per-component fields as each CLI reports them (see the README's per-agent
+ * table).
+ */
+export interface TokenUsage {
+  /** Prompt tokens. Excludes cache reads and writes when the CLI reports those
+   * separately; otherwise the CLI's full prompt count. */
+  inputTokens?: number;
+  /** Generated tokens, as the CLI counts them. */
+  outputTokens?: number;
+  /** Prompt tokens served from the provider's prompt cache. */
+  cacheReadTokens?: number;
+  /** Prompt tokens written to the provider's prompt cache. */
+  cacheWriteTokens?: number;
+  /** Reasoning tokens, when the CLI reports them separately. */
+  reasoningTokens?: number;
+  /** The CLI's own total, or the sum of the input, cache, and output counts
+   * when the CLI reports non-overlapping counts but no total. */
+  totalTokens?: number;
+  /** Only when the agent CLI itself reports a cost. Never computed from a price table. */
+  costUsd?: number;
+}
+
+/**
  * Summary statistics derived from the transcript.
  */
 export interface TranscriptSummary {
@@ -122,6 +150,10 @@ export interface TranscriptSummary {
 
   /** Thinking/reasoning blocks (if available) */
   thinkingBlocks: number;
+
+  /** Token usage of the code-generation run, when the transcript reports it.
+   * Judge assertions run separately and are not included. */
+  usage?: TokenUsage;
 }
 
 /**

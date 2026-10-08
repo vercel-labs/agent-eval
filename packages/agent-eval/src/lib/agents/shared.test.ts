@@ -6,8 +6,10 @@ import {
   ensureValidationRunner,
   FALLBACK_VITEST_VERSION,
   initGitAndCommit,
+  injectTranscriptContext,
   prepareNeutralWorkspace,
   runValidation,
+  TRANSCRIPT_CONTEXT_PATH,
 } from './shared.js';
 import { LocalSandbox } from './plugin/local-sandbox.test-support.js';
 
@@ -246,5 +248,26 @@ describe('captureGeneratedFiles against a real git repository', () => {
 
     expect(Object.keys(generatedFiles)).toEqual(['run.sh']);
     expect(deletedFiles).toEqual([]);
+  });
+});
+
+describe('injectTranscriptContext', () => {
+  it('exposes the run\'s token usage to EVAL.ts in __agent_eval__/results.json', async () => {
+    const written: Record<string, string> = {};
+    const sandbox = { writeFiles: vi.fn(async (files: Record<string, string>) => Object.assign(written, files)) };
+    const transcript = [
+      JSON.stringify({ type: 'thread.started', thread_id: 't1' }),
+      JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 3000, cached_input_tokens: 2000, output_tokens: 120 } }),
+    ].join('\n');
+
+    await injectTranscriptContext(sandbox as never, transcript, 'codex', 'gpt-5.4');
+
+    const context = JSON.parse(written[TRANSCRIPT_CONTEXT_PATH]);
+    expect(context.o11y.usage).toEqual({
+      inputTokens: 1000,
+      cacheReadTokens: 2000,
+      outputTokens: 120,
+      totalTokens: 3120,
+    });
   });
 });

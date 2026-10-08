@@ -1,6 +1,7 @@
 /** Parser for the supported `fx session --id <id> --json` projection. */
 
-import type { ToolName, TranscriptEvent } from '../types.js';
+import type { TokenUsage, ToolName, TranscriptEvent } from '../types.js';
+import { compactUsage, reportedNumber } from '../usage.js';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -266,10 +267,29 @@ function parseAskResult(data: JsonRecord): TranscriptEvent[] {
   return events;
 }
 
+/**
+ * Token usage from `fx ask --json`, which sums the input and output tokens of
+ * the main agent's completions (`null` when no completion reported a count).
+ * fx does not break cache usage out, so `inputTokens` is the full prompt count.
+ * The saved-session projection reports context occupancy rather than consumed
+ * tokens, so session transcripts yield no usage.
+ */
+function askUsage(data: JsonRecord): TokenUsage | undefined {
+  const usage = asRecord(data.usage);
+  const input = reportedNumber(usage?.input_tokens);
+  const output = reportedNumber(usage?.output_tokens);
+  return compactUsage({
+    inputTokens: input,
+    outputTokens: output,
+    totalTokens: input !== undefined && output !== undefined ? input + output : undefined,
+  });
+}
+
 /** Parse fx session detail JSON, with `fx ask --json` as the runner fallback. */
 export function parseFxTranscript(raw: string): {
   events: TranscriptEvent[];
   errors: string[];
+  usage?: TokenUsage;
 } {
   if (!raw.trim()) return { events: [], errors: [] };
 
@@ -286,7 +306,9 @@ export function parseFxTranscript(raw: string): {
   if (!data) return { events: [], errors: ['Failed to parse fx transcript: expected an object'] };
   if (data.kind === 'session_detail') return { events: parseSessionDetail(data), errors: [] };
   if (typeof data.exit_code === 'number' && Array.isArray(data.tool_calls)) {
-    return { events: parseAskResult(data), errors: [] };
+    const events = parseAskResult(data);
+    const usage = askUsage(data);
+    return usage ? { events, errors: [], usage } : { events, errors: [] };
   }
   if (data.kind === 'session' && typeof data.error === 'string') {
     return { events: [{ type: 'error', content: data.error, raw: data }], errors: [] };

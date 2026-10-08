@@ -12,6 +12,10 @@ interface RunResult {
     thinkingBlocks: number;
     errors: string[];
   };
+  usage?: {
+    totalTokens?: number;
+    costUsd?: number;
+  };
 }
 
 interface RunResultCardProps {
@@ -62,6 +66,12 @@ export function RunResultCard({
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
             {result.o11y && (
               <span>{result.o11y.totalToolCalls} tool calls</span>
+            )}
+            {result.usage?.totalTokens !== undefined && (
+              <span>{result.usage.totalTokens.toLocaleString("en-US")} tokens</span>
+            )}
+            {result.usage?.costUsd !== undefined && (
+              <span>${result.usage.costUsd.toFixed(4)}</span>
             )}
             <span>{result.duration.toFixed(1)}s</span>
           </div>

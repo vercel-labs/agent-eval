@@ -69,6 +69,16 @@ export interface EvalRunResult {
     scripts?: Record<string, string>;
   };
   o11y?: TranscriptSummary;
+  /** Token usage the agent CLI reported, when available */
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    reasoningTokens?: number;
+    totalTokens?: number;
+    costUsd?: number;
+  };
 }
 
 /** Summary of multiple runs for a single eval */

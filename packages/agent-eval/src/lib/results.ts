@@ -19,18 +19,24 @@ import type {
 	EvalSummary,
 	ExperimentResults,
 	RunnableExperimentConfig,
+	UsageSummary,
 } from './types.js';
 import type { AgentRunResult } from './agents/types.js';
-import { parseTranscript, type Transcript } from './o11y/index.js';
+import { parseTranscript, parseTranscriptUsage, type Transcript } from './o11y/index.js';
 import { isNonModelFailure } from './classifier.js';
 import { copyFixtureFiles } from './fixture.js';
 import { computeReuseCompatibilityFingerprint } from './fingerprint.js';
 
 /**
  * Convert AgentRunResult to EvalRunData (result + transcript).
+ *
+ * `options.o11yAgentName` names the transcript parser used to read token usage
+ * when the agent did not report `usage` itself. Without it, usage is taken only
+ * from `agentResult.usage`.
  */
 export function agentResultToEvalRunData(
 	agentResult: AgentRunResult,
+	options: { o11yAgentName?: string } = {},
 ): EvalRunData {
 	// Collect output content from scripts and tests
 	const outputContent: EvalRunData['outputContent'] = {};
@@ -66,6 +72,14 @@ export function agentResultToEvalRunData(
 	if (agentResult.modelRepair) {
 		result.modelRepair = agentResult.modelRepair;
 	}
+	const usage =
+		agentResult.usage ??
+		(options.o11yAgentName
+			? parseTranscriptUsage(agentResult.transcript, options.o11yAgentName)
+			: undefined);
+	if (usage) {
+		result.usage = usage;
+	}
 
 	return {
 		result,
@@ -75,6 +89,42 @@ export function agentResultToEvalRunData(
 		generatedFiles: agentResult.generatedFiles,
 		deletedFiles: agentResult.deletedFiles,
 	};
+}
+
+const USAGE_TOKEN_FIELDS = [
+	'totalTokens',
+	'inputTokens',
+	'outputTokens',
+	'cacheReadTokens',
+	'cacheWriteTokens',
+	'reasoningTokens',
+] as const;
+
+/**
+ * Aggregate token usage over the runs of one eval. Returns undefined when no
+ * run reported usage. Token fields cover the runs that reported usage and
+ * appear only when all of those runs reported the field; `costUsd` appears only
+ * when every run reported a cost.
+ */
+export function summarizeUsage(
+	runs: readonly EvalRunResult[],
+): UsageSummary | undefined {
+	const reported = runs.flatMap((run) => (run.usage ? [run.usage] : []));
+	if (reported.length === 0) return undefined;
+
+	const summary: UsageSummary = { runsWithUsage: reported.length };
+	for (const field of USAGE_TOKEN_FIELDS) {
+		if (reported.every((usage) => usage[field] !== undefined)) {
+			summary[field] = reported.reduce((sum, usage) => sum + usage[field]!, 0);
+		}
+	}
+	if (summary.totalTokens !== undefined) {
+		summary.meanTotalTokens = summary.totalTokens / reported.length;
+	}
+	if (runs.every((run) => run.usage?.costUsd !== undefined)) {
+		summary.costUsd = runs.reduce((sum, run) => sum + run.usage!.costUsd!, 0);
+	}
+	return summary;
 }
 
 /**
@@ -87,6 +137,7 @@ export function createEvalSummary(
 	const runs = runData.map((r) => r.result);
 	const passedRuns = runs.filter((r) => r.status === 'passed').length;
 	const totalDuration = runs.reduce((sum, r) => sum + r.duration, 0);
+	const usage = summarizeUsage(runs);
 
 	return {
 		name,
@@ -94,6 +145,7 @@ export function createEvalSummary(
 		passedRuns,
 		passRate: runs.length > 0 ? (passedRuns / runs.length) * 100 : 0,
 		meanDuration: runs.length > 0 ? totalDuration / runs.length : 0,
+		...(usage ? { usage } : {}),
 		runs: runData,
 	};
 }
@@ -182,6 +234,10 @@ export function saveResults(
 			passRate: `${evalSummary.passRate.toFixed(0)}%`,
 			meanDuration: evalSummary.meanDuration,
 		};
+		const usage = summarizeUsage(evalSummary.runs.map((run) => run.result));
+		if (usage) {
+			summaryForFile.usage = usage;
+		}
 		if (fingerprint) {
 			summaryForFile.fingerprint = fingerprint;
 		}

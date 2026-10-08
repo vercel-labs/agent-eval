@@ -8,7 +8,8 @@
  * - Tool results appear as separate messages with type: "tool_result"
  */
 
-import type { TranscriptEvent, ToolName } from '../types.js';
+import type { TokenUsage, TranscriptEvent, ToolName } from '../types.js';
+import { asRecord, compactUsage, parseJsonLine, reportedNumber, sumReported } from '../usage.js';
 
 /**
  * Map Claude Code tool names to canonical names.
@@ -326,12 +327,99 @@ function extractThinking(data: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
+interface ClaudeMessageUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cost: number | undefined;
+}
+
+/**
+ * Sum the API usage recorded on assistant entries.
+ *
+ * Claude Code writes one session line per content block, so an assistant
+ * message with thinking, text, and a tool call appears on several lines that
+ * share `message.id` and each carry the message's `usage`. Counting every line
+ * would multiply the totals, so lines are grouped by message id. Within a
+ * group each field keeps its largest value, which is the final count whether
+ * the CLI repeats the final usage or writes growing snapshots.
+ *
+ * Anthropic reports input, cache-read, cache-creation, and output tokens as
+ * separate counts that don't overlap, so their sum is the total. A null or
+ * absent cache count means no caching happened and counts as zero. Older
+ * Claude Code versions also wrote a per-message `costUSD`; it becomes
+ * `costUsd` only when every message carries it.
+ */
+export function extractClaudeCodeUsage(raw: string): TokenUsage | undefined {
+  const messages = new Map<string, ClaudeMessageUsage>();
+  let anonymous = 0;
+
+  for (const line of raw.split('\n')) {
+    const data = parseJsonLine(line);
+    if (!data || (data.type !== 'assistant' && data.role !== 'assistant')) continue;
+    const message = asRecord(data.message);
+    const usage = asRecord(message?.usage);
+    if (!usage) continue;
+
+    const input = reportedNumber(usage.input_tokens);
+    const output = reportedNumber(usage.output_tokens);
+    if (input === undefined || output === undefined) continue;
+
+    const entry: ClaudeMessageUsage = {
+      input,
+      output,
+      cacheRead: reportedNumber(usage.cache_read_input_tokens) ?? 0,
+      cacheWrite: reportedNumber(usage.cache_creation_input_tokens) ?? 0,
+      cost: reportedNumber(data.costUSD),
+    };
+
+    const id = typeof message?.id === 'string' && message.id ? message.id : `#${anonymous++}`;
+    const previous = messages.get(id);
+    messages.set(
+      id,
+      previous
+        ? {
+            input: Math.max(previous.input, entry.input),
+            output: Math.max(previous.output, entry.output),
+            cacheRead: Math.max(previous.cacheRead, entry.cacheRead),
+            cacheWrite: Math.max(previous.cacheWrite, entry.cacheWrite),
+            cost:
+              previous.cost === undefined || entry.cost === undefined
+                ? previous.cost ?? entry.cost
+                : Math.max(previous.cost, entry.cost),
+          }
+        : entry
+    );
+  }
+
+  if (messages.size === 0) return undefined;
+
+  const entries = [...messages.values()];
+  const sum = (pick: (entry: ClaudeMessageUsage) => number) =>
+    entries.reduce((total, entry) => total + pick(entry), 0);
+  const inputTokens = sum((entry) => entry.input);
+  const outputTokens = sum((entry) => entry.output);
+  const cacheReadTokens = sum((entry) => entry.cacheRead);
+  const cacheWriteTokens = sum((entry) => entry.cacheWrite);
+
+  return compactUsage({
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    totalTokens: inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens,
+    costUsd: sumReported(entries.map((entry) => entry.cost)),
+  });
+}
+
 /**
  * Parse Claude Code JSONL transcript into events.
  */
 export function parseClaudeCodeTranscript(raw: string): {
   events: TranscriptEvent[];
   errors: string[];
+  usage?: TokenUsage;
 } {
   const events: TranscriptEvent[] = [];
   const errors: string[] = [];
@@ -379,5 +467,6 @@ export function parseClaudeCodeTranscript(raw: string): {
     }
   }
 
-  return { events, errors };
+  const usage = extractClaudeCodeUsage(raw);
+  return usage ? { events, errors, usage } : { events, errors };
 }
