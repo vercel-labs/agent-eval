@@ -22,6 +22,7 @@ import type {
 	UsageSummary,
 } from './types.js';
 import type { AgentRunResult } from './agents/types.js';
+import { isWorkspacePath } from './agents/shared.js';
 import { parseTranscript, parseTranscriptUsage, type Transcript } from './o11y/index.js';
 import { isNonModelFailure } from './classifier.js';
 import { copyFixtureFiles } from './fixture.js';
@@ -380,6 +381,9 @@ export function saveResults(
 					// Remove deleted files from the copied project
 					if (runData.deletedFiles) {
 						for (const filePath of runData.deletedFiles) {
+							// Captured paths come from the agent's sandbox; never let one
+							// reach outside the project directory on this machine.
+							if (!isWorkspacePath(filePath)) continue;
 							const fullPath = join(projectDir, filePath);
 							if (existsSync(fullPath)) {
 								unlinkSync(fullPath);
@@ -393,6 +397,7 @@ export function saveResults(
 					for (const [filePath, content] of Object.entries(
 						runData.generatedFiles,
 					)) {
+						if (!isWorkspacePath(filePath)) continue;
 						const fullPath = join(projectDir, filePath);
 						mkdirSync(dirname(fullPath), { recursive: true });
 						writeFileSync(fullPath, content);
