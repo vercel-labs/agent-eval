@@ -691,7 +691,7 @@ const config: ExperimentConfig = {
 **Options:**
 
 - **`none`** (default) — Don't copy any project files, only save outputs and transcripts
-- **`changed`** — Copy only files that were modified, created, or deleted by the agent
+- **`changed`** — Copy only files that were modified, created, or deleted by the agent (a renamed file counts as the old path deleted and the new one created)
 - **`all`** — Copy the complete project including both the original fixture files and agent changes
 
 Files are saved to `results/<experiment>/<timestamp>/<eval>/run-N/project/`. The framework uses git to track changes.

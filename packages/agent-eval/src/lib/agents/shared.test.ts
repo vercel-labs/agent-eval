@@ -1,11 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { chmodSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   captureGeneratedFiles,
   ensureValidationRunner,
   FALLBACK_VITEST_VERSION,
+  initGitAndCommit,
   prepareNeutralWorkspace,
   runValidation,
 } from './shared.js';
+import { LocalSandbox } from './plugin/local-sandbox.test-support.js';
 
 describe('prepareNeutralWorkspace', () => {
   it('copies Vercel sandboxes into /workspace and switches the working directory', async () => {
@@ -120,6 +124,7 @@ function decodeLikeStdout(bytes: Buffer, chunkSize = 8): string {
   return out;
 }
 
+/** `nameStatus` is what `git diff --name-status -z` prints: "<status>\0<path>\0" records. */
 function fakeSandbox(files: Record<string, Buffer>, nameStatus: string) {
   return {
     runShell: vi.fn(async () => ({ stdout: nameStatus, stderr: '', exitCode: 0 })),
@@ -132,7 +137,7 @@ describe('captureGeneratedFiles', () => {
   it('captures binary files without corrupting them', async () => {
     const sandbox = fakeSandbox(
       { 'public/favicon.png': PNG_BYTES },
-      'A\tpublic/favicon.png'
+      'A\0public/favicon.png\0'
     );
 
     const { generatedFiles } = await captureGeneratedFiles(sandbox as never);
@@ -146,7 +151,7 @@ describe('captureGeneratedFiles', () => {
 
   it('captures text files unchanged', async () => {
     const source = Buffer.from('export const x = 1;\n', 'utf-8');
-    const sandbox = fakeSandbox({ 'src/index.ts': source }, 'M\tsrc/index.ts');
+    const sandbox = fakeSandbox({ 'src/index.ts': source }, 'M\0src/index.ts\0');
 
     const { generatedFiles } = await captureGeneratedFiles(sandbox as never);
 
@@ -157,7 +162,7 @@ describe('captureGeneratedFiles', () => {
   it('records deleted files without reading them', async () => {
     const sandbox = fakeSandbox(
       { 'src/kept.ts': Buffer.from('kept', 'utf-8') },
-      'D\tsrc/gone.ts\nM\tsrc/kept.ts'
+      'D\0src/gone.ts\0M\0src/kept.ts\0'
     );
 
     const { generatedFiles, deletedFiles } = await captureGeneratedFiles(sandbox as never);
@@ -168,12 +173,101 @@ describe('captureGeneratedFiles', () => {
     expect(sandbox.readFileBuffer).toHaveBeenCalledWith('src/kept.ts');
   });
 
+  it('drops paths git never prints, since the agent can replace git in its sandbox', async () => {
+    const sandbox = fakeSandbox(
+      { 'src/ok.ts': Buffer.from('ok', 'utf-8') },
+      [
+        'A', '../../outside.txt',
+        'A', '/etc/passwd',
+        'M', './EVAL.ts',
+        'M', 'src/../EVAL.ts',
+        'M', 'src//index.ts',
+        'A', 'src/',
+        'A', '.git/hooks/pre-commit',
+        'A', 'vendor/.git/config',
+        'D', '../victim.txt',
+        'M', 'src/ok.ts',
+      ].join('\0') + '\0'
+    );
+
+    const { generatedFiles, deletedFiles } = await captureGeneratedFiles(sandbox as never);
+
+    expect(Object.keys(generatedFiles)).toEqual(['src/ok.ts']);
+    expect(deletedFiles).toEqual([]);
+  });
+
   it('skips files it cannot read', async () => {
-    const sandbox = fakeSandbox({}, 'A\tunreadable.bin');
+    const sandbox = fakeSandbox({}, 'A\0unreadable.bin\0');
     sandbox.readFileBuffer.mockRejectedValueOnce(new Error('permission denied'));
 
     const { generatedFiles } = await captureGeneratedFiles(sandbox as never);
 
     expect(generatedFiles).toEqual({});
+  });
+});
+
+describe('captureGeneratedFiles against a real git repository', () => {
+  let sandbox: LocalSandbox;
+
+  afterEach(() => {
+    sandbox.dispose();
+  });
+
+  /** A workspace with a git baseline, as the orchestrator sets it up before the agent runs. */
+  async function workspaceWith(files: Record<string, string>): Promise<string> {
+    sandbox = new LocalSandbox();
+    await sandbox.writeFiles(files);
+    await initGitAndCommit(sandbox);
+    return sandbox.getWorkingDirectory();
+  }
+
+  it('records a renamed file as the old path deleted and the new path written', async () => {
+    const cwd = await workspaceWith({ 'src/old-name.ts': 'export const answer = 42;\n', 'README.md': '# app\n' });
+    mkdirSync(join(cwd, 'lib'));
+    renameSync(join(cwd, 'src/old-name.ts'), join(cwd, 'lib/new-name.ts'));
+
+    const { generatedFiles, deletedFiles } = await captureGeneratedFiles(sandbox as never);
+
+    expect(deletedFiles).toEqual(['src/old-name.ts']);
+    expect(Object.keys(generatedFiles)).toEqual(['lib/new-name.ts']);
+    expect(generatedFiles['lib/new-name.ts'].toString('utf-8')).toBe('export const answer = 42;\n');
+  });
+
+  it('records a renamed and edited file the same way', async () => {
+    const cwd = await workspaceWith({ 'button.jsx': 'export function Button() {\n  return <button />;\n}\n' });
+    renameSync(join(cwd, 'button.jsx'), join(cwd, 'Button.tsx'));
+    writeFileSync(join(cwd, 'Button.tsx'), 'export function Button() {\n  return <button type="button" />;\n}\n');
+
+    const { generatedFiles, deletedFiles } = await captureGeneratedFiles(sandbox as never);
+
+    expect(deletedFiles).toEqual(['button.jsx']);
+    expect(generatedFiles['Button.tsx'].toString('utf-8')).toContain('type="button"');
+  });
+
+  it('keeps paths that git would otherwise quote', async () => {
+    const cwd = await workspaceWith({ 'old "quoted".txt': 'gone\n' });
+    unlinkSync(join(cwd, 'old "quoted".txt'));
+    writeFileSync(join(cwd, 'say "hi".txt'), 'hi\n');
+    writeFileSync(join(cwd, 'café.md'), 'menu\n');
+    writeFileSync(join(cwd, 'my notes.md'), 'notes\n');
+
+    const { generatedFiles, deletedFiles } = await captureGeneratedFiles(sandbox as never);
+
+    expect(deletedFiles).toEqual(['old "quoted".txt']);
+    expect(Object.keys(generatedFiles).sort()).toEqual(['café.md', 'my notes.md', 'say "hi".txt']);
+    expect(generatedFiles['say "hi".txt'].toString('utf-8')).toBe('hi\n');
+  });
+
+  it('ignores files the baseline .gitignore excludes', async () => {
+    const cwd = await workspaceWith({ 'package.json': '{}' });
+    mkdirSync(join(cwd, 'node_modules/pkg'), { recursive: true });
+    writeFileSync(join(cwd, 'node_modules/pkg/index.js'), 'module.exports = 1;\n');
+    writeFileSync(join(cwd, 'run.sh'), '#!/bin/sh\necho ok\n');
+    chmodSync(join(cwd, 'run.sh'), 0o755);
+
+    const { generatedFiles, deletedFiles } = await captureGeneratedFiles(sandbox as never);
+
+    expect(Object.keys(generatedFiles)).toEqual(['run.sh']);
+    expect(deletedFiles).toEqual([]);
   });
 });
