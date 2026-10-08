@@ -31,6 +31,12 @@ export interface LocalSandboxOptions {
   backend?: SandboxBackend;
   image?: string;
   username?: string;
+  /**
+   * Put a user-writable `~/.npm-global/bin` first on PATH, as the Docker
+   * sandbox and Vercel's created-user mode do. Lets a test agent shadow tools
+   * such as `git`.
+   */
+  userBinFirst?: boolean;
 }
 
 let counter = 0;
@@ -44,6 +50,7 @@ export class LocalSandbox {
   readonly commands: RecordedCommand[] = [];
   stopped = false;
   private readonly home: string;
+  private readonly path: string;
   private cwd: string;
 
   constructor(options: LocalSandboxOptions = {}) {
@@ -60,6 +67,14 @@ export class LocalSandbox {
     this.cwd = join(this.root, 'workspace');
     mkdirSync(this.home, { recursive: true });
     mkdirSync(this.cwd, { recursive: true });
+    const hostPath = process.env.PATH ?? '';
+    if (options.userBinFirst) {
+      const userBin = join(this.home, '.npm-global', 'bin');
+      mkdirSync(userBin, { recursive: true });
+      this.path = `${userBin}:${hostPath}`;
+    } else {
+      this.path = hostPath;
+    }
   }
 
   getWorkingDirectory(): string {
@@ -83,7 +98,7 @@ export class LocalSandbox {
       encoding: 'utf8',
       // A minimal, isolated environment: the host's PATH for the tools, and a
       // private HOME so neither the host's git config nor its credentials leak in.
-      env: { PATH: process.env.PATH ?? '', HOME: this.home, GIT_CONFIG_NOSYSTEM: '1', ...options.env },
+      env: { PATH: this.path, HOME: this.home, GIT_CONFIG_NOSYSTEM: '1', ...options.env },
     });
     if (result.error) {
       return { stdout: '', stderr: result.error.message, exitCode: 127 };

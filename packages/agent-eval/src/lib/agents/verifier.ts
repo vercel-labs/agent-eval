@@ -8,13 +8,22 @@
  * agent's file changes as a diff, boots a fresh sandbox, rebuilds the workspace
  * from the original fixture, and applies only those changes, minus protected
  * paths. These helpers do the capture, the protection check, and the apply.
+ *
+ * The capture itself runs git in the agent's sandbox, and the agent controls
+ * that sandbox: it can put its own `git` first on PATH and print whatever it
+ * likes. Captured paths are therefore untrusted input. Only canonical workspace
+ * paths are ever read or replayed; anything else (`./EVAL.ts`, `x/../data`,
+ * `../outside`) counts as protected and is reported as tampering. The
+ * guarantee is that protected paths never reach the verifier. Tampering
+ * reports are best effort: a replaced git can also hide changes, which are then
+ * simply not applied.
  */
 
 import { minimatch } from 'minimatch';
 import type { SandboxManager } from '../sandbox.js';
 import { TEST_FILE_PATTERNS } from '../sandbox.js';
 import type { DockerSandboxManager } from '../docker-sandbox.js';
-import { TRANSCRIPT_CONTEXT_DIR } from './shared.js';
+import { isWorkspacePath, TRANSCRIPT_CONTEXT_DIR } from './shared.js';
 import type { InstallStep } from './plugin/contract.js';
 
 type AnySandbox = SandboxManager | DockerSandboxManager;
@@ -35,9 +44,14 @@ export const VERIFIER_PROTECTED_PATHS: readonly string[] = [
   '**/node_modules/**',
 ];
 
-/** True when a workspace-relative path matches any of the globs. */
+/**
+ * True when a path matches any of the globs, or isn't a canonical workspace
+ * path at all. Globs match lexically, so an alias such as `./EVAL.ts` or
+ * `src/../EVAL.ts` would slip past `**\/EVAL.ts`; git never prints one, so it
+ * can only come from a tampered capture and is treated as protected.
+ */
 export function createProtectedPathMatcher(patterns: readonly string[]): (path: string) => boolean {
-  return (path) => patterns.some((pattern) => minimatch(path, pattern, { dot: true }));
+  return (path) => !isWorkspacePath(path) || patterns.some((pattern) => minimatch(path, pattern, { dot: true }));
 }
 
 /** The agent's file changes relative to the git baseline. */
@@ -48,6 +62,9 @@ export interface AgentChanges {
   deletedFiles: string[];
   /** Added or modified files whose mode is executable. */
   executableFiles: string[];
+  /** Paths the capture reported that aren't canonical workspace paths. Never
+   * read or replayed; reported as tampering. */
+  rejectedPaths: string[];
 }
 
 /**
@@ -62,7 +79,7 @@ export interface AgentChanges {
  * false failure.
  */
 export async function captureAgentChanges(sandbox: AnySandbox): Promise<AgentChanges> {
-  const changes: AgentChanges = { generatedFiles: {}, deletedFiles: [], executableFiles: [] };
+  const changes: AgentChanges = { generatedFiles: {}, deletedFiles: [], executableFiles: [], rejectedPaths: [] };
   const diff = await sandbox.runShell('git add -A . && git diff --cached HEAD --raw --no-renames -z');
   if (diff.exitCode !== 0) {
     throw new Error(`Failed to capture the agent's changes for the verifier:\n${diff.stderr.trim()}`);
@@ -74,6 +91,10 @@ export async function captureAgentChanges(sandbox: AnySandbox): Promise<AgentCha
     const meta = fields[i].trim();
     const path = fields[i + 1];
     if (!meta.startsWith(':') || !path) continue;
+    if (!isWorkspacePath(path)) {
+      changes.rejectedPaths.push(path);
+      continue;
+    }
     const [, newMode, , , status] = meta.slice(1).split(' ');
 
     if (status === 'D') {

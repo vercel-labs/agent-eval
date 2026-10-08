@@ -609,8 +609,19 @@ async function runOnce(
 
     // 10s. SEPARATE VERIFIER. Grade in a fresh sandbox that receives only the
     //      agent's file changes, so nothing else the agent did can reach the grader.
-    //   a. Capture the changes while the agent's sandbox still exists.
+    //   a. Capture the changes while the agent's sandbox still exists. The
+    //      capture is untrusted (it runs git where the agent could replace it),
+    //      so anything it reports beyond the snapshot comparison is checked too.
     const changes = await captureAgentChanges(sandbox);
+    const verifierTampering = findTampering(
+      [
+        ...(tampering ?? []),
+        ...Object.keys(changes.generatedFiles),
+        ...changes.deletedFiles,
+        ...changes.rejectedPaths,
+      ],
+      isProtected
+    );
 
     //   b. Stop the agent's sandbox: its processes and installs end with it. A
     //      failed stop can't affect a different sandbox, so it doesn't fail the run.
@@ -676,7 +687,7 @@ async function runOnce(
       ...(usage ? { usage } : {}),
       verifier: 'separate',
       verifierSandboxId: verifier.sandboxId,
-      tampering: tampering ?? [],
+      tampering: verifierTampering,
     };
   } catch (error) {
     // Abort wins over a generic error (same as the old adapter).

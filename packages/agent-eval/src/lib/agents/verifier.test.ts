@@ -26,6 +26,20 @@ describe('VERIFIER_PROTECTED_PATHS', () => {
     expect(isProtected(path)).toBe(true);
   });
 
+  it.each([
+    './EVAL.ts',
+    'src/../EVAL.ts',
+    'x/../vitest.workspace.ts',
+    'data//expected.json',
+    '../outside.txt',
+    '/etc/passwd',
+    'src/',
+    '.git/hooks/pre-commit',
+  ])('treats %s as protected, since git never prints a non-canonical path', (path) => {
+    expect(isProtected(path)).toBe(true);
+    expect(createProtectedPathMatcher([])(path)).toBe(true);
+  });
+
   it.each(['src/EVAL.test.ts', 'EVAL.ts.bak', 'vite.config.ts', 'package.json', 'src/index.ts', 'README.md'])(
     'leaves %s to the agent',
     (path) => {
