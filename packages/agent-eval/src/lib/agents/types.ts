@@ -2,7 +2,7 @@
  * Agent interface and common types for all agents.
  */
 
-import type { JudgeConfig, ModelPolicy, ModelTier, RunProvenance, SetupFunction, SandboxBackend, ValidationMode } from '../types.js';
+import type { JudgeConfig, ModelPolicy, ModelTier, RunProvenance, SetupFunction, SandboxBackend, ValidationMode, VerifierMode } from '../types.js';
 import type { TokenUsage } from '../o11y/types.js';
 import type { AgentDefinition } from './plugin/contract.js';
 
@@ -66,6 +66,12 @@ export interface AgentRunOptions {
    * `ExperimentConfig.agentEnv`). Default undefined: the agent's environment is
    * unchanged. */
   agentEnv?: Record<string, string>;
+  /** Where validation runs (see `ExperimentConfig.verifier`). Default
+   * undefined: validation runs in the agent's sandbox, as before. */
+  verifier?: VerifierMode;
+  /** Globs the agent must not change (see `ExperimentConfig.protectedPaths`).
+   * Default undefined: no tampering report in shared mode. */
+  protectedPaths?: string[];
 }
 
 /**
@@ -110,6 +116,12 @@ export interface AgentRunResult {
   /** What ran (harness and agent CLI versions, sandbox environment). Set by the
    * shared orchestrator; custom agents may set it themselves. */
   provenance?: RunProvenance;
+  /** `'separate'` when validation ran in a separate verifier sandbox. */
+  verifier?: VerifierMode;
+  /** Id of the separate verifier sandbox, for debugging. */
+  verifierSandboxId?: string;
+  /** Protected paths the agent changed, sorted (see `EvalRunResult.tampering`). */
+  tampering?: string[];
 }
 
 /**

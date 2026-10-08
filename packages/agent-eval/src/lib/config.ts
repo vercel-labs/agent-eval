@@ -94,6 +94,8 @@ const experimentConfigSchema = z.object({
       z.string()
     )
     .optional(),
+  verifier: z.enum(['shared', 'separate']).optional(),
+  protectedPaths: z.array(z.string().min(1)).optional(),
 });
 
 function isReporter(value: unknown): value is Reporter {
@@ -165,6 +167,8 @@ export function resolveConfig(config: ExperimentConfig): ResolvedExperimentConfi
     judge: config.judge,
     reporters: config.reporters,
     agentEnv: config.agentEnv,
+    verifier: config.verifier,
+    protectedPaths: config.protectedPaths,
   };
 }
 

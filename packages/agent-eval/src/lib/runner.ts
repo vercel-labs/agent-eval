@@ -257,6 +257,8 @@ export async function runExperiment(
         disableBundledSkills: config.disableBundledSkills,
         judge: config.judge,
         agentEnv: config.agentEnv,
+        verifier: config.verifier,
+        protectedPaths: config.protectedPaths,
       }),
       new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
@@ -522,6 +524,8 @@ export async function runSingleEval<T extends ResolvedExperimentConfig['model']>
     disableBundledSkills?: ResolvedExperimentConfig['disableBundledSkills'];
     judge?: ResolvedExperimentConfig['judge'];
     agentEnv?: ResolvedExperimentConfig['agentEnv'];
+    verifier?: ResolvedExperimentConfig['verifier'];
+    protectedPaths?: ResolvedExperimentConfig['protectedPaths'];
   }
 ): Promise<T extends Array<unknown> ? EvalRunData[] : EvalRunData> {
   const agentName = options.agent ?? 'vercel-ai-gateway/claude-code';
@@ -560,6 +564,8 @@ export async function runSingleEval<T extends ResolvedExperimentConfig['model']>
 		disableBundledSkills: options.disableBundledSkills,
 		judge: options.judge,
 		agentEnv: options.agentEnv,
+		verifier: options.verifier,
+		protectedPaths: options.protectedPaths,
 	});
 
     results.push(agentResultToEvalRunData(agentResult, { o11yAgentName }));

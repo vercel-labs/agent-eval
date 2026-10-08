@@ -42,7 +42,21 @@ import {
   JUDGE_TRANSCRIPT_FILE,
   JUDGE_CONFIG_PATH,
   JUDGE_RUNNER_PATH,
+  type ValidationResults,
 } from '../shared.js';
+import {
+  agentInstallSteps,
+  applyAgentChanges,
+  captureAgentChanges,
+  createProtectedPathMatcher,
+  findTampering,
+  fixtureUsesJudge,
+  pathsChangedSince,
+  projectInstallSteps,
+  snapshotWorkspace,
+  VERIFIER_PROTECTED_PATHS,
+} from '../verifier.js';
+import type { SandboxFile } from '../../sandbox.js';
 import { redactRunResult } from '../redact.js';
 import { getAgent } from '../registry.js';
 import {
@@ -51,6 +65,7 @@ import {
   assertWebResearchControl,
   type AgentDefinition,
   type AgentRunInput,
+  type InstallStep,
   type RunnerResult,
 } from './contract.js';
 
@@ -204,11 +219,11 @@ export function assertAgentEnv(def: AgentDefinition, options: AgentRunOptions): 
 }
 
 /**
- * Run all install steps for an agent, reproducing the old per-step error wording.
+ * Run install steps, reproducing the old per-step error wording.
  * Throws on final failure so the caller's catch turns it into an error result.
  */
-async function runInstallSteps(sandbox: AnySandbox, def: AgentDefinition, options: AgentRunOptions): Promise<void> {
-  for (const step of def.install(options)) {
+async function runInstallSteps(sandbox: AnySandbox, steps: InstallStep[]): Promise<void> {
+  for (const step of steps) {
     const exec = (): Promise<CommandResult> =>
       step.kind === 'shell'
         ? sandbox.runShell(step.script ?? '')
@@ -266,6 +281,45 @@ async function writeConfigFiles(sandbox: AnySandbox, def: AgentDefinition, optio
       await sandbox.writeFiles({ [cf.path]: cf.content ?? '' });
     }
   }
+}
+
+/**
+ * Upload what validation needs (tests, vitest config, transcript context, judge
+ * runtime) and run it. Shared by both verifiers so the grading environment is
+ * built the same way in the agent's sandbox and in a separate one.
+ */
+async function validate(
+  sandbox: AnySandbox,
+  testFiles: SandboxFile[],
+  transcript: string | undefined,
+  def: AgentDefinition,
+  options: AgentRunOptions,
+  judgeRuntime: JudgeRuntime,
+  workspaceEnv: Record<string, string>,
+  usage: AgentRunResult['usage']
+): Promise<ValidationResults> {
+  // The JUDGE's auth env is set on the eval process so EVAL.ts judge matchers can
+  // re-invoke the agent in-sandbox (the vitest process inherits it to children).
+  // By default the judge is the codegen agent+model; options.judge pins a fixed one.
+  const validationEnv = { ...judgeRuntime.authEnv, ...workspaceEnv };
+  if (options.validation !== 'none') {
+    await sandbox.uploadFiles(testFiles);
+    await createVitestConfig(sandbox);
+    await injectTranscriptContext(sandbox, transcript, def.o11yAgentName, options.model, usage);
+    // Judge runtime: ship the eval helper, materialize the raw transcript as a
+    // file the judge agent can read by path, record the judge config, and — only
+    // when the judge is a DIFFERENT agent — ship its runner alongside run.mjs.
+    const judgeFiles: Record<string, string> = {
+      [EVAL_HELPER_PATH]: readFileSync(EVAL_HELPER_DISK_PATH, 'utf8'),
+      [JUDGE_TRANSCRIPT_FILE]: transcript ?? '',
+      [JUDGE_CONFIG_PATH]: JSON.stringify(judgeRuntime.config),
+    };
+    if (judgeRuntime.runnerSource) {
+      judgeFiles[JUDGE_RUNNER_PATH] = judgeRuntime.runnerSource;
+    }
+    await sandbox.writeFiles(judgeFiles);
+  }
+  return runValidation(sandbox, options.scripts ?? [], options.validation, validationEnv);
 }
 
 /**
@@ -360,6 +414,9 @@ async function runOnce(
   let usage: AgentRunResult['usage'];
   let aborted = false;
   let sandboxStopped = false;
+  // The separate verifier's sandbox, when options.verifier is 'separate'.
+  let verifier: AnySandbox | null = null;
+  let verifierStopped = false;
 
   // --- abort wiring (identical to the old adapter) ---------------------------
   const abortHandler = () => {
@@ -367,6 +424,10 @@ async function runOnce(
     if (sandbox && !sandboxStopped) {
       sandboxStopped = true;
       sandbox.stop().catch(() => {});
+    }
+    if (verifier && !verifierStopped) {
+      verifierStopped = true;
+      verifier.stop().catch(() => {});
     }
   };
 
@@ -390,15 +451,17 @@ async function runOnce(
     //    re-invocation of the runner (eval-helper.mjs); codex's shell-canary
     //    memoization (~/.codex/agent-eval-canary.json, see codex/run.mjs) relies
     //    on that shared lifetime — a sandbox-per-invocation change would make
-    //    every judge assertion re-pay the canary exec.
-    sandbox = await createSandbox({
+    //    every judge assertion re-pay the canary exec. (With verifier: 'separate'
+    //    the judge runs in the verifier instead, which pays the canary once.)
+    const sandboxOptions = {
       timeout: options.timeout,
       // `image` and `runtime` are mutually exclusive; keep the legacy runtime
       // default unless the caller opted into an image.
-      ...(options.sandboxImage ? { image: options.sandboxImage } : { runtime: 'node24' }),
+      ...(options.sandboxImage ? { image: options.sandboxImage } : { runtime: 'node24' as const }),
       user: options.sandboxUser,
       backend: options.sandbox,
-    });
+    };
+    sandbox = await createSandbox(sandboxOptions);
     provenance.sandboxBackend = sandbox.backend;
     if (sandbox.image) provenance.sandboxImage = sandbox.image;
     if (sandbox.username) provenance.sandboxUser = sandbox.username;
@@ -423,7 +486,7 @@ async function runOnce(
     const neutralWorkspace = await prepareNeutralWorkspace(sandbox);
 
     // 4. SETUP from the definition: install (project deps + CLI) then config files.
-    await runInstallSteps(sandbox, def, options);
+    await runInstallSteps(sandbox, def.install(options));
     await writeConfigFiles(sandbox, def, options);
     const agentCliVersion = await readAgentCliVersion(sandbox, def, options);
     if (agentCliVersion) provenance.agentCliVersion = agentCliVersion;
@@ -433,7 +496,7 @@ async function runOnce(
     //     (npm install of project deps re-runs idempotently; the CLI is the point.)
     const judgeRuntime = resolveJudgeRuntime(def, options);
     if (!judgeRuntime.isSelf) {
-      await runInstallSteps(sandbox, judgeRuntime.judgeDef, judgeRuntime.judgeOptions);
+      await runInstallSteps(sandbox, judgeRuntime.judgeDef.install(judgeRuntime.judgeOptions));
       await writeConfigFiles(sandbox, judgeRuntime.judgeDef, judgeRuntime.judgeOptions);
     }
 
@@ -444,6 +507,12 @@ async function runOnce(
     //    (next to the compiled definition) and write it into the sandbox.
     const runnerSource = readFileSync(def.runnerPath, 'utf8');
     await sandbox.writeFiles({ [RUNNER_PATH]: runnerSource });
+
+    // 6b. Tampering detection (separate verifier or protectedPaths only): snapshot
+    //     the workspace so only changes made by the agent itself are reported.
+    const separate = options.verifier === 'separate';
+    const tracksTampering = separate || (options.protectedPaths?.length ?? 0) > 0;
+    const preAgentTree = tracksTampering ? await snapshotWorkspace(sandbox) : undefined;
 
     // 7. INVOKE the runner. Auth + neutral env are set on the node process (merged,
     //    neutral overrides — same precedence as the old adapter). The apiKey rides
@@ -501,38 +570,107 @@ async function runOnce(
       };
     }
 
-    // 10. VALIDATION (unchanged shared helpers; parseTranscript runs host-side here).
-    // The JUDGE's auth env is set on the eval process so EVAL.ts judge matchers can
-    // re-invoke the agent in-sandbox (the vitest process inherits it to children).
-    // By default the judge is the codegen agent+model; options.judge pins a fixed one
-    // (judgeRuntime was resolved at step 4b so its CLI could be installed).
-    const validationEnv = { ...judgeRuntime.authEnv, ...neutralWorkspace.env };
-    if (options.validation !== 'none') {
-      await sandbox.uploadFiles(testFiles);
-      await createVitestConfig(sandbox);
-      await injectTranscriptContext(sandbox, transcript, def.o11yAgentName, options.model, usage);
-      // Judge runtime: ship the eval helper, materialize the raw transcript as a
-      // file the judge agent can read by path, record the judge config, and — only
-      // when the judge is a DIFFERENT agent — ship its runner alongside run.mjs.
-      const judgeFiles: Record<string, string> = {
-        [EVAL_HELPER_PATH]: readFileSync(EVAL_HELPER_DISK_PATH, 'utf8'),
-        [JUDGE_TRANSCRIPT_FILE]: transcript ?? '',
-        [JUDGE_CONFIG_PATH]: JSON.stringify(judgeRuntime.config),
+    // 10. VALIDATION. Protected paths the agent changed are worked out first,
+    //     before anything else is written to the workspace.
+    const isProtected = createProtectedPathMatcher([
+      ...(separate ? VERIFIER_PROTECTED_PATHS : []),
+      ...(options.protectedPaths ?? []),
+    ]);
+    const tampering = preAgentTree
+      ? findTampering(await pathsChangedSince(sandbox, preAgentTree), isProtected)
+      : undefined;
+
+    if (!separate) {
+      // Shared verifier (the default): grade in the agent's own sandbox. With
+      // protectedPaths set, tampering is only reported; grading is unchanged.
+      const validationResults = await validate(
+        sandbox, testFiles, transcript, def, options, judgeRuntime, neutralWorkspace.env, usage
+      );
+
+      // 11. Capture generated/deleted files (git diff).
+      const { generatedFiles, deletedFiles } = await captureGeneratedFiles(sandbox);
+
+      return {
+        success: validationResults.allPassed,
+        output: agentOutput,
+        transcript,
+        duration: Date.now() - startTime,
+        testResult: validationResults.test,
+        scriptsResults: validationResults.scripts,
+        sandboxId: sandbox.sandboxId,
+        generatedFiles,
+        deletedFiles,
+        observedModel,
+        modelRepair,
+        ...(usage ? { usage } : {}),
+        ...(tampering ? { tampering } : {}),
       };
-      if (judgeRuntime.runnerSource) {
-        judgeFiles[JUDGE_RUNNER_PATH] = judgeRuntime.runnerSource;
-      }
-      await sandbox.writeFiles(judgeFiles);
     }
-    const validationResults = await runValidation(
-      sandbox,
-      options.scripts ?? [],
-      options.validation,
-      validationEnv
+
+    // 10s. SEPARATE VERIFIER. Grade in a fresh sandbox that receives only the
+    //      agent's file changes, so nothing else the agent did can reach the grader.
+    //   a. Capture the changes while the agent's sandbox still exists. The
+    //      capture is untrusted (it runs git where the agent could replace it),
+    //      so anything it reports beyond the snapshot comparison is checked too.
+    const changes = await captureAgentChanges(sandbox);
+    const verifierTampering = findTampering(
+      [
+        ...(tampering ?? []),
+        ...Object.keys(changes.generatedFiles),
+        ...changes.deletedFiles,
+        ...changes.rejectedPaths,
+      ],
+      isProtected
     );
 
-    // 11. Capture generated/deleted files (git diff).
-    const { generatedFiles, deletedFiles } = await captureGeneratedFiles(sandbox);
+    //   b. Stop the agent's sandbox: its processes and installs end with it. A
+    //      failed stop can't affect a different sandbox, so it doesn't fail the run.
+    sandboxStopped = true;
+    await sandbox.stop().catch(() => {});
+
+    //   c. Same backend, image or runtime, and user as the agent's sandbox.
+    verifier = await createSandbox(sandboxOptions);
+    if (aborted) {
+      return {
+        success: false,
+        output: agentOutput,
+        transcript,
+        error: 'Aborted',
+        duration: Date.now() - startTime,
+        sandboxId: sandbox.sandboxId,
+      };
+    }
+
+    //   d. Rebuild the workspace the way the agent's started: the original files,
+    //      the git baseline, the user's setup, and the neutral workspace. Setup
+    //      runs before the replay because its file writes landed after the
+    //      baseline, so they are already part of the agent's diff.
+    await verifier.uploadFiles(workspaceFiles);
+    await initGitAndCommit(verifier);
+    if (options.setup) {
+      await options.setup(verifier);
+    }
+    const verifierWorkspace = await prepareNeutralWorkspace(verifier);
+
+    //   e. Replay the agent's changes, minus protected paths.
+    await applyAgentChanges(verifier, changes, isProtected);
+
+    //   f. Fresh project dependencies, and the judge's CLI only when the eval
+    //      can call the judge (a self-grading judge also re-runs run.mjs).
+    await runInstallSteps(verifier, projectInstallSteps(def.install(options)));
+    if (options.validation !== 'none' && fixtureUsesJudge(allFiles)) {
+      const { judgeDef, judgeOptions } = judgeRuntime;
+      await runInstallSteps(verifier, agentInstallSteps(judgeDef.install(judgeOptions)));
+      await writeConfigFiles(verifier, judgeDef, judgeOptions);
+      if (judgeRuntime.isSelf) {
+        await verifier.writeFiles({ [RUNNER_PATH]: runnerSource });
+      }
+    }
+
+    //   g. Grade.
+    const validationResults = await validate(
+      verifier, testFiles, transcript, def, options, judgeRuntime, verifierWorkspace.env, usage
+    );
 
     return {
       success: validationResults.allPassed,
@@ -542,11 +680,14 @@ async function runOnce(
       testResult: validationResults.test,
       scriptsResults: validationResults.scripts,
       sandboxId: sandbox.sandboxId,
-      generatedFiles,
-      deletedFiles,
+      generatedFiles: changes.generatedFiles,
+      deletedFiles: changes.deletedFiles,
       observedModel,
       modelRepair,
       ...(usage ? { usage } : {}),
+      verifier: 'separate',
+      verifierSandboxId: verifier.sandboxId,
+      tampering: verifierTampering,
     };
   } catch (error) {
     // Abort wins over a generic error (same as the old adapter).
@@ -570,6 +711,7 @@ async function runOnce(
       observedModel,
       modelRepair,
       ...(usage ? { usage } : {}),
+      ...(verifier ? { verifier: 'separate' as const, verifierSandboxId: verifier.sandboxId } : {}),
     };
   } finally {
     if (options.signal) {
@@ -578,6 +720,10 @@ async function runOnce(
     if (sandbox && !sandboxStopped) {
       sandboxStopped = true;
       await sandbox.stop();
+    }
+    if (verifier && !verifierStopped) {
+      verifierStopped = true;
+      await verifier.stop();
     }
   }
 }

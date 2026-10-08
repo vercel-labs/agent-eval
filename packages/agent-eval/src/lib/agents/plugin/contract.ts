@@ -41,6 +41,13 @@ export interface InstallStep {
   script?: string;
   /** Retry once on a non-zero exit before failing (the project `npm install`). */
   retryOnce?: boolean;
+  /**
+   * What the step installs. `'project'` marks the fixture's own dependencies:
+   * a separate verifier re-runs only those steps (plus the agent steps when a
+   * judge needs the CLI). When no step in a definition sets a scope, the
+   * verifier runs every step.
+   */
+  scope?: 'project' | 'agent';
   /** Prefix of the thrown Error on final failure, e.g. 'Claude Code install failed'. */
   errorPrefix: string;
   /**

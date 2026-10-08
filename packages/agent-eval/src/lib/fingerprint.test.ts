@@ -439,6 +439,28 @@ describe('default-config fingerprint stability', () => {
     expect(computeFingerprint(evalDir, { ...baseConfig, agentEnv: {} })).toBe('d013779dc3c43d42b802322db7c7c3e814ae4c8ae8925fa8ba3388726f43e4ac');
     expect(computeReuseCompatibilityFingerprint({ ...baseConfig, agentEnv: {} })).toBeUndefined();
   });
+
+  it('hashes the separate verifier and protected paths only when set', () => {
+    const evalDir = createEvalDir('golden', GOLDEN_FILES);
+    const golden = 'd013779dc3c43d42b802322db7c7c3e814ae4c8ae8925fa8ba3388726f43e4ac';
+
+    // 'shared' is the default and must not invalidate cached results.
+    expect(computeFingerprint(evalDir, { ...baseConfig, verifier: 'shared' })).toBe(golden);
+    expect(computeFingerprint(evalDir, { ...baseConfig, protectedPaths: [] })).toBe(golden);
+    expect(computeReuseCompatibilityFingerprint({ ...baseConfig, verifier: 'shared', protectedPaths: [] })).toBeUndefined();
+
+    const separate = { ...baseConfig, verifier: 'separate' as const };
+    expect(fingerprintConfigInput(separate).verifier).toBe('separate');
+    expect(computeFingerprint(evalDir, separate)).not.toBe(golden);
+    expect(computeReuseCompatibilityFingerprint(separate)).toMatch(/^[a-f0-9]{64}$/);
+
+    const protectedA = { ...baseConfig, protectedPaths: ['src/data/**', 'fixtures/*.json'] };
+    const protectedB = { ...baseConfig, protectedPaths: ['fixtures/*.json', 'src/data/**'] };
+    expect(fingerprintConfigInput(protectedA).protectedPaths).toEqual(['fixtures/*.json', 'src/data/**']);
+    expect(computeFingerprint(evalDir, protectedA)).toBe(computeFingerprint(evalDir, protectedB));
+    expect(computeFingerprint(evalDir, protectedA)).not.toBe(golden);
+    expect(computeReuseCompatibilityFingerprint(protectedA)).toBe(computeReuseCompatibilityFingerprint(protectedB));
+  });
 });
 
 describe('computeContentFingerprint', () => {

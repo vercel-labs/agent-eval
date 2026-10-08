@@ -30,6 +30,8 @@ interface FingerprintableConfig {
   agentFingerprint?: Record<string, unknown>;
   judge?: { agent?: string; model: string };
   agentEnvKeys?: string[];
+  verifier?: 'separate';
+  protectedPaths?: string[];
 }
 
 interface ReuseCompatibilityInput {
@@ -39,6 +41,8 @@ interface ReuseCompatibilityInput {
   sandboxUser?: string;
   agentFingerprint?: Record<string, unknown>;
   agentEnvKeys?: string[];
+  verifier?: 'separate';
+  protectedPaths?: string[];
 }
 
 /**
@@ -49,6 +53,22 @@ interface ReuseCompatibilityInput {
 function agentEnvKeys(config: RunnableExperimentConfig): string[] | undefined {
   const keys = Object.keys(config.agentEnv ?? {});
   return keys.length > 0 ? keys.sort() : undefined;
+}
+
+/**
+ * The grading environment: a separate verifier grades without the agent's
+ * sandbox state and skips protected paths, so its results aren't
+ * interchangeable with shared-verifier results. `'shared'` is the default and
+ * hashes like an unset verifier. Protected paths are sorted, since their order
+ * has no meaning.
+ */
+function verifierFingerprint(config: RunnableExperimentConfig): { verifier?: 'separate'; protectedPaths?: string[] } {
+  const input: { verifier?: 'separate'; protectedPaths?: string[] } = {};
+  if (config.verifier === 'separate') input.verifier = 'separate';
+  if (config.protectedPaths && config.protectedPaths.length > 0) {
+    input.protectedPaths = [...config.protectedPaths].sort();
+  }
+  return input;
 }
 
 function agentFingerprintExtra(config: RunnableExperimentConfig): Record<string, unknown> | undefined {
@@ -104,6 +124,7 @@ export function fingerprintConfigInput(config: RunnableExperimentConfig): Finger
   if (envKeys) {
     input.agentEnvKeys = envKeys;
   }
+  Object.assign(input, verifierFingerprint(config));
   return input;
 }
 
@@ -125,6 +146,7 @@ export function computeReuseCompatibilityFingerprint(
   }
   const envKeys = agentEnvKeys(config);
   if (envKeys) input.agentEnvKeys = envKeys;
+  Object.assign(input, verifierFingerprint(config));
   if (Object.keys(input).length === 0) return undefined;
   return createHash('sha256').update(JSON.stringify(input)).digest('hex');
 }

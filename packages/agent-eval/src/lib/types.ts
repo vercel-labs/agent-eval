@@ -46,6 +46,13 @@ export type EvalFilter = (name: string) => boolean;
 
 export type ValidationMode = 'vitest' | 'none';
 
+/**
+ * Where validation runs after the agent finishes.
+ * - shared: in the agent's own sandbox (the historical behavior).
+ * - separate: in a fresh sandbox that receives only the agent's file changes.
+ */
+export type VerifierMode = 'shared' | 'separate';
+
 export interface BrandConfig {
   id?: string;
   name: string;
@@ -217,6 +224,28 @@ export interface ExperimentConfig {
    * @default undefined — the agent's environment is unchanged when omitted.
    */
   agentEnv?: Record<string, string>;
+
+  /**
+   * Where validation runs. `'separate'` grades in a fresh sandbox (same backend,
+   * image, and user) that receives only the agent's file changes, so nothing the
+   * agent did to `node_modules`, global binaries, running processes, or protected
+   * files can influence the grader. The agent's changes to protected paths are
+   * not applied there and are listed in `result.tampering`. Roughly doubles the
+   * sandbox boots per run.
+   * @default undefined — `'shared'`: validation runs in the agent's sandbox,
+   * unchanged when omitted.
+   */
+  verifier?: VerifierMode;
+
+  /**
+   * Globs (relative to the workspace root) the agent must not change. With
+   * `verifier: 'separate'` they join the always-protected eval, vitest config,
+   * and harness files: changes to them are not applied in the verifier and are
+   * listed in `result.tampering`. With the shared verifier, changes are only
+   * reported in `result.tampering`; nothing else changes.
+   * @default undefined — no tampering report in shared mode.
+   */
+  protectedPaths?: string[];
 }
 
 /**
@@ -306,6 +335,8 @@ export interface ResolvedExperimentConfig {
   judge?: JudgeConfig;
   reporters?: Reporter[];
   agentEnv?: Record<string, string>;
+  verifier?: VerifierMode;
+  protectedPaths?: string[];
 }
 
 /**
@@ -335,6 +366,8 @@ export interface RunnableExperimentConfig {
   judge?: JudgeConfig;
   reporters?: Reporter[];
   agentEnv?: Record<string, string>;
+  verifier?: VerifierMode;
+  protectedPaths?: string[];
 }
 
 /**
@@ -389,6 +422,13 @@ export interface EvalRunResult {
   usage?: TokenUsage;
   /** What ran: harness version, agent CLI version, and sandbox environment. */
   provenance?: RunProvenance;
+  /** `'separate'` when validation ran in a separate verifier sandbox. Unset for the shared verifier. */
+  verifier?: VerifierMode;
+  /** Id of the separate verifier sandbox, for debugging. */
+  verifierSandboxId?: string;
+  /** Protected paths the agent changed, sorted. Set when `verifier: 'separate'`
+   * or `protectedPaths` is configured; empty when nothing was touched. */
+  tampering?: string[];
   /** Path to parsed transcript file (relative to run directory) */
   transcriptPath?: string;
   /** Path to raw transcript file (relative to run directory) */
