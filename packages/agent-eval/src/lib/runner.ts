@@ -7,14 +7,23 @@
 
 import type {
   ResolvedExperimentConfig,
+  Classification,
   EvalFixture,
   EvalRunData,
   EvalSummary,
   ExperimentResults,
   RunnableExperimentConfig,
   ProgressEvent,
+  Reporter,
 } from './types.js';
-import { assertRunRuntimeControls, getAgent } from './agents/index.js';
+import type { AgentRunOptions } from './agents/types.js';
+import { assertRunRuntimeControls, getAgent, runCredentials } from './agents/index.js';
+import {
+  formatReporterError,
+  notifyExperimentComplete,
+  notifyRunComplete,
+  type ReporterFailure,
+} from './reporters.js';
 import {
   agentResultToEvalRunData,
   createEvalSummary,
@@ -96,6 +105,21 @@ export interface RunExperimentOptions {
   smoke?: boolean;
   /** Shared rate limiter to control how many sandbox runs start per time window */
   rateLimiter?: StartRateLimiter;
+  /** Reporters to call in addition to `config.reporters`. @default undefined */
+  reporters?: Reporter[];
+  /** Evals the caller skipped because a cached result was reused. Listed in the
+   * reporters' experiment event; they get no run events. @default undefined */
+  reusedEvals?: string[];
+  /**
+   * Optional step that runs after results are saved and before reporters'
+   * `onExperimentComplete`. Classifications it returns are included in the
+   * reporter event. The CLI uses this for failure classification, which can
+   * remove non-model failures from the results directory. @default undefined
+   */
+  classify?: (
+    results: ExperimentResults,
+    outputDir: string,
+  ) => Promise<Map<string, Classification> | void>;
 }
 
 /**
@@ -125,6 +149,7 @@ export async function runExperiment(
 ): Promise<ExperimentResults> {
   const { config, fixtures, apiKey, resultsDir, experimentName, fingerprints, contentFingerprints, onProgress, smoke, rateLimiter } = options;
   const startedAt = new Date();
+  const reporters = [...(config.reporters ?? []), ...(options.reporters ?? [])];
 
   assertRunRuntimeControls(
     config.agent,
@@ -145,6 +170,24 @@ export async function runExperiment(
     if (onProgress) {
       onProgress(event);
     }
+  };
+
+  // Reporter payloads are redacted with the same credentials the agent's own
+  // result is (the codegen key and a pinned judge's key).
+  const reporterSecrets = reporters.length > 0 ? reporterCredentials(agent, config, apiKey) : [];
+  const onReporterFailure = (failure: ReporterFailure) => {
+    const event: Extract<ProgressEvent, { type: 'reporter:error' }> = {
+      type: 'reporter:error',
+      reporter: failure.reporter,
+      hook: failure.hook,
+      error: failure.error,
+      ...(failure.evalName !== undefined ? { evalName: failure.evalName } : {}),
+      ...(failure.runIndex !== undefined ? { runNumber: failure.runIndex + 1 } : {}),
+    };
+    // Never swallow a reporter failure silently: without a progress handler,
+    // log it directly.
+    if (onProgress) emit(event);
+    else console.warn(formatReporterError(event));
   };
 
   // Create AbortController per fixture for earlyExit
@@ -325,6 +368,28 @@ export async function runExperiment(
         emit({ type: 'experiment:earlyExit', evalName: attempt.fixture.name, runNumber: attempt.runIndex + 1 });
         abortControllers.get(attempt.fixture.name)!.abort();
       }
+
+      // Reporters see the final attempt only (after any retry) and the result
+      // after the user's onRunComplete hook, which ran inside runAttempt.
+      if (reporters.length > 0) {
+        const fingerprint = fingerprints?.[attempt.fixture.name];
+        const contentFingerprint = contentFingerprints?.[attempt.fixture.name];
+        await notifyRunComplete(
+          reporters,
+          {
+            schemaVersion: 1,
+            experimentName,
+            evalName: attempt.fixture.name,
+            runIndex: attempt.runIndex,
+            agent: config.agent,
+            model: config.model,
+            result: result.runData.result,
+            ...(fingerprint ? { fingerprint } : {}),
+            ...(contentFingerprint ? { contentFingerprint } : {}),
+          },
+          { secrets: reporterSecrets, onFailure: onReporterFailure },
+        );
+      }
     }
 
     return result;
@@ -386,7 +451,49 @@ export async function runExperiment(
   emit({ type: 'experiment:saved', outputDir });
   emit({ type: 'experiment:summary', results: experimentResults });
 
+  const classifications = options.classify
+    ? await options.classify(experimentResults, outputDir)
+    : undefined;
+
+  if (reporters.length > 0) {
+    await notifyExperimentComplete(
+      reporters,
+      {
+        schemaVersion: 1,
+        experimentName,
+        outputDir,
+        results: experimentResults,
+        reused: [...(options.reusedEvals ?? [])],
+        ...(classifications ? { classifications: Object.fromEntries(classifications) } : {}),
+      },
+      { secrets: reporterSecrets, onFailure: onReporterFailure },
+    );
+  }
+
   return experimentResults;
+}
+
+/** The credentials a run of this experiment injects, for redacting reporter payloads. */
+function reporterCredentials(
+  agent: ReturnType<typeof getAgent>,
+  config: RunnableExperimentConfig,
+  apiKey: string,
+): string[] {
+  // Agents registered without a definition can only have injected the codegen key.
+  if (!agent.definition) return [apiKey];
+  const modelPolicy = config.modelPolicy ?? 'agent-default';
+  const options: AgentRunOptions = {
+    prompt: '',
+    model: modelPolicy === 'native-default' ? undefined : config.model,
+    modelPolicy,
+    timeout: config.timeout * 1000,
+    apiKey,
+    agentOptions: config.agentOptions,
+    webResearch: config.webResearch,
+    disableBundledSkills: config.disableBundledSkills,
+    judge: config.judge,
+  };
+  return runCredentials(agent.definition, options);
 }
 
 /**

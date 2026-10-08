@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { REDACTED, redactRunResult, redactSecrets, redactSecretsBuffer } from './redact.js';
+import { REDACTED, redactRunResult, redactSecrets, redactSecretsBuffer, redactValue } from './redact.js';
 import type { AgentRunResult } from './types.js';
 
 // Shaped like the real leak: an OIDC token the framework wrote into opencode.json
@@ -190,5 +190,47 @@ describe('redactRunResult', () => {
     expect(redactRunResult(withBoth, [TOKEN, judgeToken]).output).toBe(
       `codegen ${REDACTED} judge ${REDACTED}`
     );
+  });
+});
+
+describe('redactValue', () => {
+  it('redacts strings and Buffers at any depth without mutating the input', () => {
+    const hook = () => 'kept';
+    const startedAt = new Date('2026-10-08T00:00:00Z');
+    const input = {
+      result: { status: 'passed', metadata: { header: `Bearer ${TOKEN}`, tags: ['ok', TOKEN] } },
+      files: { 'config.json': Buffer.from(`{"apiKey":"${TOKEN}"}`) },
+      count: 3,
+      hook,
+      startedAt,
+    };
+
+    const output = redactValue(input, [TOKEN]);
+
+    expect(output.result.metadata).toEqual({ header: `Bearer ${REDACTED}`, tags: ['ok', REDACTED] });
+    expect(output.files['config.json'].toString('utf-8')).toBe(`{"apiKey":"${REDACTED}"}`);
+    expect(output.count).toBe(3);
+    expect(output.hook).toBe(hook);
+    expect(output.startedAt).toBe(startedAt);
+    // The caller's object still holds the original values.
+    expect(input.result.metadata.header).toBe(`Bearer ${TOKEN}`);
+    expect(input.files['config.json'].toString('utf-8')).toContain(TOKEN);
+  });
+
+  it('returns the value untouched when there is no usable secret', () => {
+    const input = { text: 'short' };
+
+    expect(redactValue(input, ['', undefined, 'short'])).toBe(input);
+  });
+
+  it('copies a shared object once instead of looping on a cycle', () => {
+    const shared: Record<string, unknown> = { token: TOKEN };
+    shared.self = shared;
+
+    const output = redactValue({ a: shared, b: shared }, [TOKEN]);
+
+    expect(output.a).toBe(output.b);
+    expect((output.a as Record<string, unknown>).token).toBe(REDACTED);
+    expect((output.a as Record<string, unknown>).self).toBe(output.a);
   });
 });

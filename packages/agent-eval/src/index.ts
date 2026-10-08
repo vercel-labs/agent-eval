@@ -28,6 +28,9 @@ export type {
   ExperimentResults,
   FailureType,
   Classification,
+  Reporter,
+  ReporterRunEvent,
+  ReporterExperimentEvent,
 } from './lib/types.js';
 
 // Re-export constants
@@ -118,6 +121,10 @@ export {
 
 // Re-export housekeeping
 export { housekeep } from './lib/housekeeping.js';
+
+// Re-export reporters
+export type { ReporterFailure, JsonlReporterOptions, HttpReporterOptions } from './lib/reporters.js';
+export { jsonlReporter, httpReporter, experimentEventToJson } from './lib/reporters.js';
 
 // Re-export runner utilities
 export type { RunExperimentOptions } from './lib/runner.js';

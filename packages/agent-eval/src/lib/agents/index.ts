@@ -46,5 +46,8 @@ export function assertRunRuntimeControls(
 // Re-export registry functions
 export { registerAgent, getAgent, listAgents, hasAgent };
 
+// Credentials a run injects, for redacting payloads built outside the agent.
+export { runCredentials } from './plugin/orchestrator.js';
+
 // Re-export agent types
 export type { Agent, AgentRunOptions, AgentRunResult } from './types.js';

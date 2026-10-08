@@ -8,6 +8,7 @@ import type {
   ExperimentConfig,
   ResolvedExperimentConfig,
   EvalFilter,
+  Reporter,
 } from './types.js';
 import { NATIVE_DEFAULT_MODEL } from './types.js';
 import { assertRunRuntimeControls } from './agents/index.js';
@@ -82,7 +83,22 @@ const experimentConfigSchema = z.object({
       model: z.string(),
     })
     .optional(),
+  // z.custom passes each reporter through untouched. z.object would rebuild it
+  // and z.function would wrap its hooks, breaking reporters that keep state on
+  // `this` (class instances) or in non-enumerable fields.
+  reporters: z.array(z.custom<Reporter>(isReporter, 'must be an object with a non-empty name')).optional(),
 });
+
+function isReporter(value: unknown): value is Reporter {
+  if (value === null || typeof value !== 'object') return false;
+  const reporter = value as Record<string, unknown>;
+  return (
+    typeof reporter.name === 'string' &&
+    reporter.name.length > 0 &&
+    (reporter.onRunComplete === undefined || typeof reporter.onRunComplete === 'function') &&
+    (reporter.onExperimentComplete === undefined || typeof reporter.onExperimentComplete === 'function')
+  );
+}
 
 /**
  * Validates an experiment configuration object.
@@ -140,6 +156,7 @@ export function resolveConfig(config: ExperimentConfig): ResolvedExperimentConfi
     brands: config.brands,
     onRunComplete: config.onRunComplete,
     judge: config.judge,
+    reporters: config.reporters,
   };
 }
 

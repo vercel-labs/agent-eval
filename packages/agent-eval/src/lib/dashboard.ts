@@ -16,6 +16,7 @@ import {
   createProgressDisplay,
   formatResultsTable,
 } from './results.js';
+import { formatReporterError } from './reporters.js';
 
 const SPINNER = ['\u280b', '\u2819', '\u2839', '\u2838', '\u283c', '\u2834', '\u2826', '\u2827', '\u2807', '\u280f'];
 
@@ -39,6 +40,8 @@ interface ExperimentState {
   /** Classification progress counters */
   classifyingDone: number;
   classifyingTotal: number;
+  /** Reporter calls that failed, shown when the experiment completes */
+  reporterErrors: string[];
 }
 
 /**
@@ -65,6 +68,7 @@ export class Dashboard {
       recentResults: [],
       classifyingDone: 0,
       classifyingTotal: 0,
+      reporterErrors: [],
     };
     this.experiments.set(name, state);
     this.experimentOrder.push(name);
@@ -93,6 +97,9 @@ export class Dashboard {
         }
         state.recentResults.push({ name: event.evalName, status: event.result.status });
         if (state.recentResults.length > 3) state.recentResults.shift();
+        break;
+      case 'reporter:error':
+        state.reporterErrors.push(formatReporterError(event));
         break;
     }
   }
@@ -238,7 +245,7 @@ function renderBar(completed: number, total: number): string {
  */
 export function renderCompletedBlock(
   experimentName: string,
-  _state: ExperimentState,
+  state: ExperimentState,
   results: ExperimentResults,
   classifications: Map<string, Classification>
 ): string {
@@ -282,9 +289,14 @@ export function renderCompletedBlock(
     }
   }
 
+  for (const error of state.reporterErrors) {
+    lines.push(chalk.yellow(` ${error}`));
+  }
+
   lines.push(chalk.gray(separator));
   return lines.join('\n');
 }
+
 
 /**
  * Console-based progress handler for non-TTY / single experiment mode.
@@ -321,6 +333,9 @@ export function createConsoleProgressHandler(context: {
         break;
       case 'experiment:summary':
         console.log(formatResultsTable(event.results));
+        break;
+      case 'reporter:error':
+        console.warn(chalk.yellow(formatReporterError(event)));
         break;
     }
   };

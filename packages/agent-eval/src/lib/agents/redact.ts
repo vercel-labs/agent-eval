@@ -154,3 +154,43 @@ export function redactRunResult(
 
   return redacted;
 }
+
+/**
+ * Redact every string (and Buffer) inside an arbitrary value. Used for payloads
+ * that leave the run as plain data, such as reporter events, where the value
+ * carries user-attached fields (`analysis`, `metadata`) that
+ * {@link redactRunResult} never saw.
+ *
+ * Returns a copy: arrays and plain objects are rebuilt, strings and Buffers are
+ * redacted, and everything else (numbers, functions, class instances such as
+ * Date) is passed through by reference. The input is not mutated.
+ */
+export function redactValue<T>(value: T, secrets: readonly (string | undefined)[]): T {
+  const usable = usableSecrets(secrets);
+  if (usable.length === 0) return value;
+
+  const copies = new Map<object, unknown>();
+  const visit = (current: unknown): unknown => {
+    if (typeof current === 'string') return redactSecrets(current, usable);
+    if (Buffer.isBuffer(current)) return redactSecretsBuffer(current, usable);
+    if (current === null || typeof current !== 'object') return current;
+    if (copies.has(current)) return copies.get(current);
+
+    if (Array.isArray(current)) {
+      const copy: unknown[] = [];
+      copies.set(current, copy);
+      for (const item of current) copy.push(visit(item));
+      return copy;
+    }
+
+    const prototype = Object.getPrototypeOf(current);
+    if (prototype !== Object.prototype && prototype !== null) return current;
+
+    const copy: Record<string, unknown> = {};
+    copies.set(current, copy);
+    for (const [key, item] of Object.entries(current)) copy[key] = visit(item);
+    return copy;
+  };
+
+  return visit(value) as T;
+}
