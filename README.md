@@ -319,6 +319,9 @@ const config: ExperimentConfig = {
   // Pin the agentic LLM judge (see "Agentic LLM judge" above). Omit to self-grade
   // with the codegen agent+model. `model` required; `agent` defaults to codegen.
   judge: { agent: 'vercel-ai-gateway/claude-code', model: 'claude-opus-4-8' },
+
+  // Send results somewhere besides results/ (default: none). See "Reporters".
+  // reporters: [jsonlReporter({ path: 'results/runs.jsonl' })],
 };
 
 export default config;
@@ -762,6 +765,57 @@ const config: ExperimentConfig = {
 - **`all`** — Copy the complete project including both the original fixture files and agent changes
 
 Files are saved to `results/<experiment>/<timestamp>/<eval>/run-N/project/`. The framework uses git to track changes.
+
+## Reporters
+
+Results always land in the local `results/` tree. Reporters send them somewhere else as well, such as an ingest endpoint, object storage, or a JSONL file, without forking the harness or walking result folders afterwards.
+
+```typescript
+import { httpReporter, jsonlReporter, type ExperimentConfig } from '@vercel/agent-eval';
+
+const config: ExperimentConfig = {
+  agent: 'vercel-ai-gateway/claude-code',
+  model: 'opus',
+  reporters: [
+    jsonlReporter({ path: 'results/runs.jsonl' }),
+    httpReporter({
+      url: 'https://example.com/ingest',
+      headers: { authorization: `Bearer ${process.env.INGEST_TOKEN}` },
+    }),
+  ],
+};
+```
+
+A reporter has a `name` and up to two hooks:
+
+- `onRunComplete(event)` fires once per finished run, after your `onRunComplete` hook, so the result includes anything that hook attached. The event carries `experimentName`, `evalName`, `runIndex`, `agent`, `model`, the run's `result`, and the eval's `fingerprint` and `contentFingerprint` when they were computed.
+- `onExperimentComplete(event)` fires once per experiment, after `saveResults()`, so every path under `outputDir` exists. The event carries the full `results`, the `reused` evals that were skipped because a cached result matched their fingerprint, and, when run through the CLI with the classifier enabled, the failure `classifications`. Classification runs before this hook, so evals it removed as non-model failures are no longer on disk.
+
+Both events have `schemaVersion: 1`. Retried attempts, aborted attempts, and reused evals get no run events. With `earlyExit`, a run that finishes just after another run of the same eval passed can be reported even though `summary.json` stops counting at the first pass.
+
+Reporters run in order and each call is awaited. A reporter that throws or rejects is logged, listed in the CLI output, and skipped: it never changes an eval result, and the next reporter still runs. Payloads go through the same credential redaction as `result.json`, including anything your `onRunComplete` hook attached. Reporters are not part of the result-reuse fingerprint.
+
+Two reporters are built in:
+
+- `jsonlReporter({ path })` appends one line per run, each a run event. Parent directories are created.
+- `httpReporter({ url, headers, retries, retryDelayMs })` POSTs each event as JSON: `{ "type": "run", ... }` or `{ "type": "experiment", ... }`. Network errors, 429, and 5xx responses are retried (2 retries by default, with exponential backoff from 500 ms). The experiment payload drops transcripts, file contents, config functions, and the reporters themselves; each run is reduced to its `result`. The full data stays on disk under `outputDir`.
+
+Write your own by returning an object with a `name` and the hooks you need:
+
+```typescript
+import { appendFile } from 'node:fs/promises';
+import type { Reporter } from '@vercel/agent-eval';
+
+const passRateCsv: Reporter = {
+  name: 'pass-rate-csv',
+  async onExperimentComplete({ experimentName, results }) {
+    const rows = results.evals.map((summary) => `${experimentName},${summary.name},${summary.passRate}\n`);
+    await appendFile('pass-rates.csv', rows.join(''));
+  },
+};
+```
+
+Reporters configured in an experiment file are called by every command that runs it. Library users can also pass `reporters` to `runExperiment()`, which calls them after the config's reporters. When every eval in an experiment is reused, nothing runs and no reporter is called.
 
 ## Result Reuse
 

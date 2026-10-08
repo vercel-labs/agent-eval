@@ -15,7 +15,7 @@ import { loadConfig, resolveEvalNames } from './lib/config.js';
 import { loadAllFixtures } from './lib/fixture.js';
 import { runExperiment, StartRateLimiter } from './lib/runner.js';
 import { Dashboard, createConsoleProgressHandler } from './lib/dashboard.js';
-import type { ProgressEvent, Classification } from './lib/types.js';
+import type { ProgressEvent, Classification, ExperimentResults } from './lib/types.js';
 import { initProject, getPostInitInstructions } from './lib/init.js';
 import { getAgent } from './lib/agents/index.js';
 import { resolveAgentApiKey } from './lib/agents/shared.js';
@@ -423,6 +423,7 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
 
           // Scan for reusable (fresh) results.
           let fixturesToRun = selectedFixtures;
+          let reusedEvals: string[] = [];
           if (!options.force && !options.smoke) {
             const reusable = scanReusableResults(resultsDir, experimentName, fingerprints, {
               enforceReuseCompatibility: true,
@@ -430,6 +431,7 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
             });
             if (reusable.size > 0) {
               fixturesToRun = selectedFixtures.filter((f) => !reusable.has(f.name));
+              reusedEvals = selectedFixtures.filter((f) => reusable.has(f.name)).map((f) => f.name);
             }
           }
 
@@ -449,24 +451,14 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
               : createConsoleProgressHandler({ experimentName, model, agent: config.agent });
 
             try {
-              const results = await runExperiment({
-                config: modelConfig,
-                fixtures: fixturesToRun,
-                apiKey: apiKey!,
-                resultsDir,
-                experimentName,
-                fingerprints,
-                contentFingerprints,
-                smoke: options.smoke,
-                onProgress,
-                rateLimiter,
-              });
-
-              // Classify failures (only if classifier is enabled)
-              const failedEvals = results.evals.filter((e) => e.passedRuns === 0);
+              // Classify failures (only if classifier is enabled). Runs inside
+              // runExperiment, after results are saved and before reporters'
+              // onExperimentComplete, so reporters see the final classifications.
               const classifications = new Map<string, Classification>();
+              const classify = async (results: ExperimentResults): Promise<Map<string, Classification> | void> => {
+                if (!classifierOn) return;
+                const failedEvals = results.evals.filter((e) => e.passedRuns === 0);
 
-              if (classifierOn) {
                 if (dashboard) {
                   dashboard.setPhase(experimentName, 'classifying');
                 }
@@ -563,7 +555,23 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
                     console.log(chalk.yellow(`\n  To keep non-model failures as final results, re-run with --ack-failures`));
                   }
                 }
-              }
+                return classifications;
+              };
+
+              const results = await runExperiment({
+                config: modelConfig,
+                fixtures: fixturesToRun,
+                apiKey: apiKey!,
+                resultsDir,
+                experimentName,
+                fingerprints,
+                contentFingerprints,
+                smoke: options.smoke,
+                onProgress,
+                rateLimiter,
+                reusedEvals,
+                classify,
+              });
 
               if (dashboard) {
                 dashboard.completeExperiment(experimentName, results, classifications);

@@ -411,6 +411,14 @@ describe('default-config fingerprint stability', () => {
     expect(computeContentFingerprint(evalDir)).toBe('db05a5a3db8684240a29ab59573ac09e2ce59824c2d2bfe077dad7253a744d4f');
     expect(computeReuseCompatibilityFingerprint(baseConfig)).toBeUndefined();
   });
+
+  it('ignores reporters, which never change results', () => {
+    const evalDir = createEvalDir('golden', GOLDEN_FILES);
+    const withReporters = { ...baseConfig, reporters: [{ name: 'jsonl', onRunComplete: () => {} }] };
+
+    expect(computeFingerprint(evalDir, withReporters)).toBe('d013779dc3c43d42b802322db7c7c3e814ae4c8ae8925fa8ba3388726f43e4ac');
+    expect(computeReuseCompatibilityFingerprint(withReporters)).toBeUndefined();
+  });
 });
 
 describe('computeContentFingerprint', () => {

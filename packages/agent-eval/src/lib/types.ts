@@ -195,6 +195,71 @@ export interface ExperimentConfig {
   /** Pin the agentic LLM judge to a fixed agent+model. @default undefined
    * (judge self-grades with the codegen agent+model). */
   judge?: JudgeConfig;
+
+  /** Send run and experiment results somewhere besides the local results/ tree
+   * (see {@link Reporter}). Reporters never change eval results and are not part
+   * of the result-reuse fingerprint. @default undefined — no reporters run. */
+  reporters?: Reporter[];
+}
+
+/**
+ * Receives results as runs and experiments complete, so they can go somewhere
+ * other than the local results/ tree: an ingest endpoint, object storage, a
+ * JSONL file.
+ *
+ * Reporters run in array order and each call is awaited. A reporter that
+ * throws or rejects is logged and skipped; it never changes eval results.
+ * Payloads pass through the same credential redaction as result.json.
+ */
+export interface Reporter {
+  /** Name shown in logs when the reporter fails. */
+  name: string;
+  /** Called once per finished run, after the experiment's own `onRunComplete`
+   * hook. Retried and aborted attempts are not reported. */
+  onRunComplete?(event: ReporterRunEvent): void | Promise<void>;
+  /** Called once per experiment run, after results are saved to disk and, in
+   * the CLI, after failure classification. */
+  onExperimentComplete?(event: ReporterExperimentEvent): void | Promise<void>;
+}
+
+/** Payload of {@link Reporter.onRunComplete}. */
+export interface ReporterRunEvent {
+  /** Payload version. Bumped only on a breaking change to this shape. */
+  schemaVersion: 1;
+  /** Experiment name, as used in the results directory (`<experiment>/<model>` for multi-model configs). */
+  experimentName: string;
+  /** Eval (fixture) name. */
+  evalName: string;
+  /** Zero-based attempt index, the same value the `onRunComplete` hook receives. */
+  runIndex: number;
+  /** Agent id from the experiment config. */
+  agent: AgentType;
+  /** Model from the experiment config (`native-default` when the CLI chose). */
+  model: ModelTier;
+  /** The run's result, after the experiment's `onRunComplete` hook. */
+  result: EvalRunResult;
+  /** Result-reuse fingerprint of the eval, when the caller computed one. */
+  fingerprint?: string;
+  /** Eval-files-only fingerprint, when the caller computed one. */
+  contentFingerprint?: string;
+}
+
+/** Payload of {@link Reporter.onExperimentComplete}. */
+export interface ReporterExperimentEvent {
+  /** Payload version. Bumped only on a breaking change to this shape. */
+  schemaVersion: 1;
+  /** Experiment name, as used in the results directory. */
+  experimentName: string;
+  /** Directory the results were saved to (`results/<experiment>/<timestamp>`). */
+  outputDir: string;
+  /** Results of every eval that ran. */
+  results: ExperimentResults;
+  /** Evals skipped because a cached result with a matching fingerprint was reused. They have no run events. */
+  reused: string[];
+  /** Failure classification per failed eval, when a classifier ran (the CLI's
+   * run-all flow). Evals classified as non-model failures may have been removed
+   * from `outputDir` unless failures were acknowledged. */
+  classifications?: Record<string, Classification>;
 }
 
 /**
@@ -222,6 +287,7 @@ export interface ResolvedExperimentConfig {
   brands?: BrandConfig[];
   onRunComplete?: RunCompleteHook;
   judge?: JudgeConfig;
+  reporters?: Reporter[];
 }
 
 /**
@@ -249,6 +315,7 @@ export interface RunnableExperimentConfig {
   brands?: BrandConfig[];
   onRunComplete?: RunCompleteHook;
   judge?: JudgeConfig;
+  reporters?: Reporter[];
 }
 
 /**
@@ -413,7 +480,19 @@ export type ProgressEvent =
   | { type: 'eval:abort'; evalName: string; runNumber: number }
   | { type: 'experiment:earlyExit'; evalName: string; runNumber: number }
   | { type: 'experiment:saved'; outputDir: string }
-  | { type: 'experiment:summary'; results: ExperimentResults };
+  | { type: 'experiment:summary'; results: ExperimentResults }
+  | {
+      type: 'reporter:error';
+      /** Name of the reporter that failed. */
+      reporter: string;
+      hook: 'onRunComplete' | 'onExperimentComplete';
+      /** Set for run events. */
+      evalName?: string;
+      /** One-based run number, set for run events. */
+      runNumber?: number;
+      /** The error message, redacted. */
+      error: string;
+    };
 
 /**
  * Complete experiment results.

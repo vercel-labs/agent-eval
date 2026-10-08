@@ -152,6 +152,26 @@ export function resolveJudgeRuntime(def: AgentDefinition, options: AgentRunOptio
 }
 
 /**
+ * Every credential a run injects: the codegen agent's key and, when the judge
+ * is pinned to a different agent, the judge's own key (it can reach the
+ * transcript too). Redaction scrubs these from everything a run hands back.
+ *
+ * Resolving the judge can throw (an unregistered agent, a missing runner file).
+ * That is the run's failure to report, not redaction's, so the judge key is then
+ * left out rather than turning redaction into a throw.
+ */
+export function runCredentials(def: AgentDefinition, options: AgentRunOptions): string[] {
+  const credentials = [options.apiKey];
+  try {
+    const judgeApiKey = resolveJudgeRuntime(def, options).judgeOptions.apiKey;
+    if (judgeApiKey && judgeApiKey !== options.apiKey) credentials.push(judgeApiKey);
+  } catch {
+    // See above: fall back to the codegen key only.
+  }
+  return credentials;
+}
+
+/**
  * Run all install steps for an agent, reproducing the old per-step error wording.
  * Throws on final failure so the caller's catch turns it into an error result.
  */
@@ -257,20 +277,7 @@ export async function runWithDefinition(
   assertBundledSkillsControl(def, options.disableBundledSkills);
   assertWebResearchControl(def, options.webResearch);
   const result = await runOnce(def, fixturePath, options);
-
-  // A judge pinned to a different agent authenticates with its own key, and it can
-  // reach the transcript too, so redact both. Resolving the judge can throw (an
-  // unregistered agent, a missing runner file) — that is the run's failure to
-  // report, not redaction's, so fall back to the codegen key rather than turning it
-  // into a throw on a path that previously returned a result.
-  let judgeApiKey: string | undefined;
-  try {
-    judgeApiKey = resolveJudgeRuntime(def, options).judgeOptions.apiKey;
-  } catch {
-    judgeApiKey = undefined;
-  }
-
-  return redactRunResult(result, [options.apiKey, judgeApiKey]);
+  return redactRunResult(result, runCredentials(def, options));
 }
 
 async function runOnce(

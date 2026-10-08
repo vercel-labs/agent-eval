@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach } from 'vitest';
-import { resolveJudgeRuntime } from './orchestrator.js';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { resolveJudgeRuntime, runCredentials } from './orchestrator.js';
 import { JUDGE_RUNNER_PATH } from '../shared.js';
 import { getAgent } from '../index.js';
 import type { AgentRunOptions } from '../types.js';
@@ -77,5 +77,32 @@ describe('resolveJudgeRuntime', () => {
         judge: { agent: 'gemini', model: 'gemini-2.5-pro' },
       })
     ).toThrow('Agent gemini does not support disableBundledSkills');
+  });
+});
+
+describe('runCredentials', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('is just the codegen key when the judge self-grades', () => {
+    const def = getAgent('vercel-ai-gateway/claude-code').definition;
+
+    expect(runCredentials(def, baseOptions)).toEqual(['codegen-key']);
+  });
+
+  it('adds the key of a judge pinned to a different agent', () => {
+    vi.stubEnv('AI_GATEWAY_API_KEY', 'judge-gateway-key');
+    const def = getAgent('codex').definition;
+
+    expect(
+      runCredentials(def, { ...baseOptions, judge: { agent: 'vercel-ai-gateway/claude-code', model: 'claude-opus-4-8' } })
+    ).toEqual(['codegen-key', 'judge-gateway-key']);
+  });
+
+  it('falls back to the codegen key when the judge cannot be resolved', () => {
+    const def = getAgent('codex').definition;
+
+    expect(runCredentials(def, { ...baseOptions, judge: { agent: 'not-registered', model: 'm' } })).toEqual(['codegen-key']);
   });
 });

@@ -135,6 +135,37 @@ describe('validateConfig', () => {
     expect(() => validateConfig(config)).toThrow('Invalid experiment configuration');
   });
 
+  it('passes reporters through validation and resolution untouched', () => {
+    class CountingReporter {
+      name = 'counter';
+      #count = 0;
+      onRunComplete() {
+        this.#count++;
+      }
+      get count() {
+        return this.#count;
+      }
+    }
+    const reporter = new CountingReporter();
+
+    const resolved = resolveConfig(validateConfig({ agent: 'claude-code', reporters: [reporter] }));
+    resolved.reporters![0].onRunComplete!({} as never);
+
+    // The same instance comes back, so state kept on `this` keeps working.
+    expect(resolved.reporters![0]).toBe(reporter);
+    expect(reporter.count).toBe(1);
+  });
+
+  it('leaves reporters undefined by default', () => {
+    expect(resolveConfig(validateConfig({ agent: 'claude-code' })).reporters).toBeUndefined();
+  });
+
+  it('rejects a reporter without a name', () => {
+    expect(() => validateConfig({ agent: 'claude-code', reporters: [{ onRunComplete: () => {} }] })).toThrow(
+      'reporters.0: must be an object with a non-empty name'
+    );
+  });
+
   it('rejects a judge with an invalid agent', () => {
     const config = { agent: 'claude-code', judge: { agent: 'nope', model: 'x' } };
     expect(() => validateConfig(config)).toThrow('Invalid experiment configuration');
