@@ -62,6 +62,10 @@ export interface AgentRunOptions {
   /** Pin the agentic LLM judge to a fixed agent+model. Undefined → the judge
    * self-grades with this run's agent+model. */
   judge?: JudgeConfig;
+  /** Extra environment variables for the agent process only (see
+   * `ExperimentConfig.agentEnv`). Default undefined: the agent's environment is
+   * unchanged. */
+  agentEnv?: Record<string, string>;
 }
 
 /**

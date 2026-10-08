@@ -200,6 +200,23 @@ export interface ExperimentConfig {
    * (see {@link Reporter}). Reporters never change eval results and are not part
    * of the result-reuse fingerprint. @default undefined — no reporters run. */
   reporters?: Reporter[];
+
+  /**
+   * Environment variables handed to the agent, for tasks that need authenticated
+   * tools (deploying, calling an API, installing from a private registry).
+   *
+   * Values travel only through the agent process's environment, never in
+   * command arguments, and are redacted from results, transcripts, outputs, and
+   * reporter payloads.
+   * Keys may not collide with the agent's authentication variables or the
+   * sandbox's workspace variables (`USER`, `LOGNAME`). Validation and judge runs
+   * do not receive them. Only the sorted key names are part of the result-reuse
+   * fingerprint. The agent can read and misuse anything it is given, so prefer
+   * short-lived, narrowly scoped credentials.
+   *
+   * @default undefined — the agent's environment is unchanged when omitted.
+   */
+  agentEnv?: Record<string, string>;
 }
 
 /**
@@ -288,6 +305,7 @@ export interface ResolvedExperimentConfig {
   onRunComplete?: RunCompleteHook;
   judge?: JudgeConfig;
   reporters?: Reporter[];
+  agentEnv?: Record<string, string>;
 }
 
 /**
@@ -316,6 +334,7 @@ export interface RunnableExperimentConfig {
   onRunComplete?: RunCompleteHook;
   judge?: JudgeConfig;
   reporters?: Reporter[];
+  agentEnv?: Record<string, string>;
 }
 
 /**

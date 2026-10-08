@@ -166,6 +166,20 @@ describe('validateConfig', () => {
     );
   });
 
+  it('keeps agentEnv through validation and resolution', () => {
+    const agentEnv = { DEPLOY_TOKEN: 'dpl_live_7a1f0c9e44b2', NPM_CONFIG_REGISTRY: 'https://npm.example.com' };
+
+    expect(resolveConfig(validateConfig({ agent: 'claude-code', agentEnv })).agentEnv).toEqual(agentEnv);
+    expect(resolveConfig(validateConfig({ agent: 'claude-code' })).agentEnv).toBeUndefined();
+  });
+
+  it('rejects agentEnv names a shell cannot hold and non-string values', () => {
+    expect(() => validateConfig({ agent: 'claude-code', agentEnv: { 'DEPLOY-TOKEN': 'x' } })).toThrow(
+      'must be a valid environment variable name'
+    );
+    expect(() => validateConfig({ agent: 'claude-code', agentEnv: { PORT: 3000 } })).toThrow('agentEnv.PORT');
+  });
+
   it('rejects a judge with an invalid agent', () => {
     const config = { agent: 'claude-code', judge: { agent: 'nope', model: 'x' } };
     expect(() => validateConfig(config)).toThrow('Invalid experiment configuration');

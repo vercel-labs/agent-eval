@@ -269,6 +269,32 @@ describe('reporters in runExperiment', () => {
     expect(progress).toContainEqual(expect.objectContaining({ type: 'reporter:error', error: `rejected credential ${REDACTED}` }));
   });
 
+  it('redacts agentEnv values from payloads', async () => {
+    const deployToken = 'dpl_live_7a1f0c9e44b2d8a63f5e19c0';
+    vi.spyOn(agentsIndex, 'getAgent').mockReturnValue(mockAgent());
+    const log: Array<{ reporter: string; hook: string; event: unknown }> = [];
+
+    await runExperiment({
+      config: {
+        ...baseConfig,
+        agentEnv: { DEPLOY_TOKEN: deployToken },
+        onRunComplete: ({ runData }) => ({
+          ...runData,
+          result: { ...runData.result, metadata: { deployedWith: deployToken } },
+        }),
+        reporters: [recordingReporter('recorder', log)],
+      },
+      fixtures: [fixture('deploy')],
+      apiKey: API_KEY,
+      resultsDir: TEST_DIR,
+      experimentName: 'agent-env-redaction',
+    });
+
+    const runEvent = log.find(({ hook }) => hook === 'run')!.event as ReporterRunEvent;
+    expect(runEvent.result.metadata).toEqual({ deployedWith: REDACTED });
+    expect(JSON.stringify(log)).not.toContain(deployToken);
+  });
+
   it('lists reused evals without emitting run events for them', async () => {
     const agent = mockAgent();
     vi.spyOn(agentsIndex, 'getAgent').mockReturnValue(agent);

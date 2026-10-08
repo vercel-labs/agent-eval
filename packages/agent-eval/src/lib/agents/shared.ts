@@ -190,8 +190,17 @@ export async function runValidation(
   return results;
 }
 
+/**
+ * Identity variables set on the agent and validation processes so the agent
+ * sees a generic user rather than the sandbox's own account name.
+ */
+export const NEUTRAL_WORKSPACE_ENV: Readonly<Record<string, string>> = Object.freeze({
+  USER: 'user',
+  LOGNAME: 'user',
+});
+
 export async function prepareNeutralWorkspace(sandbox: AnySandbox): Promise<NeutralWorkspace> {
-  const neutralEnv = { USER: 'user', LOGNAME: 'user' };
+  const neutralEnv = { ...NEUTRAL_WORKSPACE_ENV };
   const currentWorkingDirectory = sandbox.getWorkingDirectory();
 
   await sandbox.runShell('git remote remove origin 2>/dev/null || true; rm -rf .git/logs');

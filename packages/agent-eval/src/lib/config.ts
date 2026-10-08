@@ -12,6 +12,7 @@ import type {
 } from './types.js';
 import { NATIVE_DEFAULT_MODEL } from './types.js';
 import { assertRunRuntimeControls } from './agents/index.js';
+import { ENV_VAR_NAME_PATTERN } from './sandbox.js';
 
 /**
  * Default configuration values.
@@ -87,6 +88,12 @@ const experimentConfigSchema = z.object({
   // and z.function would wrap its hooks, breaking reporters that keep state on
   // `this` (class instances) or in non-enumerable fields.
   reporters: z.array(z.custom<Reporter>(isReporter, 'must be an object with a non-empty name')).optional(),
+  agentEnv: z
+    .record(
+      z.string().regex(ENV_VAR_NAME_PATTERN, 'must be a valid environment variable name'),
+      z.string()
+    )
+    .optional(),
 });
 
 function isReporter(value: unknown): value is Reporter {
@@ -157,6 +164,7 @@ export function resolveConfig(config: ExperimentConfig): ResolvedExperimentConfi
     onRunComplete: config.onRunComplete,
     judge: config.judge,
     reporters: config.reporters,
+    agentEnv: config.agentEnv,
   };
 }
 

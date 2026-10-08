@@ -419,6 +419,26 @@ describe('default-config fingerprint stability', () => {
     expect(computeFingerprint(evalDir, withReporters)).toBe('d013779dc3c43d42b802322db7c7c3e814ae4c8ae8925fa8ba3388726f43e4ac');
     expect(computeReuseCompatibilityFingerprint(withReporters)).toBeUndefined();
   });
+
+  it('hashes agentEnv by sorted key names only, and only when set', () => {
+    const evalDir = createEvalDir('golden', GOLDEN_FILES);
+    const withEnv = { ...baseConfig, agentEnv: { NPM_TOKEN: 'npm_secret_value_1', DEPLOY_TOKEN: 'dpl_secret_value_1' } };
+    const rotated = { ...baseConfig, agentEnv: { DEPLOY_TOKEN: 'dpl_secret_value_2', NPM_TOKEN: 'npm_secret_value_2' } };
+    const otherKeys = { ...baseConfig, agentEnv: { DEPLOY_TOKEN: 'dpl_secret_value_1' } };
+
+    expect(fingerprintConfigInput(withEnv).agentEnvKeys).toEqual(['DEPLOY_TOKEN', 'NPM_TOKEN']);
+    expect(JSON.stringify(fingerprintConfigInput(withEnv))).not.toContain('secret_value');
+    // Rotating a credential keeps cached results valid; changing which
+    // credentials the agent has does not.
+    expect(computeFingerprint(evalDir, rotated)).toBe(computeFingerprint(evalDir, withEnv));
+    expect(computeFingerprint(evalDir, otherKeys)).not.toBe(computeFingerprint(evalDir, withEnv));
+    expect(computeFingerprint(evalDir, withEnv)).not.toBe('d013779dc3c43d42b802322db7c7c3e814ae4c8ae8925fa8ba3388726f43e4ac');
+    expect(computeReuseCompatibilityFingerprint(rotated)).toBe(computeReuseCompatibilityFingerprint(withEnv));
+    expect(computeReuseCompatibilityFingerprint(withEnv)).toMatch(/^[a-f0-9]{64}$/);
+    // An empty agentEnv is the same as none.
+    expect(computeFingerprint(evalDir, { ...baseConfig, agentEnv: {} })).toBe('d013779dc3c43d42b802322db7c7c3e814ae4c8ae8925fa8ba3388726f43e4ac');
+    expect(computeReuseCompatibilityFingerprint({ ...baseConfig, agentEnv: {} })).toBeUndefined();
+  });
 });
 
 describe('computeContentFingerprint', () => {

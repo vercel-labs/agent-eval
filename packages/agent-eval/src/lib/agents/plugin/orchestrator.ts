@@ -24,6 +24,7 @@ import {
   resolveBackend,
   splitTestFiles,
   verifyNoTestFiles,
+  ENV_VAR_NAME_PATTERN,
   type SandboxManager,
 } from '../../sandbox.js';
 import { AGENT_EVAL_VERSION } from '../../version.js';
@@ -36,6 +37,7 @@ import {
   injectTranscriptContext,
   prepareNeutralWorkspace,
   resolveAgentApiKey,
+  NEUTRAL_WORKSPACE_ENV,
   EVAL_HELPER_PATH,
   JUDGE_TRANSCRIPT_FILE,
   JUDGE_CONFIG_PATH,
@@ -155,23 +157,50 @@ export function resolveJudgeRuntime(def: AgentDefinition, options: AgentRunOptio
 }
 
 /**
- * Every credential a run injects: the codegen agent's key and, when the judge
- * is pinned to a different agent, the judge's own key (it can reach the
- * transcript too). Redaction scrubs these from everything a run hands back.
+ * Every credential a run injects: the codegen agent's key, every `agentEnv`
+ * value, and, when the judge is pinned to a different agent, the judge's own
+ * key (it can reach the transcript too). Redaction scrubs these from everything
+ * a run hands back.
  *
  * Resolving the judge can throw (an unregistered agent, a missing runner file).
  * That is the run's failure to report, not redaction's, so the judge key is then
  * left out rather than turning redaction into a throw.
  */
 export function runCredentials(def: AgentDefinition, options: AgentRunOptions): string[] {
-  const credentials = [options.apiKey];
+  const credentials = [options.apiKey, ...Object.values(options.agentEnv ?? {})];
   try {
     const judgeApiKey = resolveJudgeRuntime(def, options).judgeOptions.apiKey;
     if (judgeApiKey && judgeApiKey !== options.apiKey) credentials.push(judgeApiKey);
   } catch {
-    // See above: fall back to the codegen key only.
+    // See above: fall back to the credentials we know.
   }
   return credentials;
+}
+
+/**
+ * Reject an `agentEnv` that would change what the agent is authenticated as or
+ * which workspace identity it sees. The variables the orchestrator sets itself
+ * (the agent's auth env and the neutral workspace identity) must win, and a
+ * silent override would make the run measure something other than what was
+ * configured, so any collision is an error rather than a precedence rule.
+ */
+export function assertAgentEnv(def: AgentDefinition, options: AgentRunOptions): void {
+  const agentEnv = options.agentEnv;
+  if (!agentEnv) return;
+
+  const invalid = Object.keys(agentEnv).filter((key) => !ENV_VAR_NAME_PATTERN.test(key));
+  if (invalid.length > 0) {
+    throw new Error(`agentEnv has invalid environment variable names: ${invalid.join(', ')}`);
+  }
+
+  const reserved = new Set([...Object.keys(def.authEnv(options)), ...Object.keys(NEUTRAL_WORKSPACE_ENV)]);
+  const collisions = Object.keys(agentEnv).filter((key) => reserved.has(key)).sort();
+  if (collisions.length > 0) {
+    throw new Error(
+      `agentEnv cannot set ${collisions.join(', ')}: reserved for ${def.displayName} authentication ` +
+        `or the sandbox workspace identity`
+    );
+  }
 }
 
 /**
@@ -303,6 +332,7 @@ export async function runWithDefinition(
 ): Promise<AgentRunResult> {
   assertBundledSkillsControl(def, options.disableBundledSkills);
   assertWebResearchControl(def, options.webResearch);
+  assertAgentEnv(def, options);
 
   // Provenance is attached here rather than at each of runOnce's returns, for the
   // same reason redaction is: a later return can't drop it by omission. runOnce
@@ -417,7 +447,9 @@ async function runOnce(
 
     // 7. INVOKE the runner. Auth + neutral env are set on the node process (merged,
     //    neutral overrides — same precedence as the old adapter). The apiKey rides
-    //    in env only, never in the argv JSON.
+    //    in env only, never in the argv JSON. The caller's agentEnv joins them here
+    //    and nowhere else: validation and judge runs never receive it. Collisions
+    //    were rejected up front, so listing it first changes no precedence.
     const input: AgentRunInput = {
       prompt: options.prompt,
       model: options.model,
@@ -431,7 +463,7 @@ async function runOnce(
       // that must match the TOML config). Omitted entirely for agents without it.
       extra: def.runnerExtra?.(options),
     };
-    const runEnv = { ...def.authEnv(options), ...neutralWorkspace.env };
+    const runEnv = { ...options.agentEnv, ...def.authEnv(options), ...neutralWorkspace.env };
     const nodeResult = await sandbox.runCommand('node', [RUNNER_PATH, JSON.stringify(input)], { env: runEnv });
 
     // 8. Read the runner's result (file → marker → throw-on-crash).

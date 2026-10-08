@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { REDACTED, redactRunResult, redactSecrets, redactSecretsBuffer, redactValue } from './redact.js';
+import { encodedForms, REDACTED, redactRunResult, redactSecrets, redactSecretsBuffer, redactValue } from './redact.js';
 import type { AgentRunResult } from './types.js';
 
 // Shaped like the real leak: an OIDC token the framework wrote into opencode.json
@@ -7,6 +7,9 @@ import type { AgentRunResult } from './types.js';
 const TOKEN = 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL29pZGMudmVyY2VsLmNvbSJ9.c2lnbmF0dXJlLWJ5dGVz';
 
 const REDACTED_BUF = Buffer.from(REDACTED, 'utf-8');
+
+/** Leading bytes of a PNG; 0x89 is not valid UTF-8. */
+const PNG_PREFIX = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 describe('redactSecrets', () => {
   it('replaces every occurrence of the secret', () => {
@@ -232,5 +235,90 @@ describe('redactValue', () => {
     expect(output.a).toBe(output.b);
     expect((output.a as Record<string, unknown>).token).toBe(REDACTED);
     expect((output.a as Record<string, unknown>).self).toBe(output.a);
+  });
+});
+
+describe('redaction of JSON-escaped credentials', () => {
+  // Credentials an agent is handed can contain anything. These are the
+  // characters JSON escapes.
+  const MULTILINE = 'line-one-of-a-key\nline-two-of-a-key';
+  const QUOTED = 'pass"word"with-quotes-0123';
+  const BACKSLASHED = 'C:\\Users\\deploy\\token-0123456789';
+  const ALL_THREE = 'mixed "quote"\\back\nnewline\ttab-0123';
+
+  /** Every string value inside a JSON document, decoded. */
+  const decodedStrings = (json: string): string[] => {
+    const out: string[] = [];
+    const walk = (value: unknown): void => {
+      if (typeof value === 'string') out.push(value);
+      else if (value && typeof value === 'object') Object.values(value).forEach(walk);
+    };
+    walk(JSON.parse(json));
+    return out;
+  };
+
+  it.each([
+    ['a multiline', MULTILINE],
+    ['a quoted', QUOTED],
+    ['a backslash-containing', BACKSLASHED],
+    ['a mixed', ALL_THREE],
+  ])('redacts %s secret printed into a JSONL transcript', (_case, secret) => {
+    const line = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: `export TOKEN=${secret}` }] } });
+    // The escaped form really is what JSON produced, so a literal match misses it.
+    expect(line).not.toContain(secret);
+
+    const redacted = redactSecrets(line, [secret]);
+
+    expect(decodedStrings(redacted)).toContain(`export TOKEN=${REDACTED}`);
+    expect(decodedStrings(redacted).join('\n')).not.toContain(secret);
+  });
+
+  it('redacts a secret escaped twice, as in JSON tool output recorded in a JSONL transcript', () => {
+    const toolOutput = JSON.stringify({ env: { DEPLOY_TOKEN: ALL_THREE } });
+    const line = JSON.stringify({ type: 'tool_result', content: toolOutput });
+
+    const redacted = redactSecrets(line, [ALL_THREE]);
+
+    const inner = JSON.parse(JSON.parse(redacted).content);
+    expect(inner.env.DEPLOY_TOKEN).toBe(REDACTED);
+  });
+
+  it('redacts the ASCII-only escapes Python writes by default', () => {
+    const secret = 'pässwörd-ÿ-0123456789';
+    // json.dumps({"token": secret}) with ensure_ascii=True
+    const pythonJson = '{"token": "p\\u00e4ssw\\u00f6rd-\\u00ff-0123456789"}';
+
+    expect(JSON.parse(redactSecrets(pythonJson, [secret])).token).toBe(REDACTED);
+  });
+
+  it('redacts the HTML-safe escapes Go writes by default', () => {
+    const secret = 'tok<en>&value-0123456789';
+    // json.Marshal(map[string]string{"token": secret})
+    const goJson = '{"token":"tok\\u003cen\\u003e\\u0026value-0123456789"}';
+
+    expect(JSON.parse(redactSecrets(goJson, [secret])).token).toBe(REDACTED);
+  });
+
+  it('redacts escaped forms inside generated files without touching other bytes', () => {
+    const file = Buffer.concat([PNG_PREFIX, Buffer.from(JSON.stringify({ token: QUOTED }), 'utf-8')]);
+
+    const redacted = redactSecretsBuffer(file, [QUOTED]);
+
+    expect(redacted.subarray(0, PNG_PREFIX.length).equals(PNG_PREFIX)).toBe(true);
+    expect(JSON.parse(redacted.subarray(PNG_PREFIX.length).toString('utf-8')).token).toBe(REDACTED);
+  });
+
+  it('redacts escaped forms in run results and reporter-style payloads', () => {
+    const transcript = JSON.stringify({ text: MULTILINE });
+    const result = redactRunResult({ success: true, output: `raw ${MULTILINE}`, transcript, duration: 1 }, [MULTILINE]);
+    const payload = redactValue({ metadata: { note: transcript } }, [MULTILINE]);
+
+    expect(result.output).toBe(`raw ${REDACTED}`);
+    expect(JSON.parse(result.transcript!).text).toBe(REDACTED);
+    expect(JSON.parse(payload.metadata.note).text).toBe(REDACTED);
+  });
+
+  it('gives a secret with nothing to escape exactly one form', () => {
+    expect(encodedForms('sk_live_0123456789abcdef')).toEqual(['sk_live_0123456789abcdef']);
   });
 });
