@@ -242,17 +242,19 @@ export async function captureGeneratedFiles(
   const deletedFiles: string[] = [];
 
   try {
-    // Use --name-status to distinguish added/modified from deleted
-    const findResult = await sandbox.runShell("git add . && git diff HEAD --name-status");
+    // --name-status distinguishes added/modified from deleted. --no-renames is
+    // needed because `git diff` detects renames by default and reports a moved
+    // file as one `R<score>\t<old>\t<new>` entry, which would lose both the old
+    // path's deletion and the new path's content. -z keeps paths verbatim:
+    // without it, git C-quotes paths containing quotes, backslashes, control
+    // characters, or non-ASCII bytes, and the quoted form can't be read back.
+    const findResult = await sandbox.runShell('git add . && git diff HEAD --name-status --no-renames -z');
 
-    const lines = findResult.stdout
-      .trim()
-      .split('\n')
-      .filter(Boolean);
-
-    for (const line of lines) {
-      const [status, ...rest] = line.split('\t');
-      const filePath = rest.join('\t');
+    // Records are "<status>\0<path>\0".
+    const fields = findResult.stdout.split('\0');
+    for (let i = 0; i + 1 < fields.length; i += 2) {
+      const status = fields[i].trim();
+      const filePath = fields[i + 1];
 
       if (!filePath) continue;
 
