@@ -2,7 +2,7 @@
  * Agent interface and common types for all agents.
  */
 
-import type { JudgeConfig, ModelPolicy, ModelTier, SetupFunction, SandboxBackend, ValidationMode } from '../types.js';
+import type { JudgeConfig, ModelPolicy, ModelTier, RunProvenance, SetupFunction, SandboxBackend, ValidationMode } from '../types.js';
 import type { TokenUsage } from '../o11y/types.js';
 import type { AgentDefinition } from './plugin/contract.js';
 
@@ -103,6 +103,9 @@ export interface AgentRunResult {
   /** Token usage reported by the agent. When omitted, agent-eval reads it from
    * the transcript with the agent's transcript parser. */
   usage?: TokenUsage;
+  /** What ran (harness and agent CLI versions, sandbox environment). Set by the
+   * shared orchestrator; custom agents may set it themselves. */
+  provenance?: RunProvenance;
 }
 
 /**

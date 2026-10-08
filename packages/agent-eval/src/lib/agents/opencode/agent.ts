@@ -194,6 +194,12 @@ export function createOpenCodeDefinition(): AgentDefinition {
       return steps;
     },
 
+    // The same `opencode` on PATH that run.mjs invokes (npm or a custom binaryUrl
+    // build); recorded as provenance.agentCliVersion.
+    versionCommand() {
+      return { kind: 'command', cmd: 'opencode', args: ['--version'] };
+    },
+
     // OpenCode is configured via a project-local opencode.json (writeFiles target,
     // relative to cwd — not a `~` path, so no viaShell heredoc needed).
     configFiles(options: AgentRunOptions): ConfigFile[] {

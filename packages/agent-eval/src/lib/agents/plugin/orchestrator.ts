@@ -17,13 +17,16 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import type { AgentRunOptions, AgentRunResult } from '../types.js';
+import type { RunProvenance } from '../../types.js';
 import {
   createSandbox,
   collectLocalFiles,
+  resolveBackend,
   splitTestFiles,
   verifyNoTestFiles,
   type SandboxManager,
 } from '../../sandbox.js';
+import { AGENT_EVAL_VERSION } from '../../version.js';
 import type { DockerSandboxManager } from '../../docker-sandbox.js';
 import {
   runValidation,
@@ -200,6 +203,30 @@ async function runInstallSteps(sandbox: AnySandbox, def: AgentDefinition, option
   }
 }
 
+/**
+ * Run the definition's version command and return its trimmed stdout. Any
+ * failure (no command, non-zero exit, empty output, an error from the sandbox)
+ * returns undefined: provenance is a record of the run, never a reason to fail it.
+ */
+async function readAgentCliVersion(
+  sandbox: AnySandbox,
+  def: AgentDefinition,
+  options: AgentRunOptions
+): Promise<string | undefined> {
+  try {
+    const command = def.versionCommand?.(options);
+    if (!command) return undefined;
+    const result =
+      command.kind === 'shell'
+        ? await sandbox.runShell(command.script)
+        : await sandbox.runCommand(command.cmd, command.args ?? []);
+    const version = result.stdout.trim();
+    return result.exitCode === 0 && version ? version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Write the agent's config files into the sandbox (codex TOML, opencode.json, …). */
 async function writeConfigFiles(sandbox: AnySandbox, def: AgentDefinition, options: AgentRunOptions): Promise<void> {
   for (const cf of def.configFiles(options)) {
@@ -276,14 +303,23 @@ export async function runWithDefinition(
 ): Promise<AgentRunResult> {
   assertBundledSkillsControl(def, options.disableBundledSkills);
   assertWebResearchControl(def, options.webResearch);
-  const result = await runOnce(def, fixturePath, options);
+
+  // Provenance is attached here rather than at each of runOnce's returns, for the
+  // same reason redaction is: a later return can't drop it by omission. runOnce
+  // fills in what it observes (the sandbox's image and user, the CLI version).
+  const provenance: RunProvenance = {
+    agentEvalVersion: AGENT_EVAL_VERSION,
+    sandboxBackend: resolveBackend({ backend: options.sandbox }),
+  };
+  const result = { ...(await runOnce(def, fixturePath, options, provenance)), provenance };
   return redactRunResult(result, runCredentials(def, options));
 }
 
 async function runOnce(
   def: AgentDefinition,
   fixturePath: string,
-  options: AgentRunOptions
+  options: AgentRunOptions,
+  provenance: RunProvenance
 ): Promise<AgentRunResult> {
   const startTime = Date.now();
   let sandbox: AnySandbox | null = null;
@@ -333,6 +369,9 @@ async function runOnce(
       user: options.sandboxUser,
       backend: options.sandbox,
     });
+    provenance.sandboxBackend = sandbox.backend;
+    if (sandbox.image) provenance.sandboxImage = sandbox.image;
+    if (sandbox.username) provenance.sandboxUser = sandbox.username;
 
     if (aborted) {
       return {
@@ -356,6 +395,8 @@ async function runOnce(
     // 4. SETUP from the definition: install (project deps + CLI) then config files.
     await runInstallSteps(sandbox, def, options);
     await writeConfigFiles(sandbox, def, options);
+    const agentCliVersion = await readAgentCliVersion(sandbox, def, options);
+    if (agentCliVersion) provenance.agentCliVersion = agentCliVersion;
 
     // 4b. If the agentic judge is pinned to a DIFFERENT agent, install its CLI +
     //     config too — the codegen setup above only installed the codegen agent.

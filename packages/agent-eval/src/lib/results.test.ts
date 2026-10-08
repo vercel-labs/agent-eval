@@ -116,6 +116,39 @@ describe('results utilities', () => {
       expect('usage' in runData.result).toBe(false);
     });
 
+    it('carries provenance into the run result and result.json', () => {
+      const provenance = {
+        agentEvalVersion: '2.5.0',
+        agentCliVersion: '2.0.14 (Claude Code)',
+        sandboxBackend: 'vercel' as const,
+        sandboxImage: 'vercel/sandbox/node:24@sha256:0f3c9a',
+        sandboxUser: 'user',
+      };
+      const runData = agentResultToEvalRunData({ success: true, output: '', duration: 1000, provenance });
+      const config: ResolvedExperimentConfig = {
+        agent: 'claude-code',
+        model: 'opus',
+        evals: ['eval-1'],
+        runs: 1,
+        earlyExit: true,
+        scripts: [],
+        timeout: 300,
+      };
+
+      const outputDir = saveResults(
+        createExperimentResults(
+          config,
+          [createEvalSummary('eval-1', [runData])],
+          new Date('2024-01-26T12:00:00Z'),
+          new Date('2024-01-26T12:01:00Z')
+        ),
+        { resultsDir: TEST_DIR, experimentName: 'provenance-test' }
+      );
+
+      const resultJson = JSON.parse(readFileSync(join(outputDir, 'eval-1', 'run-1', 'result.json'), 'utf-8'));
+      expect(resultJson.provenance).toEqual(provenance);
+    });
+
     it('converts failed agent result', () => {
       const agentResult: AgentRunResult = {
         success: false,

@@ -66,6 +66,14 @@ export interface ConfigFile {
 }
 
 /**
+ * A command that prints the agent CLI's version: `sandbox.runCommand(cmd, args)`
+ * or, for kind 'shell', `sandbox.runShell(script)`.
+ */
+export type VersionCommand =
+  | { kind: 'command'; cmd: string; args?: string[] }
+  | { kind: 'shell'; script: string };
+
+/**
  * Host-side plugin description for one agent. Pure data + tiny pure functions —
  * no sandbox calls, no CLI invocation.
  */
@@ -101,6 +109,15 @@ export interface AgentDefinition {
 
   /** Config files written before invocation (codex TOML, opencode.json). [] for most. */
   configFiles(options: AgentRunOptions): ConfigFile[];
+
+  /**
+   * OPTIONAL command that prints the installed CLI's version. The orchestrator
+   * runs it once after install and records its trimmed stdout as
+   * `provenance.agentCliVersion`. A non-zero exit, empty output, or error leaves
+   * the version unset and never fails the run. Omit it (or return undefined)
+   * when the CLI has no version command.
+   */
+  versionCommand?(options: AgentRunOptions): VersionCommand | undefined;
 
   /**
    * The agent-specific auth/env handed to the run.mjs process (merged with the

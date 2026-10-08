@@ -393,6 +393,12 @@ const config: ExperimentConfig = {
 export default config;
 ```
 
+To record the agent's CLI version in each run's [provenance](#provenance), add an optional `versionCommand` to the definition. It runs once after install, and its trimmed output becomes `provenance.agentCliVersion`:
+
+```typescript
+versionCommand: () => ({ kind: 'command', cmd: 'my-agent', args: ['--version'] }),
+```
+
 Agent IDs must be non-empty. A later registration with the same ID replaces the
 previous one, which allows shared registration modules to be evaluated by
 multiple experiment files. Registered agents conform to the complete `Agent`
@@ -728,6 +734,32 @@ test('stays within a token budget', () => {
 ```
 
 A custom agent can return `usage` from `run()` directly, or from its in-sandbox runner as `usage` on the runner result, for CLIs that report usage outside the transcript. Otherwise Agent Eval reads it from the transcript. Usage reported directly takes precedence.
+
+### Provenance
+
+Every run records what ran, so a result can be reproduced or compared months later. `result.json` carries a `provenance` object:
+
+```json
+{
+  "status": "passed",
+  "duration": 84.2,
+  "provenance": {
+    "agentEvalVersion": "2.5.0",
+    "agentCliVersion": "2.0.14 (Claude Code)",
+    "sandboxBackend": "vercel",
+    "sandboxImage": "vercel/sandbox/node:24@sha256:…",
+    "sandboxUser": "user"
+  }
+}
+```
+
+- `agentEvalVersion` is the installed `@vercel/agent-eval` version.
+- `agentCliVersion` is the trimmed output of the agent's version command (for example `claude --version`), run once after install. Every built-in agent has one. If the command fails or prints nothing, the field is left out and the run carries on.
+- `sandboxBackend` is `vercel` or `docker`.
+- `sandboxImage` is the digest-pinned image a Vercel sandbox booted from when `sandboxImage` is set. Runtime-based sandboxes and Docker leave it out.
+- `sandboxUser` is the Linux user the agent ran as: the created `sandboxUser` on Vercel, or `node` on Docker. The Vercel sandbox's default account leaves it out.
+
+Provenance is a record, not an input: it is not part of the result-reuse fingerprint.
 
 ### Playground UI
 

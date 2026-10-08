@@ -9,7 +9,6 @@ import { config as dotenvConfig } from 'dotenv';
 import { resolve, dirname, basename, join } from 'path';
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync, statSync } from 'fs';
 import { createInterface } from 'node:readline';
-import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 import { loadConfig, resolveEvalNames } from './lib/config.js';
 import { loadAllFixtures } from './lib/fixture.js';
@@ -29,6 +28,7 @@ import {
 import { scanReusableResults } from './lib/results.js';
 import { isClassifierEnabled, classifyFailure } from './lib/classifier.js';
 import { housekeep } from './lib/housekeeping.js';
+import { AGENT_EVAL_VERSION } from './lib/version.js';
 import { spawnSync } from 'child_process';
 import { minimatch } from 'minimatch';
 import pLimit from 'p-limit';
@@ -37,17 +37,13 @@ import pLimit from 'p-limit';
 dotenvConfig({ path: '.env.local', override: true });
 dotenvConfig({ override: true });
 
-// Read version from package.json
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf-8'));
-
 const program = new Command();
 program.enablePositionalOptions();
 
 program
   .name('@vercel/agent-eval')
   .description('Framework for testing AI coding agents in isolated sandboxes')
-  .version(pkg.version);
+  .version(AGENT_EVAL_VERSION);
 
 /**
  * Resolve config path shorthand.

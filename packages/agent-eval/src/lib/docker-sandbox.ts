@@ -168,6 +168,24 @@ export class DockerSandboxManager implements Sandbox {
     });
   }
 
+  /** The sandbox backend, for recording provenance. */
+  get backend(): 'docker' {
+    return 'docker';
+  }
+
+  /**
+   * Docker images are selected by runtime tag rather than pinned by digest, so
+   * no image is reported for provenance.
+   */
+  get image(): string | undefined {
+    return undefined;
+  }
+
+  /** Commands run as the image's unprivileged `node` user (UID 1000). */
+  get username(): string {
+    return 'node';
+  }
+
   /**
    * Get the container ID.
    */

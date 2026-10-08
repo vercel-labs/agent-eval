@@ -347,3 +347,37 @@ describe('createSandbox backend dispatch for opt-in options', () => {
     expect(sandbox.getWorkingDirectory()).toBe('/home/user/workspace');
   });
 });
+
+describe('SandboxManager provenance accessors', () => {
+  beforeEach(() => {
+    createVercelSandbox.mockReset();
+    vi.stubEnv('VERCEL_TOKEN', '');
+    vi.stubEnv('VERCEL_TEAM_ID', '');
+    vi.stubEnv('VERCEL_PROJECT_ID', '');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('reports the backend, the digest-pinned image, and the created user', async () => {
+    const fake = fakeSandbox();
+    fake.image = 'vercel/sandbox/node:24@sha256:0f3c9a';
+    createVercelSandbox.mockResolvedValue(fake);
+
+    const sandbox = await SandboxManager.create({ image: 'vercel/sandbox/node:24', user: 'user' });
+
+    expect(sandbox.backend).toBe('vercel');
+    expect(sandbox.image).toBe('vercel/sandbox/node:24@sha256:0f3c9a');
+    expect(sandbox.username).toBe('user');
+  });
+
+  it('reports no user for the default account and no image for the legacy runtime', async () => {
+    createVercelSandbox.mockResolvedValue(fakeSandbox());
+
+    const sandbox = await SandboxManager.create();
+
+    expect(sandbox.image).toBeUndefined();
+    expect(sandbox.username).toBeUndefined();
+  });
+});
