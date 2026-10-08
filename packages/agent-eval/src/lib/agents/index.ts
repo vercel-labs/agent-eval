@@ -9,6 +9,7 @@ import { createOpenCodeAgent } from './opencode/agent.js';
 import { createFxAgent } from './fx/agent.js';
 import { createGeminiAgent } from './gemini/agent.js';
 import { createCursorAgent } from './cursor/agent.js';
+import { createPiCodingAgent } from './pi-coding-agent/agent.js';
 import {
   assertBundledSkillsControl,
   assertCrossAgentJudgeSupport,
@@ -25,6 +26,7 @@ registerAgent(createOpenCodeAgent());                                 // vercel-
 registerAgent(createFxAgent());                                       // vercel-ai-gateway/fx
 registerAgent(createGeminiAgent());                                   // gemini
 registerAgent(createCursorAgent());                                   // cursor
+registerAgent(createPiCodingAgent());                                 // vercel-ai-gateway/pi-coding-agent
 
 /** Validate opt-in runtime controls for every agent used by a run. */
 export function assertRunRuntimeControls(

@@ -130,6 +130,18 @@ describe('validateConfig', () => {
     });
   });
 
+  it('accepts the PI agent, as codegen agent and as pinned judge', () => {
+    const agent = 'vercel-ai-gateway/pi-coding-agent';
+    const config = validateConfig({
+      agent,
+      agentOptions: { thinking: 'high' },
+      judge: { agent, model: 'anthropic/claude-sonnet-4.5' },
+    });
+    expect(config.agent).toBe(agent);
+    expect(config.judge?.agent).toBe(agent);
+    expect(resolveConfig(config).agentOptions).toEqual({ thinking: 'high' });
+  });
+
   it('rejects a judge without a model (pinning the model is required)', () => {
     const config = { agent: 'claude-code', judge: { agent: 'claude-code' } };
     expect(() => validateConfig(config)).toThrow('Invalid experiment configuration');

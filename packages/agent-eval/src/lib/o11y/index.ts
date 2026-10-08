@@ -25,3 +25,4 @@ export { parseOpenCodeTranscript } from './parsers/opencode.js';
 export { parseFxTranscript } from './parsers/fx.js';
 export { parseGeminiTranscript } from './parsers/gemini.js';
 export { parseCursorTranscript } from './parsers/cursor.js';
+export { parsePiCodingAgentTranscript } from './parsers/pi-coding-agent.js';

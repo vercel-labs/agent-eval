@@ -5,10 +5,12 @@
  * Run with: INTEGRATION_TEST=1 npm test
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
+import { createServer, type Server } from 'http';
+import type { AddressInfo } from 'net';
 import { config as dotenvConfig } from 'dotenv';
 import { initProject } from './lib/init.js';
 import { loadFixture, loadAllFixtures } from './lib/fixture.js';
@@ -1177,6 +1179,171 @@ test('contains greeting', () => {
         }
       }
     }, 300000); // 5 minute timeout
+  });
+
+  describe('PI coding agent sandbox execution', () => {
+    function writePiFixture(name: string): void {
+      const fixtureDir = join(TEST_DIR, name);
+      mkdirSync(join(fixtureDir, 'src'), { recursive: true });
+
+      writeFileSync(join(fixtureDir, 'PROMPT.md'), 'Add a function called greet that returns "Hello from PI!" to src/index.ts');
+      writeFileSync(
+        join(fixtureDir, 'EVAL.ts'),
+        `
+import { test, expect } from 'vitest';
+import { readFileSync } from 'fs';
+
+test('greet exists', () => {
+  const content = readFileSync('src/index.ts', 'utf-8');
+  expect(content).toContain('greet');
+});
+
+test('transcript context records the PI tool calls', () => {
+  const { o11y } = JSON.parse(readFileSync('__agent_eval__/results.json', 'utf-8'));
+  expect(o11y.totalToolCalls).toBeGreaterThan(0);
+  expect(o11y.filesModified.some((file) => file.endsWith('src/index.ts'))).toBe(true);
+});
+`
+      );
+      writeFileSync(
+        join(fixtureDir, 'package.json'),
+        JSON.stringify({ name, type: 'module', devDependencies: { vitest: '^2.1.0' } })
+      );
+      writeFileSync(join(fixtureDir, 'src/index.ts'), '// TODO: implement');
+    }
+
+    function expectPassedPiRun(result: Awaited<ReturnType<typeof runSingleEval<string>>>, fixtureFile = 'src/index.ts'): void {
+      if (result.result.status === 'failed') {
+        console.error('Agent failed with error:', result.result.error, result.outputContent?.eval);
+      }
+      expect(result.result.status).toBe('passed');
+      expect(result.result.duration).toBeGreaterThan(0);
+      expect(Object.keys(result.generatedFiles ?? {})).toContain(fixtureFile);
+
+      const transcript = parseTranscript(result.transcript!, 'vercel-ai-gateway/pi-coding-agent');
+      expect(transcript.parseSuccess).toBe(true);
+      expect(transcript.summary.toolCalls.file_write + transcript.summary.toolCalls.file_edit).toBeGreaterThan(0);
+    }
+
+    it.skipIf(!hasAiGatewayCredentials)('can run a simple eval with PI through the Vercel AI Gateway', async () => {
+      writePiFixture('simple-eval-pi-gateway');
+      const fixture = loadFixture(TEST_DIR, 'simple-eval-pi-gateway');
+
+      const result = await runSingleEval(fixture, {
+        agent: 'vercel-ai-gateway/pi-coding-agent',
+        model: 'anthropic/claude-sonnet-4.5',
+        timeout: 180,
+        apiKey: process.env.AI_GATEWAY_API_KEY!,
+      });
+
+      expectPassedPiRun(result);
+      expect(result.result.observedModel).toBe('anthropic/claude-sonnet-4.5');
+    }, 300000); // 5 minute timeout
+
+    // No credentials needed: the full sandbox path (install, models.json, run.mjs,
+    // transcript, generated files, validation) with PI's gateway provider pointed
+    // at a scripted OpenAI-compatible server on the host. Docker Desktop only — that is what resolves
+    // host.docker.internal without extra container config.
+    describe.skipIf(!hasDockerSandbox || process.platform === 'linux')('gateway provider overridden through extraProviders (scripted LLM)', () => {
+      const FAKE_KEY = 'fake-pi-provider-key-0123456789';
+      let server: Server;
+      let port: number;
+      let failRequests = false;
+      const seenAuth: string[] = [];
+
+      let turn = 0;
+
+      beforeAll(async () => {
+        server = createServer((req, res) => {
+          seenAuth.push(String(req.headers.authorization));
+          let body = '';
+          req.on('data', (chunk) => (body += chunk));
+          req.on('end', () => {
+            if (failRequests) {
+              res.writeHead(401, { 'content-type': 'application/json' });
+              res.end(JSON.stringify({ error: { message: 'invalid api key', type: 'invalid_request_error' } }));
+              return;
+            }
+            turn++;
+            res.writeHead(200, { 'content-type': 'text/event-stream' });
+            const base = { id: `chatcmpl-${turn}`, object: 'chat.completion.chunk', created: 1, model: 'scripted-model' };
+            const send = (chunk: Record<string, unknown>) => res.write(`data: ${JSON.stringify({ ...base, ...chunk })}\n\n`);
+            const callTool = (name: string, args: Record<string, unknown>) => {
+              send({ choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: `call_${turn}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] } }] });
+              send({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] });
+            };
+            if (turn === 1) {
+              callTool('write', { path: 'src/index.ts', content: 'export function greet() {\n  return "Hello from PI!";\n}\n' });
+            } else {
+              send({ choices: [{ index: 0, delta: { role: 'assistant', content: 'Added greet.' } }] });
+              send({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
+            }
+            res.end('data: [DONE]\n\n');
+          });
+        });
+        await new Promise<void>((resolve) => server.listen(0, '0.0.0.0', resolve));
+        port = (server.address() as AddressInfo).port;
+      });
+
+      afterAll(() => {
+        server.close();
+      });
+
+      beforeEach(() => {
+        turn = 0;
+      });
+
+      function scriptedProviderOptions() {
+        return {
+          extraProviders: {
+            'vercel-ai-gateway': {
+              baseUrl: `http://host.docker.internal:${port}/v1`,
+              api: 'openai-completions',
+              models: [{ id: 'scripted-model' }],
+            },
+          },
+        };
+      }
+
+      it('runs PI in the sandbox and captures output, transcript and generated files', async () => {
+        writePiFixture('simple-eval-pi-scripted');
+        const fixture = loadFixture(TEST_DIR, 'simple-eval-pi-scripted');
+
+        const result = await runSingleEval(fixture, {
+          agent: 'vercel-ai-gateway/pi-coding-agent',
+          model: 'scripted-model',
+          timeout: 180,
+          apiKey: FAKE_KEY,
+          sandbox: 'docker',
+          agentOptions: scriptedProviderOptions(),
+        });
+
+        expectPassedPiRun(result);
+        expect(result.result.observedModel).toBe('scripted-model');
+        // The key reached the provider through AI_GATEWAY_API_KEY…
+        expect(seenAuth).toContain(`Bearer ${FAKE_KEY}`);
+        // …and never leaks into what the run hands back.
+        expect(result.transcript).not.toContain(FAKE_KEY);
+      }, 300000); // 5 minute timeout
+
+      it('turns a provider failure into a failed run, not a crash or a false pass', async () => {
+        writePiFixture('failing-eval-pi-scripted');
+        const fixture = loadFixture(TEST_DIR, 'failing-eval-pi-scripted');
+        failRequests = true;
+
+        const result = await runSingleEval(fixture, {
+          agent: 'vercel-ai-gateway/pi-coding-agent',
+          model: 'scripted-model',
+          timeout: 180,
+          apiKey: FAKE_KEY,
+          sandbox: 'docker',
+          agentOptions: scriptedProviderOptions(),
+        });
+
+        expect(result.result.status).toBe('failed');
+        expect(result.result.error).toContain('invalid api key');
+      }, 300000); // 5 minute timeout
+    });
   });
 
   describe.skipIf(!hasCursorCredentials)('Cursor CLI (Direct API) sandbox execution', () => {
