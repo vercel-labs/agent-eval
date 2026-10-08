@@ -402,7 +402,7 @@ const config: ExperimentConfig = {
 export default config;
 ```
 
-To record the agent's CLI version in each run's [provenance](#provenance), add an optional `versionCommand` to the definition. It runs once after install, and its trimmed output becomes `provenance.agentCliVersion`:
+To record the agent's CLI version in each run's [provenance](#provenance), add an optional `versionCommand` to the definition. It runs once after install, and its trimmed output becomes `provenance.agentCliVersion`. It gets 30 seconds by default (set `timeoutMs` to change that) before the run moves on without it:
 
 ```typescript
 versionCommand: () => ({ kind: 'command', cmd: 'my-agent', args: ['--version'] }),
@@ -824,7 +824,7 @@ Every run records what ran, so a result can be reproduced or compared months lat
 ```
 
 - `agentEvalVersion` is the installed `@vercel/agent-eval` version.
-- `agentCliVersion` is the trimmed output of the agent's version command (for example `claude --version`), run once after install. Every built-in agent has one. If the command fails or prints nothing, the field is left out and the run carries on.
+- `agentCliVersion` is the trimmed output of the agent's version command (for example `claude --version`), run once after install. Every built-in agent has one. If the command fails, prints nothing, or takes longer than 30 seconds, the field is left out and the run carries on.
 - `sandboxBackend` is `vercel` or `docker`.
 - `sandboxImage` is the digest-pinned image a Vercel sandbox booted from when `sandboxImage` is set. Runtime-based sandboxes and Docker leave it out.
 - `sandboxUser` is the Linux user the agent ran as: the created `sandboxUser` on Vercel, or `node` on Docker. The Vercel sandbox's default account leaves it out.

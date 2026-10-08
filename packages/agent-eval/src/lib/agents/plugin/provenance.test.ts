@@ -120,6 +120,21 @@ describe('run provenance', () => {
     expect(result.provenance).toEqual({ agentEvalVersion: PACKAGE_VERSION, sandboxBackend: 'vercel' });
   });
 
+  it('gives up on a version command that hangs, and the run carries on', { timeout: 20_000 }, async () => {
+    useSandbox({});
+    const def = definition({
+      versionCommand: () => ({ kind: 'shell', script: 'echo 1.2.3; sleep 120', timeoutMs: 500 }),
+    });
+
+    const started = Date.now();
+    const result = await runWithDefinition(def, fixtureDir, options);
+
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(result.success).toBe(true);
+    expect(result.output).toBe('agent ran');
+    expect(result.provenance).toEqual({ agentEvalVersion: PACKAGE_VERSION, sandboxBackend: 'vercel' });
+  });
+
   it('does not fail the run when building the version command throws', async () => {
     useSandbox({});
     const def = definition({

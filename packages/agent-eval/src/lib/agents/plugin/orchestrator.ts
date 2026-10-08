@@ -247,27 +247,56 @@ async function runInstallSteps(sandbox: AnySandbox, steps: InstallStep[]): Promi
   }
 }
 
+/** How long a version command may run before it is abandoned. */
+const DEFAULT_VERSION_COMMAND_TIMEOUT_MS = 30_000;
+
+/**
+ * `sh -c` script that runs its arguments after the first under coreutils
+ * `timeout` (first argument: seconds, then a KILL 5 seconds later) when the
+ * sandbox has it, and as-is otherwise.
+ */
+const BOUNDED_COMMAND =
+  'secs=$1; shift; if command -v timeout >/dev/null 2>&1; then exec timeout -k 5 "$secs" "$@"; fi; exec "$@"';
+
 /**
  * Run the definition's version command and return its trimmed stdout. Any
- * failure (no command, non-zero exit, empty output, an error from the sandbox)
- * returns undefined: provenance is a record of the run, never a reason to fail it.
+ * failure (no command, non-zero exit, empty output, an error from the sandbox,
+ * or running past its timeout) returns undefined: provenance is a record of the
+ * run, never a reason to fail or stall it.
  */
 async function readAgentCliVersion(
   sandbox: AnySandbox,
   def: AgentDefinition,
   options: AgentRunOptions
 ): Promise<string | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const command = def.versionCommand?.(options);
     if (!command) return undefined;
-    const result =
-      command.kind === 'shell'
-        ? await sandbox.runShell(command.script)
-        : await sandbox.runCommand(command.cmd, command.args ?? []);
-    const version = result.stdout.trim();
-    return result.exitCode === 0 && version ? version : undefined;
+    const timeoutMs =
+      command.timeoutMs !== undefined && Number.isFinite(command.timeoutMs) && command.timeoutMs > 0
+        ? command.timeoutMs
+        : DEFAULT_VERSION_COMMAND_TIMEOUT_MS;
+    const argv = command.kind === 'shell' ? ['bash', '-c', command.script] : [command.cmd, ...(command.args ?? [])];
+
+    // Two bounds, because a hung version command would otherwise hold the run
+    // until the attempt's own timeout fails it: coreutils `timeout` kills the
+    // process in the sandbox when it's installed, and a host-side timer stops
+    // waiting either way. The abandoned command's eventual result (or rejection,
+    // once the sandbox stops) is swallowed.
+    const run = sandbox
+      .runCommand('sh', ['-c', BOUNDED_COMMAND, 'sh', String(timeoutMs / 1000), ...argv])
+      .catch(() => undefined);
+    const timedOut = new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), timeoutMs);
+    });
+    const result = await Promise.race([run, timedOut]);
+    const version = result?.stdout.trim();
+    return result?.exitCode === 0 && version ? version : undefined;
   } catch {
     return undefined;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
