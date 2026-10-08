@@ -1,5 +1,11 @@
 # @vercel/agent-eval-playground
 
+## 0.1.4
+
+### Patch Changes
+
+- [#209](https://github.com/vercel-labs/agent-eval/pull/209) [`a94b027`](https://github.com/vercel-labs/agent-eval/commit/a94b027e78533ba617c8b19c919a4b4d5f81d8fd) Thanks [@molebox](https://github.com/molebox)! - Record token usage and cost on every run. The transcript parsers now read the usage each agent CLI reports (Claude Code session entries, de-duplicated by message id; Codex `turn.completed` and saved-session `token_count` totals; OpenCode `step_finish` events; Gemini `result` stats) into a new `TokenUsage` type. fx reports usage only in `fx ask --json`, not in its saved-session transcript, so its runner returns those counts through a new optional `usage` field on the runner result. Usage appears as `usage` on `EvalRunResult` and in `result.json`, as `o11y.usage` in the transcript summary that EVAL.ts reads from `__agent_eval__/results.json`, and as an aggregated `usage` block in `summary.json` when at least one run reported usage. Nothing is estimated: fields the CLI doesn't report are left out, and `costUsd` is recorded only when the CLI itself reports a cost. Usage covers the code-generation run, not judge assertions. Custom agents can return `usage` from `run()` or from their runner directly. The playground shows tokens and cost per run.
+
 ## 0.1.3
 
 ### Patch Changes
