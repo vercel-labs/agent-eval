@@ -818,6 +818,57 @@ describe('runExperiment', () => {
     });
   });
 
+  describe('token usage', () => {
+    it('reads usage from the transcript before onRunComplete and aggregates it into summary.json', async () => {
+      const transcript = [
+        JSON.stringify({ type: 'thread.started', thread_id: 't1' }),
+        JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 5000, cached_input_tokens: 4000, output_tokens: 250 } }),
+      ].join('\n');
+      const mockAgent = {
+        name: 'mock-codex',
+        displayName: 'Mock Codex',
+        getApiKeyEnvVar: () => 'MOCK_API_KEY',
+        getDefaultModel: () => 'mock-model',
+        run: vi.fn().mockResolvedValue({ success: true, output: '', transcript, duration: 6000 }),
+        definition: { o11yAgentName: 'codex' },
+      } as unknown as Agent;
+      vi.spyOn(agentsIndex, 'getAgent').mockReturnValue(mockAgent);
+
+      const usageSeenByHook: unknown[] = [];
+      const config: ResolvedExperimentConfig = {
+        agent: 'codex',
+        model: 'gpt-5.4',
+        evals: ['usage-eval'],
+        runs: 2,
+        earlyExit: false,
+        scripts: [],
+        timeout: 600,
+        onRunComplete: ({ runData }) => {
+          usageSeenByHook.push(runData.result.usage);
+        },
+      };
+
+      const results = await runExperiment({
+        config,
+        fixtures: [{ name: 'usage-eval', path: '/fake/path', prompt: 'Do it', isModule: true }],
+        apiKey: 'my-api-key',
+        resultsDir: TEST_DIR,
+        experimentName: 'usage-experiment',
+      });
+
+      const expectedRunUsage = { inputTokens: 1000, cacheReadTokens: 4000, outputTokens: 250, totalTokens: 5250 };
+      expect(usageSeenByHook).toEqual([expectedRunUsage, expectedRunUsage]);
+      expect(results.evals[0].usage).toEqual({
+        runsWithUsage: 2,
+        totalTokens: 10500,
+        meanTotalTokens: 5250,
+        inputTokens: 2000,
+        outputTokens: 500,
+        cacheReadTokens: 8000,
+      });
+    });
+  });
+
   describe('timeout enforcement', () => {
     it('times out and returns error when agent exceeds timeout', async () => {
       const mockAgent: Agent = {

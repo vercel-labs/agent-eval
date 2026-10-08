@@ -76,6 +76,46 @@ describe('results utilities', () => {
       expect(runData.result.modelRepair).toBe('gpt-5.6-sol');
     });
 
+    it('reads token usage from the transcript with the agent\'s parser', () => {
+      const transcript = [
+        JSON.stringify({ type: 'thread.started', thread_id: 't1' }),
+        JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 900, cached_input_tokens: 600, output_tokens: 40 } }),
+      ].join('\n');
+
+      const runData = agentResultToEvalRunData(
+        { success: true, output: '', transcript, duration: 1000 },
+        { o11yAgentName: 'codex' }
+      );
+
+      expect(runData.result.usage).toEqual({
+        inputTokens: 300,
+        outputTokens: 40,
+        cacheReadTokens: 600,
+        totalTokens: 940,
+      });
+    });
+
+    it('prefers usage the agent reported itself over the transcript', () => {
+      const transcript = JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 900, cached_input_tokens: 0, output_tokens: 40 } });
+
+      const runData = agentResultToEvalRunData(
+        { success: true, output: '', transcript, duration: 1000, usage: { totalTokens: 7, costUsd: 0.01 } },
+        { o11yAgentName: 'codex' }
+      );
+
+      expect(runData.result.usage).toEqual({ totalTokens: 7, costUsd: 0.01 });
+    });
+
+    it('leaves usage unset when nothing reports it', () => {
+      const runData = agentResultToEvalRunData(
+        { success: true, output: '', transcript: '{"type":"turn.started"}', duration: 1000 },
+        { o11yAgentName: 'codex' }
+      );
+
+      expect(runData.result.usage).toBeUndefined();
+      expect('usage' in runData.result).toBe(false);
+    });
+
     it('converts failed agent result', () => {
       const agentResult: AgentRunResult = {
         success: false,
@@ -323,6 +363,120 @@ describe('results utilities', () => {
       // Repair evidence must survive into the persisted result.json — it is the
       // removal signal for the codex shell-tool workaround (see codex/run.mjs).
       expect(resultJson.modelRepair).toBe('gpt-5.5');
+    });
+
+    it('writes a usage block to summary.json and per-run usage to result.json', () => {
+      const config: ResolvedExperimentConfig = {
+        agent: 'codex',
+        model: 'gpt-5.4',
+        evals: ['eval-1'],
+        runs: 3,
+        earlyExit: false,
+        scripts: [],
+        timeout: 300,
+      };
+      const transcript = JSON.stringify({
+        type: 'turn.completed',
+        usage: { input_tokens: 1000, cached_input_tokens: 400, output_tokens: 100 },
+      });
+      const results = createExperimentResults(
+        config,
+        [
+          createEvalSummary('eval-1', [
+            { result: { status: 'passed', duration: 10, usage: { inputTokens: 600, cacheReadTokens: 400, outputTokens: 100, totalTokens: 1100, costUsd: 0.25 } }, transcript },
+            { result: { status: 'failed', duration: 12, usage: { inputTokens: 1800, cacheReadTokens: 0, outputTokens: 100, totalTokens: 1900, costUsd: 0.5 } } },
+            // A run that crashed before producing a transcript reports nothing.
+            { result: { status: 'failed', duration: 1, error: 'sandbox failed' } },
+          ]),
+        ],
+        new Date('2024-01-26T12:00:00Z'),
+        new Date('2024-01-26T12:01:00Z')
+      );
+
+      const outputDir = saveResults(results, { resultsDir: TEST_DIR, experimentName: 'usage-test' });
+
+      const summary = JSON.parse(readFileSync(join(outputDir, 'eval-1', 'summary.json'), 'utf-8'));
+      expect(summary.usage).toEqual({
+        runsWithUsage: 2,
+        totalTokens: 3000,
+        meanTotalTokens: 1500,
+        inputTokens: 2400,
+        outputTokens: 200,
+        cacheReadTokens: 400,
+      });
+      // One run reported no cost, so no total cost is claimed.
+      expect(summary.usage.costUsd).toBeUndefined();
+
+      const run1 = JSON.parse(readFileSync(join(outputDir, 'eval-1', 'run-1', 'result.json'), 'utf-8'));
+      expect(run1.usage).toEqual({ inputTokens: 600, cacheReadTokens: 400, outputTokens: 100, totalTokens: 1100, costUsd: 0.25 });
+      // The transcript summary carries the run's usage too.
+      expect(run1.o11y.usage).toEqual(run1.usage);
+      const run3 = JSON.parse(readFileSync(join(outputDir, 'eval-1', 'run-3', 'result.json'), 'utf-8'));
+      expect(run3.usage).toBeUndefined();
+    });
+
+    it('uses usage the agent reported outside its transcript in result.json and its o11y summary', () => {
+      const config: ResolvedExperimentConfig = {
+        agent: 'vercel-ai-gateway/fx',
+        model: 'openai/gpt-5.6-sol',
+        evals: ['eval-1'],
+        runs: 1,
+        earlyExit: true,
+        scripts: [],
+        timeout: 300,
+      };
+      // A saved fx session: no consumed-token counts in the transcript itself.
+      const transcript = JSON.stringify({ kind: 'session_detail', history: [] });
+      const usage = { inputTokens: 1200, outputTokens: 450, totalTokens: 1650 };
+
+      const outputDir = saveResults(
+        createExperimentResults(
+          config,
+          [createEvalSummary('eval-1', [{ result: { status: 'passed', duration: 10, usage }, transcript }])],
+          new Date('2024-01-26T12:00:00Z'),
+          new Date('2024-01-26T12:01:00Z')
+        ),
+        { resultsDir: TEST_DIR, experimentName: 'reported-usage-test' }
+      );
+
+      const resultJson = JSON.parse(readFileSync(join(outputDir, 'eval-1', 'run-1', 'result.json'), 'utf-8'));
+      expect(resultJson.usage).toEqual(usage);
+      expect(resultJson.o11y.usage).toEqual(usage);
+    });
+
+    it('totals cost only when every run reports one, and omits usage when no run reports it', () => {
+      const config: ResolvedExperimentConfig = {
+        agent: 'vercel-ai-gateway/opencode',
+        model: 'anthropic/claude-sonnet-4.5',
+        evals: ['with-cost', 'no-usage'],
+        runs: 2,
+        earlyExit: false,
+        scripts: [],
+        timeout: 300,
+      };
+      const results = createExperimentResults(
+        config,
+        [
+          createEvalSummary('with-cost', [
+            { result: { status: 'passed', duration: 10, usage: { totalTokens: 1000, costUsd: 0.125 } } },
+            { result: { status: 'passed', duration: 10, usage: { totalTokens: 3000, costUsd: 0.25 } } },
+          ]),
+          createEvalSummary('no-usage', [
+            { result: { status: 'passed', duration: 10 } },
+            { result: { status: 'failed', duration: 10 } },
+          ]),
+        ],
+        new Date('2024-01-26T12:00:00Z'),
+        new Date('2024-01-26T12:01:00Z')
+      );
+
+      const outputDir = saveResults(results, { resultsDir: TEST_DIR, experimentName: 'cost-test' });
+
+      const withCost = JSON.parse(readFileSync(join(outputDir, 'with-cost', 'summary.json'), 'utf-8'));
+      expect(withCost.usage).toEqual({ runsWithUsage: 2, totalTokens: 4000, meanTotalTokens: 2000, costUsd: 0.375 });
+      const noUsage = JSON.parse(readFileSync(join(outputDir, 'no-usage', 'summary.json'), 'utf-8'));
+      expect(noUsage).not.toHaveProperty('usage');
+      expect(results.evals[1].usage).toBeUndefined();
     });
 
     it('does not collide when script is named "eval"', () => {

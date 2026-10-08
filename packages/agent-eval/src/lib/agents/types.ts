@@ -3,6 +3,7 @@
  */
 
 import type { JudgeConfig, ModelPolicy, ModelTier, SetupFunction, SandboxBackend, ValidationMode } from '../types.js';
+import type { TokenUsage } from '../o11y/types.js';
 import type { AgentDefinition } from './plugin/contract.js';
 
 /**
@@ -99,6 +100,9 @@ export interface AgentRunResult {
   observedModel?: string;
   /** Codex only: model re-stated explicitly by the shell-tool repair (see RunnerResult.modelRepair) */
   modelRepair?: string;
+  /** Token usage reported by the agent. When omitted, agent-eval reads it from
+   * the transcript with the agent's transcript parser. */
+  usage?: TokenUsage;
 }
 
 /**

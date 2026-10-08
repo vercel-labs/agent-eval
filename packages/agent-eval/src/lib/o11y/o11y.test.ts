@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseTranscript, parseTranscriptSummary, loadTranscript } from './index.js';
+import { parseTranscript, parseTranscriptSummary, parseTranscriptUsage, loadTranscript } from './index.js';
 import type { Transcript } from './types.js';
 import { parseClaudeCodeTranscript } from './parsers/claude-code.js';
 import { parseCodexTranscript } from './parsers/codex.js';
@@ -1139,5 +1139,357 @@ describe('o11y', () => {
 
       expect(result.events).toHaveLength(2);
     });
+  });
+});
+
+/**
+ * Token usage fixtures follow each CLI's real output shape: Claude Code session
+ * JSONL, `codex exec --json` events and saved session files, `opencode run
+ * --format json` events, Gemini CLI `stream-json`, and `fx ask --json`.
+ */
+describe('token usage', () => {
+  const jsonl = (...lines: unknown[]) => lines.map((line) => JSON.stringify(line)).join('\n');
+
+  describe('Claude Code', () => {
+    // One assistant message with thinking, text, and a tool call is written as
+    // three lines sharing message.id. The first line is an early snapshot whose
+    // output count is still growing.
+    const assistantLine = (
+      id: string,
+      content: unknown[],
+      usage: Record<string, number | null>,
+      extra: Record<string, unknown> = {},
+    ) => ({
+      type: 'assistant',
+      sessionId: 'b4c1',
+      requestId: `req_${id}`,
+      message: { id, type: 'message', role: 'assistant', model: 'claude-sonnet-4-5-20250929', content, usage },
+      ...extra,
+    });
+
+    const firstUsage = { input_tokens: 4, cache_creation_input_tokens: 2361, cache_read_input_tokens: 12001, output_tokens: 129 };
+    const secondUsage = { input_tokens: 6, cache_creation_input_tokens: 412, cache_read_input_tokens: 14362, output_tokens: 87 };
+
+    const transcript = jsonl(
+      { type: 'user', message: { role: 'user', content: 'Add a Button component' } },
+      assistantLine('msg_01', [{ type: 'thinking', thinking: 'Plan' }], { ...firstUsage, output_tokens: 8 }),
+      assistantLine('msg_01', [{ type: 'text', text: 'Creating the file.' }], firstUsage),
+      assistantLine('msg_01', [{ type: 'tool_use', id: 'toolu_1', name: 'Write', input: { file_path: 'src/Button.tsx' } }], firstUsage),
+      { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok' }] } },
+      assistantLine('msg_02', [{ type: 'text', text: 'Done.' }], secondUsage),
+    );
+
+    it('counts each assistant message once, however many lines repeat it', () => {
+      const { summary } = parseTranscript(transcript, 'vercel-ai-gateway/claude-code');
+
+      expect(summary.usage).toEqual({
+        inputTokens: 10,
+        outputTokens: 216,
+        cacheReadTokens: 26363,
+        cacheWriteTokens: 2773,
+        totalTokens: 29362,
+      });
+    });
+
+    it('treats null cache counts as no caching', () => {
+      const { summary } = parseTranscript(
+        jsonl(assistantLine('msg_03', [{ type: 'text', text: 'Hi' }], {
+          input_tokens: 12,
+          output_tokens: 3,
+          cache_creation_input_tokens: null,
+          cache_read_input_tokens: null,
+        })),
+        'claude-code',
+      );
+
+      expect(summary.usage).toEqual({
+        inputTokens: 12,
+        outputTokens: 3,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        totalTokens: 15,
+      });
+    });
+
+    it('reports cost only when every message carries the CLI-reported costUSD', () => {
+      const withCost = jsonl(
+        assistantLine('msg_a', [{ type: 'text', text: 'a' }], firstUsage, { costUSD: 0.0123 }),
+        assistantLine('msg_a', [{ type: 'text', text: 'a' }], firstUsage, { costUSD: 0.0123 }),
+        assistantLine('msg_b', [{ type: 'text', text: 'b' }], secondUsage, { costUSD: 0.0045 }),
+      );
+      const partialCost = jsonl(
+        assistantLine('msg_a', [{ type: 'text', text: 'a' }], firstUsage, { costUSD: 0.0123 }),
+        assistantLine('msg_b', [{ type: 'text', text: 'b' }], secondUsage),
+      );
+
+      expect(parseTranscript(withCost, 'claude-code').summary.usage?.costUsd).toBeCloseTo(0.0168, 10);
+      expect(parseTranscript(partialCost, 'claude-code').summary.usage?.costUsd).toBeUndefined();
+    });
+
+    it('is undefined when no assistant message reports usage', () => {
+      const { summary } = parseTranscript(
+        jsonl({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Hi' }] } }),
+        'claude-code',
+      );
+
+      expect(summary.usage).toBeUndefined();
+    });
+  });
+
+  describe('Codex', () => {
+    const execTranscript = (usage: Record<string, number>) =>
+      jsonl(
+        { type: 'thread.started', thread_id: '0199a213-81c0-7800-8aa1-bbab2a035a53' },
+        { type: 'turn.started' },
+        { type: 'item.completed', item: { id: 'item_0', type: 'reasoning', text: '**Planning**' } },
+        { type: 'item.completed', item: { id: 'item_1', type: 'command_execution', command: 'bash -lc ls', aggregated_output: 'README.md\n', exit_code: 0, status: 'completed' } },
+        { type: 'item.completed', item: { id: 'item_2', type: 'agent_message', text: 'Done.' } },
+        { type: 'turn.completed', usage },
+      );
+
+    it('reads turn.completed usage and separates cached input from uncached input', () => {
+      const { summary } = parseTranscript(
+        execTranscript({
+          input_tokens: 24763,
+          cached_input_tokens: 24448,
+          cache_write_input_tokens: 0,
+          output_tokens: 122,
+          reasoning_output_tokens: 64,
+        }),
+        'vercel-ai-gateway/codex',
+      );
+
+      expect(summary.usage).toEqual({
+        inputTokens: 315,
+        outputTokens: 122,
+        cacheReadTokens: 24448,
+        cacheWriteTokens: 0,
+        reasoningTokens: 64,
+        totalTokens: 24885,
+      });
+    });
+
+    it('handles older CLIs that report only input, cached, and output tokens', () => {
+      const { summary } = parseTranscript(
+        execTranscript({ input_tokens: 1000, cached_input_tokens: 200, output_tokens: 50 }),
+        'codex',
+      );
+
+      expect(summary.usage).toEqual({
+        inputTokens: 800,
+        outputTokens: 50,
+        cacheReadTokens: 200,
+        totalTokens: 1050,
+      });
+    });
+
+    it('treats turn.completed usage as a running total for its thread', () => {
+      const transcript = jsonl(
+        { type: 'thread.started', thread_id: 'thread-1' },
+        { type: 'turn.completed', usage: { input_tokens: 100, cached_input_tokens: 0, output_tokens: 10 } },
+        { type: 'turn.completed', usage: { input_tokens: 250, cached_input_tokens: 100, output_tokens: 30 } },
+      );
+
+      expect(parseTranscript(transcript, 'codex').summary.usage).toEqual({
+        inputTokens: 150,
+        outputTokens: 30,
+        cacheReadTokens: 100,
+        totalTokens: 280,
+      });
+    });
+
+    it('reads the last token_count total from a saved session file', () => {
+      const tokenCount = (total: Record<string, number> | null) => ({
+        timestamp: '2026-09-30T10:00:00.000Z',
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: total && { total_token_usage: total, last_token_usage: total, model_context_window: 272000 },
+          rate_limits: null,
+        },
+      });
+      const transcript = jsonl(
+        { timestamp: '2026-09-30T09:59:00.000Z', type: 'session_meta', payload: { id: 'thread-1', cli_version: '0.144.0' } },
+        tokenCount({ input_tokens: 2000, cached_input_tokens: 0, output_tokens: 100, reasoning_output_tokens: 32, total_tokens: 2100 }),
+        tokenCount(null),
+        tokenCount({ input_tokens: 5000, cached_input_tokens: 3000, output_tokens: 400, reasoning_output_tokens: 128, total_tokens: 5400 }),
+      );
+
+      expect(parseTranscript(transcript, 'codex').summary.usage).toEqual({
+        inputTokens: 2000,
+        outputTokens: 400,
+        cacheReadTokens: 3000,
+        reasoningTokens: 128,
+        totalTokens: 5400,
+      });
+    });
+
+    it('is undefined when the run never completed a turn', () => {
+      const transcript = jsonl(
+        { type: 'thread.started', thread_id: 'thread-1' },
+        { type: 'turn.failed', error: { message: 'stream disconnected' } },
+      );
+
+      expect(parseTranscript(transcript, 'codex').summary.usage).toBeUndefined();
+    });
+  });
+
+  describe('OpenCode', () => {
+    const stepFinish = (id: string, tokens: Record<string, unknown>, cost: number) => ({
+      type: 'step_finish',
+      timestamp: 1770529147699,
+      sessionID: 'ses_1',
+      part: { id, sessionID: 'ses_1', messageID: 'msg_1', type: 'step-finish', reason: 'tool-calls', cost, tokens },
+    });
+    const first = stepFinish('prt_1', { total: 13250, input: 1200, output: 50, reasoning: 0, cache: { read: 12000, write: 0 } }, 0.0071);
+    const second = stepFinish('prt_2', { total: 13600, input: 300, output: 200, reasoning: 100, cache: { read: 13000, write: 0 } }, 0.0102);
+
+    it('sums step_finish usage and cost once per step', () => {
+      const transcript = jsonl(
+        { type: 'step_start', timestamp: 1770529140000, sessionID: 'ses_1', part: { id: 'prt_0', type: 'step-start' } },
+        { type: 'tool_use', timestamp: 1770529141000, sessionID: 'ses_1', part: { tool: 'bash', state: { status: 'completed', input: { command: 'ls' }, output: 'a' } } },
+        first,
+        { type: 'text', timestamp: 1770529148000, sessionID: 'ses_1', part: { text: 'Done' } },
+        second,
+        second, // the same part emitted twice must not be counted twice
+      );
+
+      const usage = parseTranscript(transcript, 'vercel-ai-gateway/opencode').summary.usage;
+      expect(usage).toMatchObject({
+        inputTokens: 1500,
+        outputTokens: 250,
+        reasoningTokens: 100,
+        cacheReadTokens: 25000,
+        cacheWriteTokens: 0,
+        totalTokens: 26850,
+      });
+      expect(usage?.costUsd).toBeCloseTo(0.0173, 10);
+    });
+
+    it('leaves totalTokens unset for versions that report no step total', () => {
+      const transcript = jsonl(
+        stepFinish('prt_1', { input: 1200, output: 50, reasoning: 0, cache: { read: 12000, write: 0 } }, 0),
+      );
+
+      expect(parseTranscript(transcript, 'vercel-ai-gateway/opencode').summary.usage).toEqual({
+        inputTokens: 1200,
+        outputTokens: 50,
+        reasoningTokens: 0,
+        cacheReadTokens: 12000,
+        cacheWriteTokens: 0,
+        costUsd: 0,
+      });
+    });
+
+    it('is undefined when no step finished', () => {
+      const transcript = jsonl(
+        { type: 'text', timestamp: 1770529148000, sessionID: 'ses_1', part: { text: 'Hello' } },
+      );
+
+      expect(parseTranscript(transcript, 'vercel-ai-gateway/opencode').summary.usage).toBeUndefined();
+    });
+  });
+
+  describe('Gemini', () => {
+    it('reads the session totals from the result event', () => {
+      const transcript = jsonl(
+        { type: 'init', timestamp: '2026-09-30T10:00:00.000Z', session_id: 'abc', model: 'gemini-2.5-pro' },
+        { type: 'message', timestamp: '2026-09-30T10:00:01.000Z', role: 'assistant', content: 'Done', delta: true },
+        {
+          type: 'result',
+          timestamp: '2026-09-30T10:00:20.000Z',
+          status: 'success',
+          stats: {
+            total_tokens: 15302,
+            input_tokens: 14210,
+            output_tokens: 412,
+            cached: 9800,
+            input: 4410,
+            duration_ms: 18204,
+            tool_calls: 3,
+            models: {},
+          },
+        },
+      );
+
+      expect(parseTranscript(transcript, 'gemini').summary.usage).toEqual({
+        inputTokens: 4410,
+        cacheReadTokens: 9800,
+        outputTokens: 412,
+        totalTokens: 15302,
+      });
+    });
+
+    it('keeps the full prompt count when an older CLI does not break out the cache', () => {
+      const transcript = jsonl({
+        type: 'result',
+        status: 'success',
+        stats: { total_tokens: 900, input_tokens: 800, output_tokens: 100, duration_ms: 1000, tool_calls: 0 },
+      });
+
+      expect(parseTranscript(transcript, 'gemini').summary.usage).toEqual({
+        inputTokens: 800,
+        outputTokens: 100,
+        totalTokens: 900,
+      });
+    });
+
+    it('is undefined when the stream ended without a result event', () => {
+      const transcript = jsonl({ type: 'message', role: 'assistant', content: 'partial', delta: true });
+
+      expect(parseTranscript(transcript, 'gemini').summary.usage).toBeUndefined();
+    });
+  });
+
+  describe('fx', () => {
+    const askResult = (usage: Record<string, number | null>) =>
+      JSON.stringify({
+        output: 'Found it.',
+        final_output: 'Found it.',
+        exit_code: 0,
+        model: 'openai/gpt-5.6-sol',
+        resolved_provider: null,
+        session_id: '',
+        steps: 2,
+        usage,
+        tool_calls: [],
+      });
+
+    it('reads input and output tokens from fx ask JSON', () => {
+      expect(parseTranscript(askResult({ input_tokens: 1200, output_tokens: 450 }), 'vercel-ai-gateway/fx').summary.usage).toEqual({
+        inputTokens: 1200,
+        outputTokens: 450,
+        totalTokens: 1650,
+      });
+    });
+
+    it('is undefined when fx reports null counts or the transcript is a saved session', () => {
+      const session = JSON.stringify({ kind: 'session_detail', history: [] });
+
+      expect(parseTranscript(askResult({ input_tokens: null, output_tokens: null }), 'fx').summary.usage).toBeUndefined();
+      expect(parseTranscript(session, 'fx').summary.usage).toBeUndefined();
+    });
+  });
+
+  it('is undefined for Cursor, whose stream-json output reports no token usage', () => {
+    const transcript = jsonl(
+      { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Done' }] }, session_id: 's' },
+      { type: 'result', subtype: 'success', is_error: false, duration_ms: 1234, duration_api_ms: 1234, result: 'Done', session_id: 's' },
+    );
+
+    expect(parseTranscript(transcript, 'cursor').summary.usage).toBeUndefined();
+  });
+
+  it('parseTranscriptUsage reads only the usage, and nothing for unknown agents', () => {
+    const transcript = jsonl({ type: 'turn.completed', usage: { input_tokens: 10, cached_input_tokens: 0, output_tokens: 5 } });
+
+    expect(parseTranscriptUsage(transcript, 'codex')).toEqual({
+      inputTokens: 10,
+      outputTokens: 5,
+      cacheReadTokens: 0,
+      totalTokens: 15,
+    });
+    expect(parseTranscriptUsage(transcript, 'unsupported-agent')).toBeUndefined();
+    expect(parseTranscriptUsage(undefined, 'codex')).toBeUndefined();
   });
 });

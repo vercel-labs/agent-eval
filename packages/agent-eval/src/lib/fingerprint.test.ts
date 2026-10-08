@@ -373,6 +373,46 @@ describe('computeFingerprint', () => {
   });
 });
 
+/**
+ * Golden values recorded from the fingerprint implementation before any opt-in
+ * option below existed. A default config must keep hashing to exactly these, or
+ * every cached result in every consumer's results/ tree would silently re-run.
+ */
+describe('default-config fingerprint stability', () => {
+  const GOLDEN_FILES = {
+    'PROMPT.md': 'Create a Button component.',
+    'EVAL.ts': "import { test } from 'vitest';\ntest('ok', () => {});\n",
+    'package.json': '{"type":"module"}',
+    'src/index.ts': 'export {};\n',
+  };
+
+  beforeEach(() => {
+    mkdirSync(TEST_DIR, { recursive: true });
+  });
+
+  afterEach(() => {
+    if (existsSync(TEST_DIR)) {
+      rmSync(TEST_DIR, { recursive: true });
+    }
+  });
+
+  it('hashes a default config exactly as before', () => {
+    const evalDir = createEvalDir('golden', GOLDEN_FILES);
+
+    expect(fingerprintConfigInput(baseConfig)).toEqual({
+      agent: 'claude-code',
+      model: 'opus',
+      scripts: ['build'],
+      timeout: 600,
+      earlyExit: true,
+      runs: 2,
+    });
+    expect(computeFingerprint(evalDir, baseConfig)).toBe('d013779dc3c43d42b802322db7c7c3e814ae4c8ae8925fa8ba3388726f43e4ac');
+    expect(computeContentFingerprint(evalDir)).toBe('db05a5a3db8684240a29ab59573ac09e2ce59824c2d2bfe077dad7253a744d4f');
+    expect(computeReuseCompatibilityFingerprint(baseConfig)).toBeUndefined();
+  });
+});
+
 describe('computeContentFingerprint', () => {
   beforeEach(() => mkdirSync(TEST_DIR, { recursive: true }));
   afterEach(() => {

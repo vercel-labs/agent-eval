@@ -137,6 +137,9 @@ export async function runExperiment(
 
   // Get the agent from registry
   const agent = getAgent(config.agent);
+  // Transcript parser for reading token usage (falls back to the agent id, which
+  // is what saveResults parses transcripts with).
+  const o11yAgentName = agent.definition?.o11yAgentName ?? config.agent;
 
   const emit = (event: ProgressEvent) => {
     if (onProgress) {
@@ -245,7 +248,7 @@ export async function runExperiment(
       };
     }
 
-    let runData = agentResultToEvalRunData(agentResult);
+    let runData = agentResultToEvalRunData(agentResult, { o11yAgentName });
 
     if (config.onRunComplete) {
       try {
@@ -420,6 +423,7 @@ export async function runSingleEval<T extends ResolvedExperimentConfig['model']>
     options.judge?.agent,
   );
   const agent = getAgent(agentName);
+  const o11yAgentName = agent.definition?.o11yAgentName ?? agentName;
 
   const models: string[] = Array.isArray(options.model) ? options.model : [options.model];
   const prompt = options.editPrompt ? options.editPrompt(fixture.prompt) : fixture.prompt;
@@ -446,7 +450,7 @@ export async function runSingleEval<T extends ResolvedExperimentConfig['model']>
 		judge: options.judge,
 	});
 
-    results.push(agentResultToEvalRunData(agentResult));
+    results.push(agentResultToEvalRunData(agentResult, { o11yAgentName }));
   }
 
   // TODO: remove this on the next major and return an array directly...it's just here to prevent breaking changes

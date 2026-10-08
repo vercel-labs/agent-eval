@@ -7,7 +7,8 @@
  * - Messages, function calls, and results are separate events
  */
 
-import type { TranscriptEvent, ToolName } from '../types.js';
+import type { TokenUsage, TranscriptEvent, ToolName } from '../types.js';
+import { asRecord, compactUsage, parseJsonLine, reportedNumber, sumUsage } from '../usage.js';
 
 /**
  * Map Codex tool names to canonical names.
@@ -368,11 +369,76 @@ function parseCodexLine(line: string): TranscriptEvent[] {
 }
 
 /**
+ * Map one Codex token-usage object onto {@link TokenUsage}.
+ *
+ * Codex reports `cached_input_tokens` and `cache_write_input_tokens` as parts
+ * of `input_tokens`, and `reasoning_output_tokens` as part of `output_tokens`
+ * (its own total is input plus output). The cache parts are subtracted so that
+ * `inputTokens` means uncached input, as it does for every other agent that
+ * breaks cache usage out.
+ */
+function codexUsage(raw: Record<string, unknown>): TokenUsage | undefined {
+  const input = reportedNumber(raw.input_tokens);
+  const cacheRead = reportedNumber(raw.cached_input_tokens);
+  const cacheWrite = reportedNumber(raw.cache_write_input_tokens);
+  const output = reportedNumber(raw.output_tokens);
+  return compactUsage({
+    inputTokens: input === undefined ? undefined : Math.max(0, input - (cacheRead ?? 0) - (cacheWrite ?? 0)),
+    outputTokens: output,
+    cacheReadTokens: cacheRead,
+    cacheWriteTokens: cacheWrite,
+    reasoningTokens: reportedNumber(raw.reasoning_output_tokens),
+    totalTokens:
+      reportedNumber(raw.total_tokens) ??
+      (input !== undefined && output !== undefined ? input + output : undefined),
+  });
+}
+
+/**
+ * Read token usage from a Codex transcript.
+ *
+ * `codex exec --json` ends each turn with a `turn.completed` event whose
+ * `usage` is the thread's running total, not the turn's delta, so the last one
+ * per thread is the thread's usage; separate threads are summed. When the
+ * transcript is a saved session file instead, its `event_msg` `token_count`
+ * entries carry the same running total in `info.total_token_usage`, and the
+ * last one is used.
+ */
+export function extractCodexUsage(raw: string): TokenUsage | undefined {
+  const lastByThread = new Map<string, TokenUsage>();
+  let thread = '';
+  let lastSessionTotal: TokenUsage | undefined;
+
+  for (const line of raw.split('\n')) {
+    const data = parseJsonLine(line);
+    if (!data) continue;
+
+    if (data.type === 'thread.started') {
+      thread = typeof data.thread_id === 'string' ? data.thread_id : `${lastByThread.size}`;
+    } else if (data.type === 'turn.completed') {
+      const usage = asRecord(data.usage);
+      const mapped = usage ? codexUsage(usage) : undefined;
+      if (mapped) lastByThread.set(thread, mapped);
+    } else if (data.type === 'event_msg') {
+      const payload = asRecord(data.payload);
+      if (payload?.type !== 'token_count') continue;
+      const total = asRecord(asRecord(payload.info)?.total_token_usage);
+      const mapped = total ? codexUsage(total) : undefined;
+      if (mapped) lastSessionTotal = mapped;
+    }
+  }
+
+  if (lastByThread.size > 0) return sumUsage([...lastByThread.values()]);
+  return lastSessionTotal;
+}
+
+/**
  * Parse Codex JSONL transcript into events.
  */
 export function parseCodexTranscript(raw: string): {
   events: TranscriptEvent[];
   errors: string[];
+  usage?: TokenUsage;
 } {
   const events: TranscriptEvent[] = [];
   const errors: string[] = [];
@@ -419,5 +485,6 @@ export function parseCodexTranscript(raw: string): {
     }
   }
 
-  return { events, errors };
+  const usage = extractCodexUsage(raw);
+  return usage ? { events, errors, usage } : { events, errors };
 }

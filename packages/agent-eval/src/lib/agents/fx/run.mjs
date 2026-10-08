@@ -47,6 +47,28 @@ export function isFxSessionDetail(raw) {
   }
 }
 
+/**
+ * Token usage from `fx ask --json`: the input and output tokens summed over the
+ * main agent's completions, `null` when no completion reported a count. fx does
+ * not break cache usage out, so `inputTokens` is the full prompt count. Mirrors
+ * the ask-JSON branch of the host-side fx transcript parser, which this
+ * zero-dependency runner cannot import.
+ *
+ * @param {unknown} askResult parsed `fx ask --json` output
+ * @returns {{inputTokens?:number, outputTokens?:number, totalTokens?:number}|undefined}
+ */
+export function fxUsage(askResult) {
+  const usage = askResult && typeof askResult === 'object' ? askResult.usage : undefined;
+  const count = (value) => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined);
+  const inputTokens = count(usage?.input_tokens);
+  const outputTokens = count(usage?.output_tokens);
+  const result = {};
+  if (inputTokens !== undefined) result.inputTokens = inputTokens;
+  if (outputTokens !== undefined) result.outputTokens = outputTokens;
+  if (inputTokens !== undefined && outputTokens !== undefined) result.totalTokens = inputTokens + outputTokens;
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 /** @param {{model?:string}} input */
 export function buildFxEnvironment(input) {
   const env = { ...process.env, FX_AUTO_UPGRADE: '0' };
@@ -91,6 +113,8 @@ export async function runAgent(input) {
     }
   }
 
+  // Usage is reported even when the run failed: a failed run still consumed tokens.
+  const usage = fxUsage(askResult);
   const ok = !res.error && processExitCode === 0 && askResult?.exit_code === 0;
   if (!ok) {
     const errorLines = output.trim().split('\n').slice(-5).join('\n');
@@ -102,6 +126,7 @@ export async function runAgent(input) {
       observedModel: askResult?.model || null,
       error: error || errorLines || `fx exited with code ${agentExitCode}`,
       agentExitCode,
+      ...(usage ? { usage } : {}),
     };
   }
 
@@ -112,6 +137,7 @@ export async function runAgent(input) {
     observedModel: askResult.model || null,
     error: null,
     agentExitCode,
+    ...(usage ? { usage } : {}),
   };
 }
 

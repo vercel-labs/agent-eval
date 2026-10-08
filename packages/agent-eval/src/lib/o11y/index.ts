@@ -12,10 +12,17 @@ export type {
   ShellCommandInfo,
   TranscriptSummary,
   Transcript,
+  TokenUsage,
 } from './types.js';
 
 // Main parsing functions
-export { parseTranscript, parseTranscriptSummary, loadTranscript, SUPPORTED_AGENTS } from './parsers/index.js';
+export {
+  parseTranscript,
+  parseTranscriptSummary,
+  parseTranscriptUsage,
+  loadTranscript,
+  SUPPORTED_AGENTS,
+} from './parsers/index.js';
 export type { ParseableAgent } from './parsers/index.js';
 
 // Individual parsers (for advanced use)

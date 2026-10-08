@@ -23,6 +23,10 @@ interface RunResult {
     thinkingBlocks: number;
     errors: string[];
   };
+  usage?: {
+    totalTokens?: number;
+    costUsd?: number;
+  };
 }
 
 interface ExperimentDetailData {

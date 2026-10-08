@@ -160,6 +160,7 @@ The `results.o11y` object is a `TranscriptSummary` with these fields:
 | `totalTurns` | `number` | Conversation turns |
 | `errors` | `string[]` | Errors encountered |
 | `thinkingBlocks` | `number` | Thinking/reasoning blocks |
+| `usage` | `TokenUsage \| undefined` | Token usage of the run, when the agent reports it (see [Token usage and cost](#token-usage-and-cost)) |
 
 > **Note**: If the agent's transcript is unavailable (e.g. the agent crashed before producing output), `results.o11y` will be `null`.
 
@@ -659,6 +660,72 @@ Each eval directory contains a `summary.json` with:
 
 The `fingerprint` field enables result reuse across runs. The `classification` and `valid` fields appear only for failed evals -- `valid: false` marks non-model failures so they are not reused by fingerprinting and are automatically retried.
 
+### Token usage and cost
+
+Every run records the token usage its agent CLI reported, so you can weigh cost against pass rate when you compare models, docs, or MCP servers. `result.json` carries a `usage` object, and the transcript summary carries the same object at `o11y.usage`:
+
+```json
+{
+  "status": "passed",
+  "duration": 84.2,
+  "usage": {
+    "inputTokens": 315,
+    "outputTokens": 122,
+    "cacheReadTokens": 24448,
+    "cacheWriteTokens": 0,
+    "reasoningTokens": 64,
+    "totalTokens": 24885
+  }
+}
+```
+
+`summary.json` adds a `usage` block when at least one run reported usage:
+
+```json
+{
+  "totalRuns": 2,
+  "passedRuns": 1,
+  "passRate": "50%",
+  "meanDuration": 80.1,
+  "usage": {
+    "runsWithUsage": 2,
+    "totalTokens": 51230,
+    "meanTotalTokens": 25615,
+    "inputTokens": 1102,
+    "outputTokens": 2380,
+    "cacheReadTokens": 47748,
+    "cacheWriteTokens": 0,
+    "reasoningTokens": 940
+  }
+}
+```
+
+Token figures cover the runs that reported usage (`runsWithUsage`), and a field appears only when every one of those runs reported it. `costUsd` appears only when every run in the eval reported a cost.
+
+Agent Eval records only what the agent CLI reports. It never estimates token counts and never computes cost from a price table, so anything the CLI doesn't report is left out. CLIs also count tokens differently, so compare `totalTokens` across agents and read the other fields per agent:
+
+| Agent | Source | Notes |
+|-------|--------|-------|
+| Claude Code | `message.usage` on assistant session entries | A message written across several lines is counted once. `costUsd` only from CLI versions that write `costUSD`. |
+| Codex | `turn.completed` usage, or `token_count` in a saved session | Cache reads and writes are split out of `inputTokens`. `reasoningTokens` is part of `outputTokens`. |
+| OpenCode | `step_finish` events | `costUsd` is OpenCode's own figure, and OpenCode reports 0 for models it has no pricing for. `totalTokens` needs a version that reports step totals. Subagent sessions aren't in the event stream. |
+| Gemini | `stats` on the final `result` event | `outputTokens` excludes thinking tokens, which `totalTokens` includes. |
+| fx | `usage` in `fx ask --json` | The transcript is the saved session, which records context size rather than consumed tokens, so the runner reports the ask result's counts alongside it. fx doesn't break out cache usage. |
+| Cursor | — | The `stream-json` output reports no usage. |
+
+`usage` covers the code-generation run only. Judge assertions re-invoke the agent inside the sandbox, and their tokens are not included.
+
+EVAL.ts can read the same figures, for example to hold the agent to a token budget:
+
+```typescript
+test('stays within a token budget', () => {
+  const results = JSON.parse(readFileSync('__agent_eval__/results.json', 'utf-8'));
+  expect(results.o11y.usage?.totalTokens).toBeLessThan(200_000);
+});
+```
+
+A custom agent can return `usage` from `run()` directly, or from its in-sandbox runner as `usage` on the runner result, for CLIs that report usage outside the transcript. Otherwise Agent Eval reads it from the transcript. Usage reported directly takes precedence.
+
 ### Playground UI
 
 Browse results in a web-based dashboard:
@@ -669,7 +736,7 @@ npx @vercel/agent-eval playground
 
 This opens a local Next.js app with:
 - **Overview** dashboard with stats and recent experiments
-- **Experiment detail** with per-eval pass rates and run results
+- **Experiment detail** with per-eval pass rates and run results, including tokens and cost when the agent reports them
 - **Transcript viewer** to inspect agent tool calls, thinking, and errors
 - **Compare** two runs side-by-side with pass rate deltas
 

@@ -7,6 +7,7 @@ import type {
   TranscriptEvent,
   Transcript,
   TranscriptSummary,
+  TokenUsage,
   ToolName,
   WebFetchInfo,
   ShellCommandInfo,
@@ -54,7 +55,7 @@ export const SUPPORTED_AGENTS = Object.keys(AGENT_PARSERS) as Array<keyof typeof
  */
 function getParserForAgent(
   agent: string
-): ((raw: string) => { events: TranscriptEvent[]; errors: string[] }) | null {
+): ((raw: string) => { events: TranscriptEvent[]; errors: string[]; usage?: TokenUsage }) | null {
   const terminalName = agent.slice(agent.lastIndexOf('/') + 1);
   if (terminalName === 'fx') return AGENT_PARSERS.fx;
 
@@ -271,8 +272,11 @@ export function parseTranscript(
     };
   }
   
-  const { events, errors } = parser(raw);
+  const { events, errors, usage } = parser(raw);
   const summary = generateSummary(events);
+  if (usage) {
+    summary.usage = usage;
+  }
 
   return {
     agent,
@@ -293,6 +297,15 @@ export function parseTranscriptSummary(
 ): TranscriptSummary {
   const { summary } = parseTranscript(raw, agent);
   return summary;
+}
+
+/**
+ * Read only the token usage from a raw transcript. Returns undefined when the
+ * agent has no parser or its transcript reports no usage.
+ */
+export function parseTranscriptUsage(raw: string | undefined, agent: string): TokenUsage | undefined {
+  if (!raw || !raw.trim()) return undefined;
+  return getParserForAgent(agent)?.(raw).usage;
 }
 
 /**

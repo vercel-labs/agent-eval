@@ -11,7 +11,9 @@
  *    - Timestamps: ISO strings
  */
 
-import type { TranscriptEvent, ToolName } from '../types.js';
+import type { TokenUsage, TranscriptEvent, ToolName } from '../types.js';
+import { asRecord, compactUsage, parseJsonLine, reportedNumber } from '../usage.js';
+import { extractStepFinishUsage } from './opencode.js';
 
 /**
  * Map Gemini tool names to canonical names.
@@ -207,11 +209,45 @@ function parseGeminiLine(line: string): TranscriptEvent[] {
 }
 
 /**
+ * Read token usage from a Gemini transcript.
+ *
+ * Gemini CLI's `stream-json` output ends with a `result` event whose `stats`
+ * hold the session totals: `input_tokens` (the full prompt), `cached`, `input`
+ * (the uncached part of the prompt), `output_tokens`, and `total_tokens`.
+ * Gemini's `output_tokens` excludes thinking tokens, which `total_tokens`
+ * includes. Transcripts in the step-event format carry OpenCode-style
+ * `step_finish` usage instead.
+ */
+export function extractGeminiUsage(raw: string): TokenUsage | undefined {
+  let stats: Record<string, unknown> | undefined;
+  for (const line of raw.split('\n')) {
+    const data = parseJsonLine(line);
+    if (data?.type !== 'result') continue;
+    stats = asRecord(data.stats) ?? stats;
+  }
+
+  if (!stats) return extractStepFinishUsage(raw);
+
+  const prompt = reportedNumber(stats.input_tokens);
+  const cached = reportedNumber(stats.cached);
+  const uncached =
+    reportedNumber(stats.input) ??
+    (prompt !== undefined && cached !== undefined ? Math.max(0, prompt - cached) : prompt);
+  return compactUsage({
+    inputTokens: uncached,
+    cacheReadTokens: cached,
+    outputTokens: reportedNumber(stats.output_tokens),
+    totalTokens: reportedNumber(stats.total_tokens),
+  });
+}
+
+/**
  * Parse Gemini JSONL transcript into normalized events.
  */
 export function parseGeminiTranscript(raw: string): {
   events: TranscriptEvent[];
   errors: string[];
+  usage?: TokenUsage;
 } {
   const events: TranscriptEvent[] = [];
   const errors: string[] = [];
@@ -268,5 +304,6 @@ export function parseGeminiTranscript(raw: string): {
     }
   }
 
-  return { events: aggregated, errors };
+  const usage = extractGeminiUsage(raw);
+  return usage ? { events: aggregated, errors, usage } : { events: aggregated, errors };
 }

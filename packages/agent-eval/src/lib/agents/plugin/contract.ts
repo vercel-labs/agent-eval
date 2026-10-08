@@ -20,6 +20,7 @@
  */
 
 import type { ModelTier, RunnableExperimentConfig } from '../../types.js';
+import type { TokenUsage } from '../../o11y/types.js';
 import type { AgentRunOptions } from '../types.js';
 
 /**
@@ -217,4 +218,12 @@ export interface RunnerResult {
    * repairs dropping to zero means the upstream CLI is fixed).
    */
   modelRepair?: string;
+  /**
+   * OPTIONAL token usage the CLI reported somewhere other than the transcript.
+   * fx prints its usage only in `fx ask --json`, while the transcript is the
+   * saved session, which records context size rather than consumed tokens.
+   * When set, it takes precedence over usage read from the transcript; omit it
+   * to have usage read from the transcript as usual.
+   */
+  usage?: TokenUsage;
 }
