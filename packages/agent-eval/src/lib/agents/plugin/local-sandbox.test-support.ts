@@ -13,7 +13,7 @@
  * appeared in argv).
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -49,6 +49,8 @@ export class LocalSandbox {
   readonly username: string | undefined;
   readonly commands: RecordedCommand[] = [];
   stopped = false;
+  /** Processes still running; stopping the sandbox kills them, as a real one does. */
+  private readonly running = new Set<ChildProcess>();
   private readonly home: string;
   private readonly path: string;
   private cwd: string;
@@ -93,17 +95,34 @@ export class LocalSandbox {
     if (this.stopped) throw new Error(`sandbox ${this.sandboxId} is stopped`);
     const cwd = options.cwd ?? this.cwd;
     this.commands.push({ cmd, args: [...args], ...(options.env ? { env: { ...options.env } } : {}), cwd });
-    const result = spawnSync(cmd, args, {
-      cwd,
-      encoding: 'utf8',
-      // A minimal, isolated environment: the host's PATH for the tools, and a
-      // private HOME so neither the host's git config nor its credentials leak in.
-      env: { PATH: this.path, HOME: this.home, GIT_CONFIG_NOSYSTEM: '1', ...options.env },
+    // Asynchronous, like the real sandboxes: a command that hangs must not block
+    // the host, so host-side timeouts can be tested.
+    return new Promise((resolve) => {
+      const child = spawn(cmd, args, {
+        cwd,
+        // A minimal, isolated environment: the host's PATH for the tools, and a
+        // private HOME so neither the host's git config nor its credentials leak in.
+        env: { PATH: this.path, HOME: this.home, GIT_CONFIG_NOSYSTEM: '1', ...options.env },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      this.running.add(child);
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+      child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+      child.on('error', (error) => {
+        this.running.delete(child);
+        resolve({ stdout: '', stderr: error.message, exitCode: 127 });
+      });
+      child.on('close', (code) => {
+        this.running.delete(child);
+        resolve({
+          stdout: Buffer.concat(stdout).toString('utf-8'),
+          stderr: Buffer.concat(stderr).toString('utf-8'),
+          exitCode: code ?? 1,
+        });
+      });
     });
-    if (result.error) {
-      return { stdout: '', stderr: result.error.message, exitCode: 127 };
-    }
-    return { stdout: result.stdout, stderr: result.stderr, exitCode: result.status ?? 1 };
   }
 
   async runShell(script: string, env?: Record<string, string>, cwd?: string): Promise<CommandResult> {
@@ -147,11 +166,18 @@ export class LocalSandbox {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.killRunning();
   }
 
   /** Delete the sandbox's directory. Tests call this in cleanup. */
   dispose(): void {
+    this.killRunning();
     rmSync(this.root, { recursive: true, force: true });
+  }
+
+  private killRunning(): void {
+    for (const child of this.running) child.kill('SIGKILL');
+    this.running.clear();
   }
 }
 

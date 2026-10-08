@@ -73,12 +73,14 @@ export interface ConfigFile {
 }
 
 /**
- * A command that prints the agent CLI's version: `sandbox.runCommand(cmd, args)`
- * or, for kind 'shell', `sandbox.runShell(script)`.
+ * A command that prints the agent CLI's version: `cmd` with `args` or, for kind
+ * 'shell', a bash `script`. It is given `timeoutMs` (default 30 seconds) to
+ * finish; after that it is abandoned, killed in the sandbox where coreutils
+ * `timeout` is available, and the version is left unset.
  */
 export type VersionCommand =
-  | { kind: 'command'; cmd: string; args?: string[] }
-  | { kind: 'shell'; script: string };
+  | { kind: 'command'; cmd: string; args?: string[]; timeoutMs?: number }
+  | { kind: 'shell'; script: string; timeoutMs?: number };
 
 /**
  * Host-side plugin description for one agent. Pure data + tiny pure functions —
