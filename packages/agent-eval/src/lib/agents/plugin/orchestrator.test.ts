@@ -100,6 +100,14 @@ describe('runCredentials', () => {
     ).toEqual(['codegen-key', 'judge-gateway-key']);
   });
 
+  it('includes every agentEnv value', () => {
+    const def = getAgent('vercel-ai-gateway/claude-code').definition;
+
+    expect(
+      runCredentials(def, { ...baseOptions, agentEnv: { DEPLOY_TOKEN: 'dpl_live_7a1f0c9e44b2', REGION: 'iad1' } })
+    ).toEqual(['codegen-key', 'dpl_live_7a1f0c9e44b2', 'iad1']);
+  });
+
   it('falls back to the codegen key when the judge cannot be resolved', () => {
     const def = getAgent('codex').definition;
 

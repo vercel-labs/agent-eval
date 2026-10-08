@@ -610,6 +610,39 @@ describe('runExperiment', () => {
       );
     });
 
+    it('forwards agentEnv to agent.run, the contract custom agents implement', async () => {
+      const mockAgent: Agent = {
+        name: 'mock-agent',
+        displayName: 'Mock Agent',
+        getApiKeyEnvVar: () => 'MOCK_API_KEY',
+        getDefaultModel: () => 'mock-model',
+        run: vi.fn().mockResolvedValue({ success: true, output: '', duration: 6000 }),
+      } as unknown as Agent;
+      vi.spyOn(agentsIndex, 'getAgent').mockReturnValue(mockAgent);
+
+      await runExperiment({
+        config: {
+          agent: 'claude-code',
+          model: 'opus',
+          evals: ['test-eval'],
+          runs: 1,
+          earlyExit: false,
+          scripts: [],
+          timeout: 600,
+          agentEnv: { DEPLOY_TOKEN: 'dpl_live_7a1f0c9e44b2' },
+        },
+        fixtures: [{ name: 'test-eval', path: '/fake/path', prompt: 'Deploy', isModule: true }],
+        apiKey: 'my-api-key',
+        resultsDir: TEST_DIR,
+        experimentName: 'test-experiment',
+      });
+
+      expect(mockAgent.run).toHaveBeenCalledWith(
+        '/fake/path',
+        expect.objectContaining({ agentEnv: { DEPLOY_TOKEN: 'dpl_live_7a1f0c9e44b2' } })
+      );
+    });
+
     it('forwards disableBundledSkills to agent.run when set', async () => {
       const mockAgent: Agent = {
         name: 'mock-agent',

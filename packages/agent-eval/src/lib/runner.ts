@@ -256,6 +256,7 @@ export async function runExperiment(
         webResearch: config.webResearch,
         disableBundledSkills: config.disableBundledSkills,
         judge: config.judge,
+        agentEnv: config.agentEnv,
       }),
       new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
@@ -479,8 +480,9 @@ function reporterCredentials(
   config: RunnableExperimentConfig,
   apiKey: string,
 ): string[] {
-  // Agents registered without a definition can only have injected the codegen key.
-  if (!agent.definition) return [apiKey];
+  // Without a definition there is no judge to resolve; the codegen key and the
+  // agentEnv values are still known.
+  if (!agent.definition) return [apiKey, ...Object.values(config.agentEnv ?? {})];
   const modelPolicy = config.modelPolicy ?? 'agent-default';
   const options: AgentRunOptions = {
     prompt: '',
@@ -492,6 +494,7 @@ function reporterCredentials(
     webResearch: config.webResearch,
     disableBundledSkills: config.disableBundledSkills,
     judge: config.judge,
+    agentEnv: config.agentEnv,
   };
   return runCredentials(agent.definition, options);
 }
@@ -518,6 +521,7 @@ export async function runSingleEval<T extends ResolvedExperimentConfig['model']>
     webResearch?: ResolvedExperimentConfig['webResearch'];
     disableBundledSkills?: ResolvedExperimentConfig['disableBundledSkills'];
     judge?: ResolvedExperimentConfig['judge'];
+    agentEnv?: ResolvedExperimentConfig['agentEnv'];
   }
 ): Promise<T extends Array<unknown> ? EvalRunData[] : EvalRunData> {
   const agentName = options.agent ?? 'vercel-ai-gateway/claude-code';
@@ -555,6 +559,7 @@ export async function runSingleEval<T extends ResolvedExperimentConfig['model']>
 		webResearch: options.webResearch,
 		disableBundledSkills: options.disableBundledSkills,
 		judge: options.judge,
+		agentEnv: options.agentEnv,
 	});
 
     results.push(agentResultToEvalRunData(agentResult, { o11yAgentName }));

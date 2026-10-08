@@ -322,6 +322,10 @@ const config: ExperimentConfig = {
 
   // Send results somewhere besides results/ (default: none). See "Reporters".
   // reporters: [jsonlReporter({ path: 'results/runs.jsonl' })],
+
+  // Environment variables for the agent process only (default: none).
+  // See "Agent environment variables".
+  // agentEnv: { DEPLOY_TOKEN: process.env.DEPLOY_TOKEN! },
 };
 
 export default config;
@@ -497,6 +501,30 @@ the unprivileged `node` user and ignores this option.
 
 Both options are part of the result-reuse fingerprint: enabling either
 invalidates cached results from the default environment.
+
+### Agent environment variables
+
+Some tasks need the agent to use authenticated tools: deploying to a hosting provider, calling an API, or installing from a private registry. `agentEnv` hands the agent environment variables for that:
+
+```typescript
+const config: ExperimentConfig = {
+  agent: 'vercel-ai-gateway/claude-code',
+  agentEnv: {
+    DEPLOY_TOKEN: process.env.EVAL_DEPLOY_TOKEN!,
+    NPM_CONFIG_REGISTRY: 'https://npm.example.com',
+  },
+};
+```
+
+The variables are set on the agent process and nowhere else:
+
+- Values travel only in the process environment, never in command arguments. With `sandboxUser` set, they go through the same user-owned env file as the agent's auth token.
+- Validation (EVAL.ts and `scripts`) and judge runs don't receive them. Those run in the same sandbox, though, so anything the agent wrote to disk is still there, and with `sandboxUser` so is the env file that delivered the values.
+- Every value is redacted from `result.json`, transcripts, test and script outputs, copied project files, and reporter payloads, the same way the agent's API key is. Values shorter than 16 characters are not redacted, because matching short strings would shred unrelated text, so keep anything secret at least that long.
+- A key may not collide with the agent's own authentication variables or the workspace identity variables (`USER`, `LOGNAME`). A collision is an error, not a silent override. Variables the sandbox already sets, such as `PATH`, are replaced, so avoid them unless that's the point.
+- Only the sorted key names are part of the result-reuse fingerprint. Rotating a token keeps cached results; adding or removing a variable re-runs them.
+
+The agent can read, print, and misuse anything you give it, and a model that is told to deploy may decide to deploy somewhere else. Use short-lived credentials scoped to exactly what the task needs (a single project, a read-only registry, a test account), and revoke them after the run.
 
 ### Run research evals with fx
 
@@ -851,7 +879,7 @@ Reporters configured in an experiment file are called by every command that runs
 
 ## Result Reuse
 
-The framework computes a SHA-256 fingerprint for each (eval, config) pair. The fingerprint covers all eval directory files and result-affecting config including `agent`, `model`, `scripts`, `timeout`, `earlyExit`, `runs`, `webResearch`, `disableBundledSkills`, `sandboxImage`, `sandboxUser`, and a pinned `judge`.
+The framework computes a SHA-256 fingerprint for each (eval, config) pair. The fingerprint covers all eval directory files and result-affecting config including `agent`, `model`, `scripts`, `timeout`, `earlyExit`, `runs`, `webResearch`, `disableBundledSkills`, `sandboxImage`, `sandboxUser`, the key names (not values) of `agentEnv`, and a pinned `judge`.
 
 On subsequent runs, evals with a matching fingerprint and a valid cached result (at least one passing run) are skipped automatically. This means:
 

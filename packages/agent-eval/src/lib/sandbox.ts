@@ -58,6 +58,9 @@ export const IGNORED_PATTERNS = [
  */
 export const TEST_FILE_PATTERNS = ['EVAL.ts', 'EVAL.tsx', 'PROMPT.md'];
 
+/** Names a sandbox command's environment variables may use. */
+export const ENV_VAR_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 /**
  * Options for creating a sandbox.
  */
@@ -359,7 +362,7 @@ export class SandboxManager implements Sandbox {
     const lines = Object.entries(env)
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
       .map(([key, value]) => {
-        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+        if (!ENV_VAR_NAME_PATTERN.test(key)) {
           throw new Error(`Invalid environment variable name for sandbox command: ${JSON.stringify(key)}`);
         }
         // Single quotes make the value literal; embedded single quotes close,

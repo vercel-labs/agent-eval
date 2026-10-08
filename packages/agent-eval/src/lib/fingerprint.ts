@@ -29,6 +29,7 @@ interface FingerprintableConfig {
   sandboxUser?: string;
   agentFingerprint?: Record<string, unknown>;
   judge?: { agent?: string; model: string };
+  agentEnvKeys?: string[];
 }
 
 interface ReuseCompatibilityInput {
@@ -37,6 +38,17 @@ interface ReuseCompatibilityInput {
   sandboxImage?: string;
   sandboxUser?: string;
   agentFingerprint?: Record<string, unknown>;
+  agentEnvKeys?: string[];
+}
+
+/**
+ * The agentEnv variable names, sorted, or undefined when none are set. Only the
+ * names enter a fingerprint: which tools the agent is authenticated for changes
+ * its behavior, but the values are secrets and rotate.
+ */
+function agentEnvKeys(config: RunnableExperimentConfig): string[] | undefined {
+  const keys = Object.keys(config.agentEnv ?? {});
+  return keys.length > 0 ? keys.sort() : undefined;
 }
 
 function agentFingerprintExtra(config: RunnableExperimentConfig): Record<string, unknown> | undefined {
@@ -88,6 +100,10 @@ export function fingerprintConfigInput(config: RunnableExperimentConfig): Finger
   if (config.judge) {
     input.judge = { agent: config.judge.agent, model: config.judge.model };
   }
+  const envKeys = agentEnvKeys(config);
+  if (envKeys) {
+    input.agentEnvKeys = envKeys;
+  }
   return input;
 }
 
@@ -107,6 +123,8 @@ export function computeReuseCompatibilityFingerprint(
   if (agentFingerprint && Object.keys(agentFingerprint).length > 0) {
     input.agentFingerprint = agentFingerprint;
   }
+  const envKeys = agentEnvKeys(config);
+  if (envKeys) input.agentEnvKeys = envKeys;
   if (Object.keys(input).length === 0) return undefined;
   return createHash('sha256').update(JSON.stringify(input)).digest('hex');
 }
