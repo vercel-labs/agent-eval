@@ -173,6 +173,29 @@ describe('captureGeneratedFiles', () => {
     expect(sandbox.readFileBuffer).toHaveBeenCalledWith('src/kept.ts');
   });
 
+  it('drops paths git never prints, since the agent can replace git in its sandbox', async () => {
+    const sandbox = fakeSandbox(
+      { 'src/ok.ts': Buffer.from('ok', 'utf-8') },
+      [
+        'A', '../../outside.txt',
+        'A', '/etc/passwd',
+        'M', './EVAL.ts',
+        'M', 'src/../EVAL.ts',
+        'M', 'src//index.ts',
+        'A', 'src/',
+        'A', '.git/hooks/pre-commit',
+        'A', 'vendor/.git/config',
+        'D', '../victim.txt',
+        'M', 'src/ok.ts',
+      ].join('\0') + '\0'
+    );
+
+    const { generatedFiles, deletedFiles } = await captureGeneratedFiles(sandbox as never);
+
+    expect(Object.keys(generatedFiles)).toEqual(['src/ok.ts']);
+    expect(deletedFiles).toEqual([]);
+  });
+
   it('skips files it cannot read', async () => {
     const sandbox = fakeSandbox({}, 'A\0unreadable.bin\0');
     sandbox.readFileBuffer.mockRejectedValueOnce(new Error('permission denied'));
