@@ -124,6 +124,9 @@ export function createFxDefinition(): AgentDefinition {
 
     configFiles: () => [],
 
+    // The binary the installer placed (and version-checked) under __agent_eval__/bin.
+    versionCommand: () => ({ kind: 'shell', script: './__agent_eval__/bin/fx --version' }),
+
     authEnv(options: AgentRunOptions): Record<string, string> {
       return { [AI_GATEWAY.apiKeyEnvVar]: options.apiKey };
     },

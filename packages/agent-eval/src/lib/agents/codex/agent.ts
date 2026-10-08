@@ -163,6 +163,11 @@ export function createCodexDefinition({ useVercelAiGateway }: { useVercelAiGatew
       ];
     },
 
+    // Prints e.g. `codex-cli 0.144.0`; recorded as provenance.agentCliVersion.
+    versionCommand() {
+      return { kind: 'command', cmd: 'codex', args: ['--version'] };
+    },
+
     configFiles(options: AgentRunOptions): ConfigFile[] {
       // Recent Codex CLI versions reject the old top-level `profile = "default"`
       // key in config.toml and instead load `$CODEX_HOME/<profile>.config.toml`

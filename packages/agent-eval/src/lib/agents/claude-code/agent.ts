@@ -55,6 +55,11 @@ export function createClaudeCodeDefinition({ useVercelAiGateway }: { useVercelAi
       return [];
     },
 
+    // Prints e.g. `2.0.14 (Claude Code)`; recorded as provenance.agentCliVersion.
+    versionCommand() {
+      return { kind: 'command', cmd: 'claude', args: ['--version'] };
+    },
+
     authEnv(options: AgentRunOptions): Record<string, string> {
       if (useVercelAiGateway) {
         return {

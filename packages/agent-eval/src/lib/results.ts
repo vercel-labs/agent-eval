@@ -73,6 +73,9 @@ export function agentResultToEvalRunData(
 	if (agentResult.modelRepair) {
 		result.modelRepair = agentResult.modelRepair;
 	}
+	if (agentResult.provenance) {
+		result.provenance = agentResult.provenance;
+	}
 	const usage =
 		agentResult.usage ??
 		(options.o11yAgentName

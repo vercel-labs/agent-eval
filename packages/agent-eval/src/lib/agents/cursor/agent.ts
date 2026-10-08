@@ -68,6 +68,11 @@ export function createCursorDefinition(): AgentDefinition {
       return [];
     },
 
+    // The same `agent` binary run.mjs invokes; recorded as provenance.agentCliVersion.
+    versionCommand() {
+      return { kind: 'command', cmd: 'agent', args: ['--version'] };
+    },
+
     authEnv(options: AgentRunOptions): Record<string, string> {
       // Direct API only: a single key env var. (The neutral-workspace env is merged
       // on top by the orchestrator.)

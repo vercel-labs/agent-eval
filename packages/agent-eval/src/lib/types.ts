@@ -368,6 +368,8 @@ export interface EvalRunResult {
   /** Token usage of the code-generation run, when the agent reports it. Judge
    * assertions re-invoke the agent separately and are not included. */
   usage?: TokenUsage;
+  /** What ran: harness version, agent CLI version, and sandbox environment. */
+  provenance?: RunProvenance;
   /** Path to parsed transcript file (relative to run directory) */
   transcriptPath?: string;
   /** Path to raw transcript file (relative to run directory) */
@@ -383,6 +385,27 @@ export interface EvalRunResult {
   analysis?: Record<string, unknown>;
   /** Optional user-defined metadata attached by post-run hooks */
   metadata?: Record<string, unknown>;
+}
+
+/**
+ * What ran, recorded on every run so results can be reproduced or compared
+ * later. Fields that weren't observable are left unset. Provenance is not part
+ * of the result-reuse fingerprint.
+ */
+export interface RunProvenance {
+  /** Version of `@vercel/agent-eval` that ran the eval. */
+  agentEvalVersion: string;
+  /** Trimmed output of the agent's version command, run after install. Unset
+   * when the agent has no version command or the command failed. */
+  agentCliVersion?: string;
+  /** Sandbox backend the run used. */
+  sandboxBackend: SandboxBackend;
+  /** Image the sandbox booted from, digest-pinned by the Vercel Sandbox SDK.
+   * Unset for runtime-based Vercel sandboxes and for Docker. */
+  sandboxImage?: string;
+  /** Linux user the agent ran as: the created `sandboxUser` on Vercel, `node` on
+   * Docker. Unset for the Vercel sandbox's default account. */
+  sandboxUser?: string;
 }
 
 /**

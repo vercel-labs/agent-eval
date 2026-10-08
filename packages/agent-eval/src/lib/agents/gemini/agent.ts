@@ -55,6 +55,11 @@ export function createGeminiDefinition(): AgentDefinition {
       return [];
     },
 
+    // Recorded as provenance.agentCliVersion.
+    versionCommand() {
+      return { kind: 'command', cmd: 'gemini', args: ['--version'] };
+    },
+
     authEnv(options: AgentRunOptions): Record<string, string> {
       return { [GEMINI_DIRECT.apiKeyEnvVar]: options.apiKey };
     },

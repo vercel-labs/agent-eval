@@ -268,6 +268,19 @@ export class SandboxManager implements Sandbox {
     return this.sandbox.image;
   }
 
+  /** The sandbox backend, for recording provenance. */
+  get backend(): SandboxBackend {
+    return 'vercel';
+  }
+
+  /**
+   * The created Linux user commands run as, or undefined when they run as the
+   * sandbox's default account.
+   */
+  get username(): string | undefined {
+    return this.user?.username;
+  }
+
   /**
    * Create `username` and route all subsequent commands and file operations
    * through it. The default account's `/vercel/sandbox` is not writable by
