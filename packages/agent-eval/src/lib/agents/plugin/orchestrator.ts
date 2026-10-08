@@ -284,6 +284,7 @@ async function runOnce(
   let transcript: string | undefined;
   let observedModel: string | undefined;
   let modelRepair: string | undefined;
+  let usage: AgentRunResult['usage'];
   let aborted = false;
   let sandboxStopped = false;
 
@@ -391,6 +392,7 @@ async function runOnce(
     transcript = runnerResult.transcript ?? undefined;
     observedModel = runnerResult.observedModel ?? undefined;
     modelRepair = runnerResult.modelRepair ?? undefined;
+    usage = runnerResult.usage ?? undefined;
 
     if (aborted) {
       return {
@@ -415,6 +417,7 @@ async function runOnce(
         sandboxId: sandbox.sandboxId,
         observedModel,
         modelRepair,
+        ...(usage ? { usage } : {}),
       };
     }
 
@@ -427,7 +430,7 @@ async function runOnce(
     if (options.validation !== 'none') {
       await sandbox.uploadFiles(testFiles);
       await createVitestConfig(sandbox);
-      await injectTranscriptContext(sandbox, transcript, def.o11yAgentName, options.model);
+      await injectTranscriptContext(sandbox, transcript, def.o11yAgentName, options.model, usage);
       // Judge runtime: ship the eval helper, materialize the raw transcript as a
       // file the judge agent can read by path, record the judge config, and — only
       // when the judge is a DIFFERENT agent — ship its runner alongside run.mjs.
@@ -463,6 +466,7 @@ async function runOnce(
       deletedFiles,
       observedModel,
       modelRepair,
+      ...(usage ? { usage } : {}),
     };
   } catch (error) {
     // Abort wins over a generic error (same as the old adapter).
@@ -485,6 +489,7 @@ async function runOnce(
       sandboxId: sandbox?.sandboxId,
       observedModel,
       modelRepair,
+      ...(usage ? { usage } : {}),
     };
   } finally {
     if (options.signal) {

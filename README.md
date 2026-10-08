@@ -710,7 +710,7 @@ Agent Eval records only what the agent CLI reports. It never estimates token cou
 | Codex | `turn.completed` usage, or `token_count` in a saved session | Cache reads and writes are split out of `inputTokens`. `reasoningTokens` is part of `outputTokens`. |
 | OpenCode | `step_finish` events | `costUsd` is OpenCode's own figure, and OpenCode reports 0 for models it has no pricing for. `totalTokens` needs a version that reports step totals. Subagent sessions aren't in the event stream. |
 | Gemini | `stats` on the final `result` event | `outputTokens` excludes thinking tokens, which `totalTokens` includes. |
-| fx | `usage` in `fx ask --json` | Only when the saved session couldn't be read. Session transcripts report context size, not consumed tokens. |
+| fx | `usage` in `fx ask --json` | The transcript is the saved session, which records context size rather than consumed tokens, so the runner reports the ask result's counts alongside it. fx doesn't break out cache usage. |
 | Cursor | — | The `stream-json` output reports no usage. |
 
 `usage` covers the code-generation run only. Judge assertions re-invoke the agent inside the sandbox, and their tokens are not included.
@@ -724,7 +724,7 @@ test('stays within a token budget', () => {
 });
 ```
 
-A custom agent can return `usage` from `run()` directly. Otherwise Agent Eval reads it from the transcript.
+A custom agent can return `usage` from `run()` directly, or from its in-sandbox runner as `usage` on the runner result, for CLIs that report usage outside the transcript. Otherwise Agent Eval reads it from the transcript. Usage reported directly takes precedence.
 
 ### Playground UI
 

@@ -409,10 +409,39 @@ describe('results utilities', () => {
 
       const run1 = JSON.parse(readFileSync(join(outputDir, 'eval-1', 'run-1', 'result.json'), 'utf-8'));
       expect(run1.usage).toEqual({ inputTokens: 600, cacheReadTokens: 400, outputTokens: 100, totalTokens: 1100, costUsd: 0.25 });
-      // The parsed transcript summary that EVAL.ts reads carries usage too.
-      expect(run1.o11y.usage).toEqual({ inputTokens: 600, cacheReadTokens: 400, outputTokens: 100, totalTokens: 1100 });
+      // The transcript summary carries the run's usage too.
+      expect(run1.o11y.usage).toEqual(run1.usage);
       const run3 = JSON.parse(readFileSync(join(outputDir, 'eval-1', 'run-3', 'result.json'), 'utf-8'));
       expect(run3.usage).toBeUndefined();
+    });
+
+    it('uses usage the agent reported outside its transcript in result.json and its o11y summary', () => {
+      const config: ResolvedExperimentConfig = {
+        agent: 'vercel-ai-gateway/fx',
+        model: 'openai/gpt-5.6-sol',
+        evals: ['eval-1'],
+        runs: 1,
+        earlyExit: true,
+        scripts: [],
+        timeout: 300,
+      };
+      // A saved fx session: no consumed-token counts in the transcript itself.
+      const transcript = JSON.stringify({ kind: 'session_detail', history: [] });
+      const usage = { inputTokens: 1200, outputTokens: 450, totalTokens: 1650 };
+
+      const outputDir = saveResults(
+        createExperimentResults(
+          config,
+          [createEvalSummary('eval-1', [{ result: { status: 'passed', duration: 10, usage }, transcript }])],
+          new Date('2024-01-26T12:00:00Z'),
+          new Date('2024-01-26T12:01:00Z')
+        ),
+        { resultsDir: TEST_DIR, experimentName: 'reported-usage-test' }
+      );
+
+      const resultJson = JSON.parse(readFileSync(join(outputDir, 'eval-1', 'run-1', 'result.json'), 'utf-8'));
+      expect(resultJson.usage).toEqual(usage);
+      expect(resultJson.o11y.usage).toEqual(usage);
     });
 
     it('totals cost only when every run reports one, and omits usage when no run reports it', () => {

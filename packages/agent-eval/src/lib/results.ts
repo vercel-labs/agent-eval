@@ -304,8 +304,11 @@ export function saveResults(
 				);
 				resultWithPaths.transcriptRawPath = './transcript-raw.jsonl';
 
-				// Include summary in result.json for quick access
-				resultWithPaths.o11y = transcript.summary;
+				// Include summary in result.json for quick access. Usage the agent
+				// reported directly (outside its transcript) wins, as in the result.
+				resultWithPaths.o11y = runData.result.usage
+					? { ...transcript.summary, usage: runData.result.usage }
+					: transcript.summary;
 			}
 
 			// Save script/test outputs to outputs/
