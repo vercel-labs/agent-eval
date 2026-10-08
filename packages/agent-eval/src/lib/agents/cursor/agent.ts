@@ -53,6 +53,7 @@ export function createCursorDefinition(): AgentDefinition {
           retryOnce: true,
           errorPrefix: 'npm install failed',
           errorBody: 'last10',
+          scope: 'project',
         },
         {
           kind: 'shell',

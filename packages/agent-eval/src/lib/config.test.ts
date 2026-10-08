@@ -180,6 +180,23 @@ describe('validateConfig', () => {
     expect(() => validateConfig({ agent: 'claude-code', agentEnv: { PORT: 3000 } })).toThrow('agentEnv.PORT');
   });
 
+  it('keeps verifier and protectedPaths through validation and resolution', () => {
+    const resolved = resolveConfig(
+      validateConfig({ agent: 'claude-code', verifier: 'separate', protectedPaths: ['fixtures/**'] })
+    );
+
+    expect(resolved.verifier).toBe('separate');
+    expect(resolved.protectedPaths).toEqual(['fixtures/**']);
+    const defaults = resolveConfig(validateConfig({ agent: 'claude-code' }));
+    expect(defaults.verifier).toBeUndefined();
+    expect(defaults.protectedPaths).toBeUndefined();
+  });
+
+  it('rejects an unknown verifier mode and empty protected paths', () => {
+    expect(() => validateConfig({ agent: 'claude-code', verifier: 'isolated' })).toThrow('verifier');
+    expect(() => validateConfig({ agent: 'claude-code', protectedPaths: [''] })).toThrow('protectedPaths.0');
+  });
+
   it('rejects a judge with an invalid agent', () => {
     const config = { agent: 'claude-code', judge: { agent: 'nope', model: 'x' } };
     expect(() => validateConfig(config)).toThrow('Invalid experiment configuration');

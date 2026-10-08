@@ -149,6 +149,24 @@ describe('results utilities', () => {
       expect(resultJson.provenance).toEqual(provenance);
     });
 
+    it('carries separate-verifier details into the run result', () => {
+      const runData = agentResultToEvalRunData({
+        success: false,
+        output: '',
+        duration: 1000,
+        sandboxId: 'sbx-agent',
+        verifier: 'separate',
+        verifierSandboxId: 'sbx-verifier',
+        tampering: ['vitest.config.ts'],
+      });
+
+      expect(runData.result).toMatchObject({
+        verifier: 'separate',
+        verifierSandboxId: 'sbx-verifier',
+        tampering: ['vitest.config.ts'],
+      });
+    });
+
     it('converts failed agent result', () => {
       const agentResult: AgentRunResult = {
         success: false,

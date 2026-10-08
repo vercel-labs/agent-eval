@@ -158,7 +158,7 @@ export function createCodexDefinition({ useVercelAiGateway }: { useVercelAiGatew
       // preserved verbatim: 'npm install failed (exit code N):\n<last 10>' and
       // 'Codex CLI install failed: <stderr>'.
       return [
-        { kind: 'command', cmd: 'npm', args: ['install'], retryOnce: true, errorPrefix: 'npm install failed', errorBody: 'last10' },
+        { kind: 'command', cmd: 'npm', args: ['install'], retryOnce: true, errorPrefix: 'npm install failed', errorBody: 'last10', scope: 'project' },
         { kind: 'command', cmd: 'npm', args: ['install', '-g', '@openai/codex'], errorPrefix: 'Codex CLI install failed', errorBody: 'stderr' },
       ];
     },

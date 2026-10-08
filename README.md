@@ -166,7 +166,7 @@ The `results.o11y` object is a `TranscriptSummary` with these fields:
 
 ### Agentic LLM judge
 
-For open-ended quality checks that exact assertions can't express, EVAL.ts can run an **agentic LLM judge**. Each judge assertion re-invokes the *same agent* that did the codegen, **in the same sandbox**, to evaluate a criterion — then returns pass/fail. No fresh sandbox, no copying evidence around.
+For open-ended quality checks that exact assertions can't express, EVAL.ts can run an **agentic LLM judge**. Each judge assertion re-invokes the *same agent* that did the codegen, **in the same sandbox**, to evaluate a criterion — then returns pass/fail. No fresh sandbox, no copying evidence around. (With a [separate verifier](#separate-verifier), "the same sandbox" is the verifier's, which holds the agent's files.)
 
 ```typescript
 import { test, expect } from 'vitest';
@@ -326,6 +326,11 @@ const config: ExperimentConfig = {
   // Environment variables for the agent process only (default: none).
   // See "Agent environment variables".
   // agentEnv: { DEPLOY_TOKEN: process.env.DEPLOY_TOKEN! },
+
+  // Grade in a fresh sandbox the agent never touched (default: 'shared').
+  // See "Separate verifier".
+  // verifier: 'separate',
+  // protectedPaths: ['fixtures/**'],
 };
 
 export default config;
@@ -525,6 +530,42 @@ The variables are set on the agent process and nowhere else:
 - Only the sorted key names are part of the result-reuse fingerprint. Rotating a token keeps cached results; adding or removing a variable re-runs them.
 
 The agent can read, print, and misuse anything you give it, and a model that is told to deploy may decide to deploy somewhere else. Use short-lived credentials scoped to exactly what the task needs (a single project, a read-only registry, a test account), and revoke them after the run.
+
+### Separate verifier
+
+By default, tests are hidden from the agent and uploaded into its sandbox once it finishes. That is the sandbox the agent just had full control of, so it can still change what the grader runs: patch `node_modules` or a global binary, edit the vitest config, leave a background process running, or rewrite files the tests read. To grade somewhere the agent never touched:
+
+```typescript
+const config: ExperimentConfig = {
+  agent: 'vercel-ai-gateway/claude-code',
+  verifier: 'separate',
+  protectedPaths: ['fixtures/**'],
+};
+```
+
+With `verifier: 'separate'`, once the agent finishes:
+
+1. Its file changes are captured as a git diff (added, modified, and deleted files, plus executable bits), and its sandbox is stopped.
+2. A fresh sandbox boots with the same backend, image or runtime, and user.
+3. The original fixture files are uploaded, the git baseline is created, your `setup` runs, and the agent's changes are applied, except changes to protected paths.
+4. Project dependencies are installed fresh. The agent CLI is installed only when a fixture file imports `@vercel/agent-eval/eval`, so judge matchers can run.
+5. The tests, vitest config, transcript context, and judge files are uploaded, validation runs, and the verifier is stopped.
+
+Changes to protected paths are never applied in the verifier. These are always protected: `EVAL.ts`, `EVAL.tsx`, and `PROMPT.md` anywhere in the tree, `vitest.config.*` and `vitest.workspace.*`, `__agent_eval__/**`, and `node_modules` (exported as `VERIFIER_PROTECTED_PATHS`). `protectedPaths` adds your own globs, relative to the workspace root. Every protected path the agent changed is listed, sorted, in `result.tampering`. The result also records `verifier: 'separate'` and the `verifierSandboxId`.
+
+Things to know:
+
+- `setup` runs in both sandboxes, so keep it repeatable. It runs before the agent's changes are replayed, because its file writes are already part of the agent's diff.
+- A separate verifier roughly doubles the sandbox boots per run, and the verifier's boot, install, and validation count toward `timeout`.
+- Judge matchers explore the verifier's sandbox, which holds the agent's files. The transcript judge reads the same transcript as before.
+- The verifier installs dependencies from the agent's final `package.json` and lockfile, and runs the agent's version of each npm script in `scripts`. That's what makes the agent's dependency changes work, but it also means the agent can rewrite a graded script or point a dependency at its own code. If your grading depends on those, add `package.json` and the lockfile to `protectedPaths`, knowing the agent's dependency changes then won't be applied.
+- Only file contents and executable bits are replayed. A symlink arrives as a regular file.
+- `copyFiles` saves the agent's changes as captured before grading: it includes changes to protected paths, and leaves out the test files the shared verifier's capture picks up.
+- Custom agent definitions can mark install steps with `scope: 'project'` so the verifier re-runs only the project install. A definition that marks no step has all of its steps re-run.
+
+`protectedPaths` also works with the default shared verifier, where it only reports: protected paths the agent changed are listed in `result.tampering` and graded as the agent left them. Files that install steps create before the agent runs are never reported.
+
+Both backends support the separate verifier. `verifier: 'separate'` and `protectedPaths` are part of the result-reuse fingerprint, but only when set, so `verifier: 'shared'` keeps existing cached results.
 
 ### Run research evals with fx
 
@@ -879,7 +920,7 @@ Reporters configured in an experiment file are called by every command that runs
 
 ## Result Reuse
 
-The framework computes a SHA-256 fingerprint for each (eval, config) pair. The fingerprint covers all eval directory files and result-affecting config including `agent`, `model`, `scripts`, `timeout`, `earlyExit`, `runs`, `webResearch`, `disableBundledSkills`, `sandboxImage`, `sandboxUser`, the key names (not values) of `agentEnv`, and a pinned `judge`.
+The framework computes a SHA-256 fingerprint for each (eval, config) pair. The fingerprint covers all eval directory files and result-affecting config including `agent`, `model`, `scripts`, `timeout`, `earlyExit`, `runs`, `webResearch`, `disableBundledSkills`, `sandboxImage`, `sandboxUser`, the key names (not values) of `agentEnv`, `verifier: 'separate'`, `protectedPaths`, and a pinned `judge`.
 
 On subsequent runs, evals with a matching fingerprint and a valid cached result (at least one passing run) are skipped automatically. This means:
 

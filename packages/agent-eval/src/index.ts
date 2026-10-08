@@ -12,6 +12,7 @@ export type {
   ModelPolicy,
   EvalFilter,
   ValidationMode,
+  VerifierMode,
   BrandConfig,
   Sandbox,
   SetupFunction,
@@ -88,6 +89,9 @@ export { DockerSandboxManager } from './lib/docker-sandbox.js';
 // Re-export agent utilities
 export type { AgentRunOptions, AgentRunResult } from './lib/agents/types.js';
 export type { VersionCommand } from './lib/agents/plugin/contract.js';
+
+// Re-export separate-verifier defaults
+export { VERIFIER_PROTECTED_PATHS } from './lib/agents/verifier.js';
 
 // Re-export transcript context constants
 export { TRANSCRIPT_CONTEXT_DIR, TRANSCRIPT_CONTEXT_PATH } from './lib/agents/shared.js';

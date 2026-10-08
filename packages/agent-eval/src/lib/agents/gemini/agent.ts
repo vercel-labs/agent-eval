@@ -45,7 +45,7 @@ export function createGeminiDefinition(): AgentDefinition {
       //   npm install   → `npm install failed (exit code N):\n<last 10 lines>`
       //   gemini-cli    → `Gemini CLI install failed: <stderr>`
       return [
-        { kind: 'command', cmd: 'npm', args: ['install'], retryOnce: true, errorPrefix: 'npm install failed', errorBody: 'last10' },
+        { kind: 'command', cmd: 'npm', args: ['install'], retryOnce: true, errorPrefix: 'npm install failed', errorBody: 'last10', scope: 'project' },
         { kind: 'command', cmd: 'npm', args: ['install', '-g', '@google/gemini-cli'], errorPrefix: 'Gemini CLI install failed', errorBody: 'stderr' },
       ];
     },

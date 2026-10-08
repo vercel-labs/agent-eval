@@ -83,6 +83,15 @@ export function agentResultToEvalRunData(
 	if (usage) {
 		result.usage = usage;
 	}
+	if (agentResult.verifier) {
+		result.verifier = agentResult.verifier;
+	}
+	if (agentResult.verifierSandboxId) {
+		result.verifierSandboxId = agentResult.verifierSandboxId;
+	}
+	if (agentResult.tampering) {
+		result.tampering = agentResult.tampering;
+	}
 
 	return {
 		result,

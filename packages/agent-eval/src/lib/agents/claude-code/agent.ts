@@ -45,7 +45,7 @@ export function createClaudeCodeDefinition({ useVercelAiGateway }: { useVercelAi
       // Project deps (retried once), then the Claude Code CLI globally.
       const cliPackage = (options.agentOptions?.cliPackage as string) || '@anthropic-ai/claude-code';
       return [
-        { kind: 'command', cmd: 'npm', args: ['install'], retryOnce: true, errorPrefix: 'npm install failed', errorBody: 'last10' },
+        { kind: 'command', cmd: 'npm', args: ['install'], retryOnce: true, errorPrefix: 'npm install failed', errorBody: 'last10', scope: 'project' },
         { kind: 'command', cmd: 'npm', args: ['install', '-g', cliPackage], errorPrefix: 'Claude Code install failed', errorBody: 'stderr' },
       ];
     },
