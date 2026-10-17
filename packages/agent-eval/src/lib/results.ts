@@ -200,6 +200,9 @@ export interface SaveResultsOptions {
 	smoke?: boolean;
 	/** Per-eval fixture paths (eval name -> absolute path). Required when copyFiles is 'all'. */
 	fixturePaths?: Record<string, string>;
+	/** Transcript parser name (the agent definition's `o11yAgentName`). Defaults
+	 * to the config's agent ID, which only names a parser for built-in agents. */
+	o11yAgentName?: string;
 }
 
 /**
@@ -296,12 +299,16 @@ export function saveResults(
 
 			// Save transcripts if available
 			if (runData.transcript) {
-				// Parse the raw transcript
-				const transcript = parseTranscript(
-					runData.transcript,
-					results.config.agent,
-					model,
-				);
+				// Parse the raw transcript with the agent's parser, but keep the
+				// agent ID the experiment ran with as the transcript's agent.
+				const transcript: Transcript = {
+					...parseTranscript(
+						runData.transcript,
+						options.o11yAgentName ?? results.config.agent,
+						model,
+					),
+					agent: results.config.agent,
+				};
 
 				// Save parsed transcript as primary format (transcript.json)
 				writeFileSync(

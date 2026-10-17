@@ -162,8 +162,8 @@ export async function runExperiment(
 
   // Get the agent from registry
   const agent = getAgent(config.agent);
-  // Transcript parser for reading token usage (falls back to the agent id, which
-  // is what saveResults parses transcripts with).
+  // Transcript parser for reading token usage and saving transcripts (falls back
+  // to the agent id for agents without a definition).
   const o11yAgentName = agent.definition?.o11yAgentName ?? config.agent;
 
   const emit = (event: ProgressEvent) => {
@@ -449,6 +449,7 @@ export async function runExperiment(
     contentFingerprints,
     smoke,
     fixturePaths,
+    o11yAgentName,
   });
 
   emit({ type: 'experiment:saved', outputDir });
