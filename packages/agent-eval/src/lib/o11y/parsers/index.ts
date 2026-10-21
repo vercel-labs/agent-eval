@@ -292,6 +292,19 @@ export function parseTranscript(
 }
 
 /**
+ * Omit unsupported Codex activity from consumer summaries. Preserve successful
+ * empty runs and usable partial results; lifecycle metadata alone cannot
+ * establish zero activity after a parse failure. Other parsers retain their
+ * existing summary behavior.
+ */
+export function shouldIncludeTranscriptSummary(transcript: Transcript): boolean {
+  if (getParserForAgent(transcript.agent) !== parseCodexTranscript) return true;
+  return transcript.parseSuccess || transcript.events.some(
+    (event) => event.type !== 'message' || event.role !== 'system'
+  );
+}
+
+/**
  * Parse transcript and return only the summary (lighter weight).
  */
 export function parseTranscriptSummary(

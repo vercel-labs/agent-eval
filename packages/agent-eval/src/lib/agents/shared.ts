@@ -6,7 +6,7 @@ import { posix } from 'node:path';
 import type { ScriptResult } from './types.js';
 import type { SandboxManager } from '../sandbox.js';
 import type { DockerSandboxManager } from '../docker-sandbox.js';
-import { parseTranscript, type TokenUsage } from '../o11y/index.js';
+import { shouldIncludeTranscriptSummary, parseTranscript, type TokenUsage } from '../o11y/index.js';
 import type { ValidationMode } from '../types.js';
 
 /** Union type for sandbox implementations */
@@ -343,7 +343,7 @@ export default defineConfig({
 
 /**
  * Inject transcript context into the sandbox so EVAL.ts tests can assert on agent behavior.
- * Writes parsed transcript summary to `__agent_eval__/results.json`.
+ * Writes the available transcript summary and token usage to `__agent_eval__/results.json`.
  *
  * `usage` is token usage the agent reported outside its transcript. It takes
  * precedence over the transcript's own usage, the same order the run's result
@@ -362,9 +362,12 @@ export async function injectTranscriptContext(
     const transcript = rawTranscript
       ? parseTranscript(rawTranscript, agentName, model)
       : null;
+    const summary = transcript && shouldIncludeTranscriptSummary(transcript) ? transcript.summary : null;
+    const resolvedUsage = usage ?? transcript?.summary.usage;
 
     const context = {
-      o11y: transcript ? { ...transcript.summary, ...(usage ? { usage } : {}) } : null,
+      o11y: summary ? { ...summary, ...(resolvedUsage ? { usage: resolvedUsage } : {}) } : null,
+      ...(resolvedUsage ? { usage: resolvedUsage } : {}),
     };
 
     await sandbox.writeFiles({

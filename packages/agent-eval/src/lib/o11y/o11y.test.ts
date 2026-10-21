@@ -3,8 +3,15 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseTranscript, parseTranscriptSummary, parseTranscriptUsage, loadTranscript } from './index.js';
+import { parseTranscript, parseTranscriptSummary, parseTranscriptUsage, loadTranscript, shouldIncludeTranscriptSummary } from './index.js';
 import type { Transcript } from './types.js';
+import {
+  CODEX_THREAD_ID,
+  codexExecJsonl,
+  codexLegacySessionJsonl,
+  codexSessionJsonl,
+  jsonl,
+} from './codex-transcripts.test-support.js';
 import { parseClaudeCodeTranscript } from './parsers/claude-code.js';
 import { parseCodexTranscript } from './parsers/codex.js';
 import { parseOpenCodeTranscript } from './parsers/opencode.js';
@@ -259,6 +266,202 @@ describe('o11y', () => {
       expect(events[0].tool?.args?.query).toBe('Vercel AI Gateway docs');
       expect(events[1].type).toBe('tool_result');
       expect(events[1].tool?.success).toBe(true);
+    });
+  });
+
+  // When `codex exec --json` prints no JSONL, the runner falls back to the saved
+  // session file. Check completed activity and the limits of the saved format.
+  describe('Codex saved session transcripts', () => {
+    const withoutRawData = (events: Transcript['events']) =>
+      events.map(({ raw: _raw, timestamp: _timestamp, ...event }) => event);
+    const completedItem = (item: unknown) => ({ type: 'event_msg', payload: { type: 'item_completed', item } });
+
+    it('parses a saved session into the events codex exec --json prints for the same run', () => {
+      const fromStdout = parseTranscript(codexExecJsonl(), 'vercel-ai-gateway/codex');
+      const fromSession = parseTranscript(codexSessionJsonl(), 'vercel-ai-gateway/codex');
+
+      expect(fromStdout.summary).toMatchObject({
+        totalTurns: 1,
+        totalToolCalls: 3,
+        thinkingBlocks: 1,
+        shellCommands: [
+          { command: '/bin/bash -lc ls', exitCode: 0, success: true },
+          { command: `/bin/bash -lc "sed -n '1,20p' src/sum.test.js"`, exitCode: 0, success: true },
+          { command: "/bin/bash -lc 'npm test'", exitCode: 1, success: false },
+        ],
+      });
+      // The session saves every item twice, as an item_completed TurnItem and as
+      // a response_item, so reading both would double each count.
+      expect(fromSession.summary).toEqual(fromStdout.summary);
+      expect(withoutRawData(fromSession.events)).toEqual(withoutRawData(fromStdout.events));
+      expect(fromSession.parseSuccess).toBe(true);
+    });
+
+    it('reads hosted and standalone web searches as web_search tool calls', () => {
+      const search = (id: string, query: string) => ({ id, query, action: { type: 'search', query, queries: [query] } });
+      const { events, summary } = parseTranscript(
+        jsonl(
+          completedItem({ type: 'WebSearch', ...search('ws_1', 'vercel ai gateway') }),
+          completedItem({
+            type: 'Extension',
+            kind: 'web.search',
+            ...search('ws_2', 'codex exec json'),
+            results: [{ type: 'result', ref_id: 'r1', title: 'Codex', url: 'https://example.com', domain: 'example.com', snippet: '' }],
+          }),
+        ),
+        'codex',
+      );
+
+      expect(summary.toolCalls.web_search).toBe(2);
+      expect(events.map((event) => [event.type, event.tool?.args?.query])).toEqual([
+        ['tool_call', 'vercel ai gateway'],
+        ['tool_result', undefined],
+        ['tool_call', 'codex exec json'],
+        ['tool_result', undefined],
+      ]);
+    });
+
+    it('reads a saved terminal failure once while stdout contains two failure notifications', () => {
+      const message = 'stream disconnected before completion';
+      const fromSession = parseTranscript(
+        jsonl(
+          { type: 'session_meta', payload: { id: CODEX_THREAD_ID, history_mode: 'paginated' } },
+          { type: 'event_msg', payload: { type: 'task_started', turn_id: 'turn-1' } },
+          { type: 'event_msg', payload: { type: 'task_complete', turn_id: 'turn-1', last_agent_message: null, error: { message, codex_error_info: null } } },
+        ),
+        'codex',
+      );
+      const fromStdout = parseTranscript(
+        jsonl(
+          { type: 'thread.started', thread_id: CODEX_THREAD_ID },
+          { type: 'turn.started' },
+          // Real Codex 0.162.1 stdout reports both; sessions save only task_complete.error.
+          { type: 'error', message },
+          { type: 'turn.failed', error: { message } },
+        ),
+        'codex',
+      );
+
+      expect(fromSession.summary.errors).toEqual([message]);
+      expect(fromStdout.summary.errors).toEqual([message, message]);
+    });
+
+    it.each([undefined, 'stream disconnected'])('suppresses unsupported legacy activity even with a terminal error: %s', (error) => {
+      const transcript = parseTranscript(codexLegacySessionJsonl(undefined, error), 'codex');
+
+      expect(transcript.parseSuccess).toBe(false);
+      expect(transcript.parseErrors).toEqual([expect.stringContaining('legacy history mode')]);
+      expect(transcript.events).toEqual([]);
+      // Usage comes from token_count, which both history modes save.
+      expect(transcript.summary.usage).toEqual(parseTranscript(codexExecJsonl(), 'codex').summary.usage);
+    });
+
+    it.each([
+      { type: 'error', message: 'stream disconnected' },
+      { type: 'message', role: 'assistant', content: 'Done' },
+    ])('retains usable partial results from a supported format: $type', (event) => {
+      const transcript = parseTranscript(JSON.stringify(event), 'codex');
+      transcript.parseSuccess = false;
+      transcript.parseErrors = ['Truncated trailing record'];
+
+      expect(shouldIncludeTranscriptSummary(transcript)).toBe(true);
+    });
+
+    it('reads a session in which no turn ran as genuinely empty', () => {
+      const transcript = parseTranscript(jsonl({ type: 'session_meta', payload: { id: CODEX_THREAD_ID } }), 'codex');
+
+      expect(transcript.parseSuccess).toBe(true);
+      expect(transcript.summary.totalToolCalls).toBe(0);
+    });
+
+    it.each([
+      ['sk-abcdefghijklmnopqrstuvwxyz0123', 'echo [REDACTED_SECRET]'],
+      ['AKIAABCDEFGHIJKLMNOP', 'echo [REDACTED_SECRET]'],
+      ['Bearer sk-abcdefghijklmnopqrst+secret_suffix', "echo 'Bearer [REDACTED_SECRET]'"],
+      ['authorization: bEaReR\tabcdefghijklmnop', "echo 'authorization: Bearer [REDACTED_SECRET]'"],
+      ['api_key="abcdefgh"', `echo 'api_key="[REDACTED_SECRET]"'`],
+      ['password=abcdefgh', "echo 'password=[REDACTED_SECRET]'"],
+      ['sk-too-short', 'echo sk-too-short'],
+      ['Bearer abcdefghijklmnoK', "echo 'Bearer abcdefghijklmnoK'"],
+      ['éBearer abcdefghijklmnop', "echo 'éBearer abcdefghijklmnop'"],
+      ['éAKIAABCDEFGHIJKLMNOP', "echo 'éAKIAABCDEFGHIJKLMNOP'"],
+      ['password=short', "echo 'password=short'"],
+      ['NotABearer abcdefghijklmnop', "echo 'NotABearer abcdefghijklmnop'"],
+    ])('formats saved commands with Codex secret masking: %s', (argument, expected) => {
+      const transcript = parseTranscript(jsonl(completedItem({
+        type: 'CommandExecution', id: 'cmd', command: ['echo', argument],
+        status: 'completed', exit_code: 0, aggregated_output: '',
+      })), 'codex');
+
+      expect(transcript.summary.shellCommands).toEqual([{ command: expected, exitCode: 0, success: true }]);
+    });
+
+    it('skips unsupported and malformed session records instead of guessing', () => {
+      const transcript = parseTranscript(
+        [
+          jsonl(
+            { type: 'event_msg', payload: { type: 'item_completed' } },
+            // Not read from codex exec --json stdout either.
+            completedItem({ type: 'FileChange', id: 'patch_1', changes: {}, status: 'completed' }),
+            completedItem({ type: 'McpToolCall', id: 'mcp_1', server: 'docs', tool: 'search', arguments: {}, status: 'completed' }),
+            completedItem({ type: 'Plan', id: 'plan_1', text: '- [ ] fix the test' }),
+            // A command that is not an argv array, and one whose exit code is not a number.
+            completedItem({ type: 'CommandExecution', id: 'cmd_1', command: 'ls', status: 'completed', exit_code: 0 }),
+            completedItem({ type: 'CommandExecution', id: 'cmd_2', command: ['/bin/bash', '-lc', 'npm test'], status: 'failed', exit_code: '1' }),
+          ),
+          // A line cut off mid-write.
+          '{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMess',
+        ].join('\n'),
+        'codex',
+      );
+
+      expect(transcript.summary.shellCommands).toEqual([{ command: "/bin/bash -lc 'npm test'", exitCode: null, success: false }]);
+      expect(transcript.events.map((event) => event.type)).toEqual(['tool_call', 'tool_result']);
+    });
+
+    it('prints each command the way codex exec --json does', () => {
+      // Codex prints argv with shlex::try_join (shlex 1.3.0). These cases are
+      // that crate's own test_quote table, copied verbatim; NL stands for a newline.
+      const table = String.raw`
+        <>                => <''>
+        <foobar>          => <foobar>
+        <foo bar>         => <'foo bar'>
+        <"foo bar'">      => <"\"foo bar'\"">
+        <'foo bar'>       => <"'foo bar'">
+        <">               => <'"'>
+        <"'>              => <"\"'">
+        <hello!world>     => <'hello!world'>
+        <'hello!world>    => <"'hello"'!world'>
+        <'hello!>         => <"'hello"'!'>
+        <hello ^ world>   => <'hello ''^ world'>
+        <hello^>          => <hello'^'>
+        <!world'>         => <'!world'"'">
+        <{a, b}>          => <'{a, b}'>
+        <NL>              => <'NL'>
+        <^>               => <'^'>
+        <foo^bar>         => <foo'^bar'>
+        <NLx^>            => <'NLx''^'>
+        <NL^x>            => <'NL''^x'>
+        <NL ^x>           => <'NL ''^x'>
+        <{a,b}>           => <'{a,b}'>
+        <a,b>             => <'a,b'>
+        <a..b             => <a..b>
+        <'$>              => <"'"'$'>
+        <"^>              => <'"''^'>
+      `;
+      const cases = table
+        .trim()
+        .split('\n')
+        .map((line) => line.replaceAll('NL', '\n').split('=>').map((part) => part.trim().replace(/^</, '').replace(/>$/, '')));
+      cases.push(['non-ASCII é', "'non-ASCII é'"], ['nul\0byte', '<command included NUL byte>']);
+
+      const session = jsonl(
+        ...cases.map(([word], i) => completedItem({ type: 'CommandExecution', id: `cmd_${i}`, command: [word], status: 'completed', exit_code: 0 })),
+      );
+
+      expect(parseTranscript(session, 'codex').summary.shellCommands.map((command) => command.command)).toEqual(
+        cases.map(([, printed]) => printed),
+      );
     });
   });
 

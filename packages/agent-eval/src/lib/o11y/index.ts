@@ -20,6 +20,7 @@ export {
   parseTranscript,
   parseTranscriptSummary,
   parseTranscriptUsage,
+  shouldIncludeTranscriptSummary,
   loadTranscript,
   SUPPORTED_AGENTS,
 } from './parsers/index.js';

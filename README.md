@@ -137,12 +137,14 @@ import { readFileSync } from 'fs';
 
 test('agent used the correct scaffolding command', () => {
   const results = JSON.parse(readFileSync('__agent_eval__/results.json', 'utf-8'));
+  expect(results.o11y, 'Agent activity summary is unavailable').not.toBeNull();
   const commands = results.o11y.shellCommands.map((c: { command: string }) => c.command);
   expect(commands).toContain('npx create-next-app project');
 });
 
 test('agent did not make excessive tool calls', () => {
   const results = JSON.parse(readFileSync('__agent_eval__/results.json', 'utf-8'));
+  expect(results.o11y, 'Agent activity summary is unavailable').not.toBeNull();
   expect(results.o11y.totalToolCalls).toBeLessThan(50);
 });
 ```
@@ -162,7 +164,11 @@ The `results.o11y` object is a `TranscriptSummary` with these fields:
 | `thinkingBlocks` | `number` | Thinking/reasoning blocks |
 | `usage` | `TokenUsage \| undefined` | Token usage of the run, when the agent reports it (see [Token usage and cost](#token-usage-and-cost)) |
 
-> **Note**: If the agent's transcript is unavailable (e.g. the agent crashed before producing output), `results.o11y` will be `null`.
+> **Note**: If the agent's transcript is unavailable, `results.o11y` will be `null`. For Codex, it is also `null` when parsing fails without usable events; usable partial results and successfully parsed empty runs are retained. Other agents retain their existing summary behavior. Token usage is available separately at `results.usage` when reported, even when `o11y` is `null`.
+
+For Codex, the runner prefers `codex exec --json` output. When stdout has no JSONL, it uses a session file created during the run. Without a thread ID, it requires exactly one new session identified as `exec`, excluding child-agent sessions; ambiguous sessions are skipped. The parser supports the paginated session format introduced in Codex CLI 0.148, reading completed items without counting their duplicate `response_item` records. Legacy `response_item`-only activity is unsupported, even if a terminal error can be read: `o11y` is unavailable, `transcript.json` records a parsing error, and token usage and the raw transcript remain available.
+
+Saved sessions are not a complete copy of stdout. They can omit commands still running when the process is killed and transient retry notifications; a terminal failure also has fewer error notifications than stdout. Counts and usage reflect the records available in the selected source. Saved command summaries apply Codex's best-effort secret masking to command text, but raw transcripts and command output can still contain secrets beyond the credentials redacted by agent-eval.
 
 ### Agentic LLM judge
 
@@ -785,7 +791,7 @@ The `fingerprint` field enables result reuse across runs. The `classification` a
 
 ### Token usage and cost
 
-Every run records the token usage its agent CLI reported, so you can weigh cost against pass rate when you compare models, docs, or MCP servers. `result.json` carries a `usage` object, and the transcript summary carries the same object at `o11y.usage`:
+Every run records the token usage its agent CLI reported, so you can weigh cost against pass rate when you compare models, docs, or MCP servers. `result.json` carries a `usage` object, and an available transcript summary carries the same object at `o11y.usage`. If Codex parsing fails without usable events, `result.json` omits `o11y` but keeps usage and the transcript files:
 
 ```json
 {
@@ -838,12 +844,12 @@ Agent Eval records only what the agent CLI reports. It never estimates token cou
 
 `usage` covers the code-generation run only. Judge assertions re-invoke the agent inside the sandbox, and their tokens are not included.
 
-EVAL.ts can read the same figures, for example to hold the agent to a token budget:
+EVAL.ts can read the same figures at `results.usage`, independently of whether `results.o11y` is available. The existing `results.o11y.usage` field is also populated when a summary is available. For example, to hold the agent to a token budget:
 
 ```typescript
 test('stays within a token budget', () => {
   const results = JSON.parse(readFileSync('__agent_eval__/results.json', 'utf-8'));
-  expect(results.o11y.usage?.totalTokens).toBeLessThan(200_000);
+  expect(results.usage?.totalTokens).toBeLessThan(200_000);
 });
 ```
 

@@ -12,6 +12,7 @@ import {
   TRANSCRIPT_CONTEXT_PATH,
 } from './shared.js';
 import { LocalSandbox } from './plugin/local-sandbox.test-support.js';
+import { codexLegacySessionJsonl } from '../o11y/codex-transcripts.test-support.js';
 
 describe('prepareNeutralWorkspace', () => {
   it('copies Vercel sandboxes into /workspace and switches the working directory', async () => {
@@ -292,5 +293,33 @@ describe('injectTranscriptContext', () => {
       outputTokens: 120,
       totalTokens: 3120,
     });
+    expect(context.usage).toEqual(context.o11y.usage);
+  });
+
+  it.each([
+    { name: 'without a transcript', transcript: undefined, agent: 'codex' },
+    { name: 'with an unsupported session', transcript: codexLegacySessionJsonl(), agent: 'codex' },
+  ])('preserves runner-reported usage $name', async ({ transcript, agent }) => {
+    const written: Record<string, string> = {};
+    const sandbox = { writeFiles: async (files: Record<string, string>) => Object.assign(written, files) };
+
+    await injectTranscriptContext(sandbox as never, transcript, agent, undefined, { totalTokens: 7, costUsd: 0.01 });
+
+    expect(JSON.parse(written[TRANSCRIPT_CONTEXT_PATH])).toEqual({
+      o11y: null,
+      usage: { totalTokens: 7, costUsd: 0.01 },
+    });
+  });
+
+  it('prefers runner-reported usage at both locations when the transcript is usable', async () => {
+    const written: Record<string, string> = {};
+    const sandbox = { writeFiles: async (files: Record<string, string>) => Object.assign(written, files) };
+    const transcript = '{"type":"turn.completed","usage":{"input_tokens":900,"output_tokens":40}}';
+
+    await injectTranscriptContext(sandbox as never, transcript, 'codex', undefined, { totalTokens: 7, costUsd: 0.01 });
+
+    const context = JSON.parse(written[TRANSCRIPT_CONTEXT_PATH]);
+    expect(context.usage).toEqual({ totalTokens: 7, costUsd: 0.01 });
+    expect(context.o11y.usage).toEqual(context.usage);
   });
 });
