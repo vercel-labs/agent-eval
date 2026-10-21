@@ -17,6 +17,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import type { AgentRunOptions, AgentRunResult } from '../types.js';
+import { SandboxCleanupError } from '../../sandbox-cleanup.js';
 import type { RunProvenance } from '../../types.js';
 import {
   createSandbox,
@@ -445,22 +446,28 @@ async function runOnce(
   let modelRepair: string | undefined;
   let usage: AgentRunResult['usage'];
   let aborted = false;
-  let sandboxStopped = false;
   // The separate verifier's sandbox, when options.verifier is 'separate'.
   let verifier: AnySandbox | null = null;
-  let verifierStopped = false;
+  const stops = new Map<AnySandbox, Promise<void>>();
+  const stop = (target: AnySandbox, ignoreErrors = false): Promise<void> => {
+    let pending = stops.get(target);
+    if (!pending) {
+      pending = Promise.resolve().then(() => target.stop()).catch((error) => {
+        if (ignoreErrors) return;
+        if (!options.requireCleanup) throw error;
+        throw error instanceof SandboxCleanupError ? error : new SandboxCleanupError(target.sandboxId, error);
+      });
+      stops.set(target, pending);
+    }
+    return pending;
+  };
 
-  // --- abort wiring (identical to the old adapter) ---------------------------
+  // --- abort wiring --------------------------------------------------------
   const abortHandler = () => {
     aborted = true;
-    if (sandbox && !sandboxStopped) {
-      sandboxStopped = true;
-      sandbox.stop().catch(() => {});
-    }
-    if (verifier && !verifierStopped) {
-      verifierStopped = true;
-      verifier.stop().catch(() => {});
-    }
+    // Start cleanup promptly; finally awaits these same promises before run settles.
+    if (sandbox) void stop(sandbox, !options.requireCleanup).catch(() => {});
+    if (verifier) void stop(verifier, !options.requireCleanup).catch(() => {});
   };
 
   if (options.signal) {
@@ -492,6 +499,7 @@ async function runOnce(
       ...(options.sandboxImage ? { image: options.sandboxImage } : { runtime: 'node24' as const }),
       user: options.sandboxUser,
       backend: options.sandbox,
+      ...(options.requireCleanup ? { requireCleanup: true } : {}),
     };
     sandbox = await createSandbox(sandboxOptions);
     provenance.sandboxBackend = sandbox.backend;
@@ -655,10 +663,19 @@ async function runOnce(
       isProtected
     );
 
-    //   b. Stop the agent's sandbox: its processes and installs end with it. A
-    //      failed stop can't affect a different sandbox, so it doesn't fail the run.
-    sandboxStopped = true;
-    await sandbox.stop().catch(() => {});
+    //   b. A capped attempt must confirm cleanup before creating its verifier.
+    //      Uncapped runs retain the existing best-effort transition.
+    await stop(sandbox, !options.requireCleanup);
+    if (aborted) {
+      return {
+        success: false,
+        output: agentOutput,
+        transcript,
+        error: 'Aborted',
+        duration: Date.now() - startTime,
+        sandboxId: sandbox.sandboxId,
+      };
+    }
 
     //   c. Same backend, image or runtime, and user as the agent's sandbox.
     verifier = await createSandbox(sandboxOptions);
@@ -722,6 +739,7 @@ async function runOnce(
       tampering: verifierTampering,
     };
   } catch (error) {
+    if (error instanceof SandboxCleanupError) throw error;
     // Abort wins over a generic error (same as the old adapter).
     if (aborted) {
       return {
@@ -749,13 +767,11 @@ async function runOnce(
     if (options.signal) {
       options.signal.removeEventListener('abort', abortHandler);
     }
-    if (sandbox && !sandboxStopped) {
-      sandboxStopped = true;
-      await sandbox.stop();
-    }
-    if (verifier && !verifierStopped) {
-      verifierStopped = true;
-      await verifier.stop();
-    }
+    await Promise.allSettled(
+      [sandbox, verifier].filter((target): target is AnySandbox => target !== null).map((target) => stop(target)),
+    ).then((cleanup) => {
+      const failure = cleanup.find((result) => result.status === 'rejected');
+      if (failure?.status === 'rejected') throw failure.reason;
+    });
   }
 }

@@ -305,6 +305,25 @@ describe('SandboxManager.create opt-in image and user', () => {
     expect(fake.stop).toHaveBeenCalledTimes(1);
   });
 
+  it('reports both initialization and cleanup failure, including the sandbox ID', async () => {
+    const fake = fakeSandbox();
+    fake.createUser.mockRejectedValue(new Error('useradd failed'));
+    fake.stop.mockRejectedValue(new Error('stop unavailable'));
+    createVercelSandbox.mockResolvedValue(fake);
+    await expect(createSandbox({ backend: 'vercel', user: 'user', requireCleanup: true })).rejects.toThrow(
+      /useradd failed.*Failed to stop sandbox sandbox-123.*stop unavailable/
+    );
+  });
+
+  it('preserves the setup error when best-effort cleanup also fails', async () => {
+    const fake = fakeSandbox();
+    const error = new Error('useradd failed');
+    fake.createUser.mockRejectedValue(error);
+    fake.stop.mockRejectedValue(new Error('stop unavailable'));
+    createVercelSandbox.mockResolvedValue(fake);
+    await expect(SandboxManager.create({ user: 'user' })).rejects.toBe(error);
+  });
+
   it('leaves the default account and env untouched when user is not set', async () => {
     const fake = fakeSandbox();
     createVercelSandbox.mockResolvedValue(fake);

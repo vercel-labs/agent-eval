@@ -134,7 +134,8 @@ export { jsonlReporter, httpReporter, experimentEventToJson } from './lib/report
 
 // Re-export runner utilities
 export type { RunExperimentOptions } from './lib/runner.js';
-export { runExperiment, runSingleEval, StartRateLimiter } from './lib/runner.js';
+export { runExperiment, runSingleEval, StartRateLimiter, ConcurrencyLimiter } from './lib/runner.js';
+export { SandboxCleanupError } from './lib/sandbox-cleanup.js';
 
 // Re-export dashboard utilities
 export { Dashboard, createConsoleProgressHandler } from './lib/dashboard.js';

@@ -4,9 +4,100 @@
  * Skip with: SKIP_DOCKER_TESTS=1 npm test
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
+import Docker from 'dockerode';
 import { DockerSandboxManager } from './docker-sandbox.js';
 import type { CommandResult } from './sandbox.js';
+import { createSandbox } from './sandbox.js';
+
+describe('Docker cleanup failures', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  function fakeContainer() {
+    const container = {
+      id: 'cleanup-test-container',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      remove: vi.fn(async () => {}),
+      inspect: vi.fn(async () => ({ State: { Running: false, Status: 'removing' } })),
+    };
+    vi.spyOn(Docker.prototype, 'getImage').mockReturnValue({ inspect: async () => ({}) } as never);
+    vi.spyOn(Docker.prototype, 'createContainer').mockResolvedValue(container as never);
+    const ok = { stdout: '', stderr: '', exitCode: 0 };
+    vi.spyOn(DockerSandboxManager.prototype, 'runCommandAsRoot').mockResolvedValue(ok);
+    vi.spyOn(DockerSandboxManager.prototype, 'runCommand').mockResolvedValue(ok);
+    return container;
+  }
+
+  it('cleans up a container when initialization fails', async () => {
+    const container = fakeContainer();
+    vi.mocked(DockerSandboxManager.prototype.runCommandAsRoot).mockRejectedValue(new Error('setup failed'));
+    await expect(DockerSandboxManager.create()).rejects.toThrow('setup failed');
+    expect(container.stop).toHaveBeenCalledOnce();
+  });
+
+  it('keeps stop errors best effort when cleanup is not required', async () => {
+    const container = fakeContainer();
+    container.stop.mockRejectedValue(new Error('daemon unavailable'));
+    const sandbox = await DockerSandboxManager.create();
+    await expect(sandbox.stop()).resolves.toBeUndefined();
+  });
+
+  it('preserves the initialization error when best-effort cleanup also fails', async () => {
+    const container = fakeContainer();
+    const error = new Error('start failed');
+    container.start.mockRejectedValue(error);
+    container.stop.mockRejectedValue(new Error('daemon unavailable'));
+    await expect(DockerSandboxManager.create()).rejects.toBe(error);
+  });
+
+  it.each(['removing', 'absent'])('accepts a removal conflict only after confirming the container is %s', async (state) => {
+    const container = fakeContainer();
+    container.stop.mockRejectedValue({ statusCode: 304 });
+    container.remove.mockRejectedValue({ statusCode: 409 });
+    if (state === 'absent') container.inspect.mockRejectedValue({ statusCode: 404 });
+    const sandbox = await DockerSandboxManager.create({ requireCleanup: true });
+    await expect(sandbox.stop()).resolves.toBeUndefined();
+  });
+
+  it.each(['running', 'unknown'])('does not swallow a removal conflict when the container is %s', async (state) => {
+    const container = fakeContainer();
+    container.stop.mockRejectedValue({ statusCode: 304 });
+    container.remove.mockRejectedValue(Object.assign(new Error('conflict'), { statusCode: 409 }));
+    if (state === 'running') container.inspect.mockResolvedValue({ State: { Running: true, Status: 'running' } });
+    else container.inspect.mockRejectedValue(new Error('inspect unavailable'));
+    const sandbox = await DockerSandboxManager.create({ requireCleanup: true });
+    await expect(sandbox.stop()).rejects.toThrow(/Failed to stop sandbox/);
+  });
+
+  it.each([304, 404])('accepts a confirmed stopped or absent container (%s)', async (statusCode) => {
+    const container = fakeContainer();
+    container.stop.mockRejectedValue({ statusCode });
+    const sandbox = await DockerSandboxManager.create();
+    await sandbox.stop();
+    await sandbox.stop();
+    expect(container.stop).toHaveBeenCalledOnce();
+    if (statusCode === 304) expect(container.remove).toHaveBeenCalledOnce();
+  });
+
+  it.each([new Error('connection reset'), Object.assign(new Error('daemon error'), { statusCode: 500 })])(
+    'surfaces an uncertain stop and retains the handle for cleanup: %s', async (error) => {
+      const container = fakeContainer();
+      container.stop.mockRejectedValueOnce(error);
+      const sandbox = await createSandbox({ backend: 'docker', requireCleanup: true });
+      await expect(sandbox.stop()).rejects.toThrow(/Failed to stop sandbox cleanup-test/);
+      await sandbox.stop();
+      expect(container.stop).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it('reports both initialization and cleanup failure', async () => {
+    const container = fakeContainer();
+    container.start.mockRejectedValue(new Error('start failed'));
+    container.stop.mockRejectedValue(new Error('daemon unavailable'));
+    await expect(DockerSandboxManager.create({ requireCleanup: true })).rejects.toThrow(/start failed.*daemon unavailable/);
+  });
+});
 
 /**
  * A real 1x1 PNG. Byte 0 is 0x89, which is not a valid UTF-8 lead byte, so any

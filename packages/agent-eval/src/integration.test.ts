@@ -5,8 +5,10 @@
  * Run with: INTEGRATION_TEST=1 npm test
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'fs';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync } from 'fs';
+import { tmpdir } from 'os';
+import Docker from 'dockerode';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import { createServer, type Server } from 'http';
@@ -14,13 +16,15 @@ import type { AddressInfo } from 'net';
 import { config as dotenvConfig } from 'dotenv';
 import { initProject } from './lib/init.js';
 import { loadFixture, loadAllFixtures } from './lib/fixture.js';
-import { runSingleEval } from './lib/runner.js';
+import { ConcurrencyLimiter, runExperiment, runSingleEval } from './lib/runner.js';
 import { loadConfig } from './lib/config.js';
 import { getSandboxBackendInfo } from './lib/sandbox.js';
 import { registerAgent } from './lib/agents/index.js';
 import { parseTranscript } from './lib/o11y/index.js';
 import type { Agent } from './lib/agents/types.js';
 import type { AgentDefinition } from './lib/agents/plugin/contract.js';
+import { runWithDefinition } from './lib/agents/plugin/orchestrator.js';
+import { writeTestRunner } from './lib/agents/plugin/local-sandbox.test-support.js';
 
 // Load .env file (try .env.local first, then .env)
 dotenvConfig({ path: '.env.local' });
@@ -53,6 +57,125 @@ const hasCursorCredentials = !!process.env.CURSOR_API_KEY && hasSandbox;
 // OpenCode credentials (only supports AI Gateway)
 const hasOpenCodeCredentials = hasAiGatewayCredentials;
 const hasFxCredentials = hasAiGatewayCredentials;
+
+// No agent credentials or cloud sandboxes: exercise the real Docker lifecycle
+// with a local runner, bounded to four containers and tracking only our own IDs.
+describe.skipIf(!process.env.INTEGRATION_TEST || !hasDockerSandbox)('Docker concurrency', () => {
+  const docker = new Docker();
+  let workDir: string;
+  let fixtureDir: string;
+  let owned: Set<string>;
+  let peak: number;
+  let definition: AgentDefinition;
+
+  const sample = async () => {
+    const live = (await docker.listContainers()).filter((container) => owned.has(container.Id));
+    peak = Math.max(peak, live.length);
+    return live.length;
+  };
+
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), 'agent-eval-docker-concurrency-'));
+    fixtureDir = join(workDir, 'fixture');
+    mkdirSync(fixtureDir);
+    owned = new Set();
+    peak = 0;
+    const create = Docker.prototype.createContainer;
+    vi.spyOn(Docker.prototype, 'createContainer').mockImplementation(async function (this: Docker, options: Docker.ContainerCreateOptions) {
+      const container = await create.call(this, options);
+      owned.add(container.id);
+      const start = container.start.bind(container);
+      vi.spyOn(container, 'start').mockImplementation(async () => {
+        await start();
+        await sample();
+      });
+      return container;
+    });
+    definition = {
+      name: 'docker-concurrency-test', displayName: 'Docker Concurrency Test', defaultModel: 'none',
+      runnerPath: writeTestRunner(workDir, "result.output = 'ok';"),
+      getApiKeyEnvVar: () => 'UNUSED_TEST_KEY', install: () => [], configFiles: () => [], authEnv: () => ({}),
+    };
+    registerAgent({
+      name: definition.name, displayName: definition.displayName, definition,
+      getDefaultModel: () => definition.defaultModel, getApiKeyEnvVar: definition.getApiKeyEnvVar,
+      run: (path, options) => runWithDefinition(definition, path, options),
+    });
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    for (const id of owned) {
+      await docker.getContainer(id).remove({ force: true }).catch((error: { statusCode?: number }) => {
+        // AutoRemove can already be deleting a stopped container. Verify below
+        // that it actually disappears rather than treating every 409 as success.
+        if (error.statusCode !== 404 && error.statusCode !== 409) throw error;
+      });
+    }
+    await vi.waitFor(async () => {
+      const remaining = (await docker.listContainers({ all: true })).filter((container) => owned.has(container.Id));
+      expect(remaining).toHaveLength(0);
+    }, { timeout: 5_000 });
+    rmSync(workDir, { recursive: true, force: true });
+  });
+
+  it.each([undefined, 2])('bounds live containers across experiments with concurrency %s', async (cap) => {
+    let ready = 0;
+    const batchSize = cap ?? 4;
+    let batch = Promise.withResolvers<void>();
+    const limiter = cap ? new ConcurrencyLimiter(cap) : undefined;
+    const results = await Promise.all(['first', 'second'].map((experimentName) => runExperiment({
+      config: {
+        agent: definition.name, model: 'none', evals: '*', runs: 1, earlyExit: false,
+        scripts: [], validation: 'none', timeout: 60, sandbox: 'docker',
+        setup: async () => {
+          const current = batch;
+          ready++;
+          if (ready % batchSize === 0) {
+            await sample();
+            batch = Promise.withResolvers<void>();
+            current.resolve();
+          }
+          await current.promise;
+        },
+      },
+      fixtures: ['a', 'b'].map((name) => ({ name, path: fixtureDir, prompt: 'test', isModule: true })),
+      apiKey: 'unused', resultsDir: join(workDir, 'results'), experimentName, concurrencyLimiter: limiter,
+    })));
+    expect(results.every((result) => result.evals.every((evalResult) => evalResult.passedRuns === 1))).toBe(true);
+    expect(owned.size).toBe(4);
+    expect(peak).toBe(batchSize);
+    expect(await sample()).toBe(0);
+    console.log(`Docker concurrency ${cap ?? 'uncapped'}: ${owned.size} containers, peak ${peak}, remaining 0`);
+  }, 120_000);
+
+  it('stops timed-out containers before admitting the next eval or finishing the experiment', async () => {
+    let enteredSetup = 0;
+    const results = await runExperiment({
+      config: {
+        agent: definition.name, model: 'none', evals: '*', runs: 1, earlyExit: false,
+        scripts: [], validation: 'none', timeout: 10, sandbox: 'docker',
+        setup: async (sandbox) => {
+          enteredSetup++;
+          await sample();
+          // A timeout can also arrive during Docker initialization. Both paths
+          // must keep the slot until the owned container has stopped.
+          await sandbox.runCommand('sleep', ['120']);
+        },
+      },
+      fixtures: ['first', 'last'].map((name) => ({ name, path: fixtureDir, prompt: 'test', isModule: true })),
+      apiKey: 'unused', resultsDir: join(workDir, 'results'), experimentName: 'timeouts',
+      concurrencyLimiter: new ConcurrencyLimiter(1),
+    });
+    expect(owned.size).toBe(2);
+    expect(peak).toBe(1);
+    expect(results.evals.map((result) => result.runs[0].result.error)).toEqual([
+      'Eval timed out after 10s', 'Eval timed out after 10s',
+    ]);
+    expect(await sample()).toBe(0);
+    console.log(`Docker timeout cleanup: ${owned.size} containers, peak ${peak}, remaining 0; ${enteredSetup} reached setup`);
+  }, 90_000);
+});
 
 describe.skipIf(!process.env.INTEGRATION_TEST)('integration tests', () => {
   beforeAll(() => {

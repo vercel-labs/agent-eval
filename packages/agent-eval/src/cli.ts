@@ -4,7 +4,7 @@
  * CLI entry point for the eval framework.
  */
 
-import { Command } from 'commander';
+import { Command, InvalidArgumentError } from 'commander';
 import { config as dotenvConfig } from 'dotenv';
 import { resolve, dirname, basename, join } from 'path';
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync, statSync } from 'fs';
@@ -12,7 +12,7 @@ import { createInterface } from 'node:readline';
 import chalk from 'chalk';
 import { loadConfig, resolveEvalNames } from './lib/config.js';
 import { loadAllFixtures } from './lib/fixture.js';
-import { runExperiment, StartRateLimiter } from './lib/runner.js';
+import { runExperiment, StartRateLimiter, ConcurrencyLimiter } from './lib/runner.js';
 import { Dashboard, createConsoleProgressHandler } from './lib/dashboard.js';
 import type { ProgressEvent, Classification, ExperimentResults } from './lib/types.js';
 import { initProject, getPostInitInstructions } from './lib/init.js';
@@ -59,10 +59,19 @@ function resolveConfigPath(input: string): string {
   return `experiments/${input}.ts`;
 }
 
+/** Parse `--concurrency <n>`: the most evals running at once in this invocation. */
+function parseConcurrency(value: string): number {
+  const concurrency = Number(value);
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new InvalidArgumentError('Must be a positive integer.');
+  }
+  return concurrency;
+}
+
 /**
  * Run experiment command handler
  */
-async function runExperimentCommand(configInput: string, options: { dry?: boolean; smoke?: boolean }) {
+async function runExperimentCommand(configInput: string, options: { dry?: boolean; smoke?: boolean; concurrency?: number }) {
   try {
     const configPath = resolveConfigPath(configInput);
     const absoluteConfigPath = resolve(process.cwd(), configPath);
@@ -166,6 +175,8 @@ async function runExperimentCommand(configInput: string, options: { dry?: boolea
 
     console.log(chalk.blue('\nStarting experiment...'));
 
+    const concurrencyLimiter = options.concurrency ? new ConcurrencyLimiter(options.concurrency) : undefined;
+
     // Run experiments for each model
     let allPassed = true;
     for (const model of models) {
@@ -192,6 +203,7 @@ async function runExperimentCommand(configInput: string, options: { dry?: boolea
           model,
           agent: config.agent,
         }),
+        concurrencyLimiter,
       });
 
       // Check if this experiment passed
@@ -283,7 +295,7 @@ program
  * and classification. Used by both `run-all` subcommand and the default
  * (no-args) invocation.
  */
-async function runAllCommand(experimentArgs: string[], options: { dry?: boolean; force?: boolean; smoke?: boolean; ackFailures?: boolean }) {
+async function runAllCommand(experimentArgs: string[], options: { dry?: boolean; force?: boolean; smoke?: boolean; ackFailures?: boolean; concurrency?: number }) {
     try {
       const projectDir = process.cwd();
       const experimentsDir = resolve(projectDir, 'experiments');
@@ -360,6 +372,8 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
 
       // Rate-limit sandbox starts across all experiments to avoid 429s (20 starts per 2 seconds)
       const rateLimiter = new StartRateLimiter(20, 2_000);
+      // Started evals otherwise all run at once; --concurrency caps them across experiments.
+      const concurrencyLimiter = options.concurrency ? new ConcurrencyLimiter(options.concurrency) : undefined;
 
       let allPassed = true;
       const experimentPromises = selectedFiles.map(async (file) => {
@@ -396,6 +410,7 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
         }
 
         for (const model of models) {
+          if (concurrencyLimiter?.signal.aborted) break;
           const experimentName = models.length > 1
             ? `${baseExperimentName}/${model}`
             : baseExperimentName;
@@ -565,6 +580,7 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
                 smoke: options.smoke,
                 onProgress,
                 rateLimiter,
+                concurrencyLimiter,
                 reusedEvals,
                 classify,
               });
@@ -603,7 +619,11 @@ async function runAllCommand(experimentArgs: string[], options: { dry?: boolean;
         }
       });
 
+      // A rejected experiment must not let process.exit interrupt cleanup in
+      // another experiment sharing the concurrency cap.
+      if (concurrencyLimiter) await Promise.allSettled(experimentPromises);
       await Promise.all(experimentPromises);
+      if (concurrencyLimiter?.signal.aborted) allPassed = false;
 
       if (dashboard) {
         dashboard.stop();
@@ -888,8 +908,11 @@ async function refingerprintCommand(experimentArgs: string[], options: { dry?: b
  * "run everything." */
 async function runSelected(
   experimentArgs: string[],
-  options: { force?: boolean; smoke?: boolean; ackFailures?: boolean }
+  options: { force?: boolean; smoke?: boolean; ackFailures?: boolean; concurrency?: number }
 ): Promise<void> {
+  // With positional options, Commander keeps flags before `run` on the root
+  // command. An explicit subcommand value takes precedence.
+  options = { ...options, concurrency: options.concurrency ?? program.opts().concurrency };
   const { experimentsDir, evalsDir, resultsDir } = resolveProjectDirs();
   const files = selectExperimentFiles(experimentsDir, experimentArgs);
   if (files.length === 0) {
@@ -935,6 +958,7 @@ program
   .option('--force', 'Ignore fingerprints, re-run everything')
   .option('--smoke', 'Run 1 eval per experiment for sanity checking')
   .option('--ack-failures', 'Keep non-model failures (infra/timeout) as final results instead of deleting them')
+  .option('--concurrency <n>', 'Run at most n evals at once across all experiments (default: no limit)', parseConcurrency)
   .action(runSelected);
 
 program
@@ -965,7 +989,8 @@ program
   .option('--smoke', 'Run a single eval to verify setup (API keys, model IDs, sandbox)')
   .option('--force', 'Ignore fingerprints, re-run everything')
   .option('--ack-failures', 'Keep non-model failures (infra/timeout) as final results instead of deleting them')
-  .action(async (configInput: string | undefined, options: { dry?: boolean; smoke?: boolean; force?: boolean; ackFailures?: boolean }) => {
+  .option('--concurrency <n>', 'Run at most n evals at once across all experiments (default: no limit)', parseConcurrency)
+  .action(async (configInput: string | undefined, options: { dry?: boolean; smoke?: boolean; force?: boolean; ackFailures?: boolean; concurrency?: number }) => {
     if (configInput) {
       await runExperimentCommand(configInput, options);
       return;

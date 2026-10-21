@@ -59,6 +59,7 @@ The argument is the experiment filename without `.ts`. This resolves to `experim
 | `--smoke`            | Quick setup verification. Picks the first eval alphabetically, runs once per model.        |
 | `--force`            | Ignore cached fingerprints and re-run everything. Only applies when running all.           |
 | `--ack-failures`     | Keep non-model failures as final results instead of deleting them.                         |
+| `--concurrency <n>`  | Run at most `n` evals at once, across all experiments. Default: no limit.                  |
 
 Flags work with both modes:
 
@@ -68,6 +69,21 @@ npx @vercel/agent-eval cc --dry       # preview a single experiment
 npx @vercel/agent-eval --smoke        # smoke test all experiments
 npx @vercel/agent-eval cc --smoke     # smoke test one experiment
 ```
+
+### Concurrency
+
+Start rate limiting spreads out sandbox creation but does not limit how many sandboxes stay active. Use `--concurrency <n>` to cap active eval attempts across all experiments and models in one command. This applies to both Docker and Vercel sandboxes. The default is no cap; separate CLI processes have independent limits.
+
+```bash
+npx @vercel/agent-eval run cc codex --concurrency 8
+npx @vercel/agent-eval --concurrency 8 run cc codex
+```
+
+If the flag appears both before and after `run`, the value after `run` takes precedence. Waiting for capacity or a start-rate token does not count against an eval's `timeout`. An attempt keeps its slot through retries and sandbox cleanup, including cleanup after timeout or early exit. A separate verifier starts only after the codegen sandbox stops.
+
+With a cap, cleanup failure stops admission and cancels other active attempts. If a cancelled agent run does not settle within 60 seconds, the command fails instead of reusing its slot. Other active attempts get up to 60 seconds from their cancellation to finish cleanup before the CLI exits nonzero. Interrupted experiments do not produce completed result summaries; already saved results are preserved. Without a cap, existing best-effort handling of cleanup errors is retained.
+
+Library callers can share `new ConcurrencyLimiter(n)` through `runExperiment({ concurrencyLimiter, ... })`. A failed limiter stays aborted and cannot be reused. Capped runners set `AgentRunOptions.requireCleanup`. Custom agents must then settle `run()` only after disposing of their resources, including when cancelled, or throw `new SandboxCleanupError(sandboxId, cause)` if cleanup cannot be confirmed. Both classes are exported from `@vercel/agent-eval`.
 
 ### Other commands
 

@@ -310,7 +310,7 @@ export function createConsoleProgressHandler(context: {
     switch (event.type) {
       case 'experiment:start':
         console.log(
-          `Starting ${event.totalAttempts} eval attempts concurrently (${event.totalEvals} evals \u00d7 ${event.totalRuns} runs)`
+          `Starting ${event.totalAttempts} eval attempts (${event.totalEvals} evals \u00d7 ${event.totalRuns} runs)`
         );
         break;
       case 'eval:start':

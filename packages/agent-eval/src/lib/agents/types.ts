@@ -28,6 +28,9 @@ export interface AgentRunOptions {
   validation?: ValidationMode;
   /** Abort signal to cancel the run */
   signal?: AbortSignal;
+  /** Set by a capped runner. Finish cleanup before settling, or throw
+   * SandboxCleanupError if cleanup cannot be confirmed. */
+  requireCleanup?: boolean;
   /** Sandbox backend to use */
   sandbox?: SandboxBackend | 'auto';
   /** Vercel Container Registry image to boot the sandbox from (Vercel backend
@@ -134,7 +137,9 @@ export interface Agent {
   /** Human-readable display name */
   displayName: string;
 
-  /** Run the agent on a fixture */
+  /** Run the agent on a fixture. With requireCleanup, settle only after owned
+   * resources are cleaned up (including on cancellation), or reject with
+   * SandboxCleanupError to prevent reusing the concurrency slot. */
   run(fixturePath: string, options: AgentRunOptions): Promise<AgentRunResult>;
 
   /** Get agent-specific environment variable name for API key */

@@ -9,6 +9,7 @@ import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { isAbsolute, join } from 'path';
 import { DockerSandboxManager } from './docker-sandbox.js';
+import { SandboxCleanupError } from './sandbox-cleanup.js';
 
 /**
  * Default timeout for sandbox operations (10 minutes).
@@ -65,6 +66,8 @@ export const ENV_VAR_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * Options for creating a sandbox.
  */
 export interface SandboxOptions {
+  /** Surface cleanup failures that would prevent safely reusing a concurrency slot. */
+  requireCleanup?: boolean;
   /** Timeout in milliseconds */
   timeout?: number;
   /**
@@ -236,7 +239,11 @@ export class SandboxManager implements Sandbox {
         await manager.ensureWorkingDirectory();
       }
     } catch (err) {
-      await sandbox.stop().catch(() => {});
+      try {
+        await sandbox.stop();
+      } catch (cleanupError) {
+        if (options.requireCleanup) throw new SandboxCleanupError(sandbox.name, cleanupError, err);
+      }
       throw err;
     }
     return manager;
@@ -605,6 +612,7 @@ export async function createSandbox(
     return DockerSandboxManager.create({
       timeout: options.timeout,
       runtime: options.runtime,
+      ...(options.requireCleanup ? { requireCleanup: true } : {}),
     });
   }
 
@@ -613,6 +621,7 @@ export async function createSandbox(
     runtime: options.runtime,
     image: options.image,
     user: options.user,
+    ...(options.requireCleanup ? { requireCleanup: true } : {}),
   });
 }
 

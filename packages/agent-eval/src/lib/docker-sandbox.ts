@@ -8,6 +8,7 @@ import { PassThrough } from 'node:stream';
 import * as tar from 'tar-stream';
 import type { Sandbox } from './types.js';
 import type { CommandResult, SandboxFile } from './sandbox.js';
+import { SandboxCleanupError } from './sandbox-cleanup.js';
 
 /**
  * Docker images for each Node.js runtime.
@@ -46,6 +47,8 @@ const NPM_GLOBAL_DIR = '/home/node/.npm-global';
  * Options for creating a Docker sandbox.
  */
 export interface DockerSandboxOptions {
+  /** Surface uncertain cleanup instead of retaining best-effort stop behavior. */
+  requireCleanup?: boolean;
   /** Timeout in milliseconds */
   timeout?: number;
   /** Runtime environment */
@@ -62,12 +65,14 @@ export class DockerSandboxManager implements Sandbox {
   private _containerId: string = '';
   private timeout: number;
   private runtime: string;
+  private readonly requireCleanup: boolean;
   private _workingDirectory: string = CONTAINER_WORKDIR;
 
   constructor(options: DockerSandboxOptions = {}) {
     this.docker = new Docker();
     this.timeout = options.timeout ?? DEFAULT_TIMEOUT;
     this.runtime = options.runtime ?? 'node24';
+    this.requireCleanup = options.requireCleanup ?? false;
   }
 
   /**
@@ -75,7 +80,16 @@ export class DockerSandboxManager implements Sandbox {
    */
   static async create(options: DockerSandboxOptions = {}): Promise<DockerSandboxManager> {
     const manager = new DockerSandboxManager(options);
-    await manager.initialize();
+    try {
+      await manager.initialize();
+    } catch (error) {
+      try {
+        await manager.stop();
+      } catch (cleanupError) {
+        throw new SandboxCleanupError(manager.sandboxId, cleanupError, error);
+      }
+      throw error;
+    }
     return manager;
   }
 
@@ -403,12 +417,42 @@ export class DockerSandboxManager implements Sandbox {
    */
   async stop(): Promise<void> {
     if (this.container) {
+      const container = this.container;
       try {
-        await this.container.stop({ t: 0 }); // Immediate stop
-      } catch {
-        // Container may already be stopped or removed
+        await container.stop({ t: 0 }).catch(async (error) => {
+          const statusCode = (error as { statusCode?: number }).statusCode;
+          if (statusCode === 304) {
+            // AutoRemove does not run for a container that never started.
+            await this.removeStoppedContainer(container);
+          } else if (statusCode !== 404) {
+            throw error;
+          }
+        });
+      } catch (error) {
+        if (this.requireCleanup) throw new SandboxCleanupError(this.sandboxId, error);
       }
       this.container = null;
+    }
+  }
+
+  private async removeStoppedContainer(container: Docker.Container): Promise<void> {
+    try {
+      await container.remove();
+    } catch (error) {
+      const statusCode = (error as { statusCode?: number }).statusCode;
+      if (statusCode === 404) return;
+      if (statusCode === 409) {
+        // AutoRemove can race this request. Confirm it owns removal of a
+        // stopped container; a conflict alone does not establish safe cleanup.
+        try {
+          const { State } = await container.inspect();
+          if (!State.Running && State.Status === 'removing') return;
+        } catch (inspectError) {
+          if ((inspectError as { statusCode?: number }).statusCode === 404) return;
+          throw inspectError;
+        }
+      }
+      throw error;
     }
   }
 }
