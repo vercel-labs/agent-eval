@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, existsSync } from 'fs';
+import { mkdirSync, rmSync, existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 import { runExperiment } from './runner.js';
 import type { ResolvedExperimentConfig, EvalFixture } from './types.js';
 import type { Agent } from './agents/types.js';
@@ -899,6 +900,51 @@ describe('runExperiment', () => {
         outputTokens: 500,
         cacheReadTokens: 8000,
       });
+    });
+  });
+
+  describe('saved transcripts', () => {
+    it("parses a custom agent's transcript with the parser its definition names", async () => {
+      const transcript = [
+        JSON.stringify({ type: 'thread.started', thread_id: 't1' }),
+        JSON.stringify({ type: 'item.started', item: { id: 'item_1', type: 'command_execution', command: 'bash -lc ls', status: 'in_progress' } }),
+        JSON.stringify({ type: 'item.completed', item: { id: 'item_1', type: 'command_execution', command: 'bash -lc ls', aggregated_output: 'README.md\n', exit_code: 0, status: 'completed' } }),
+      ].join('\n');
+      // A registered custom agent whose ID names no parser; its definition does.
+      agentsIndex.registerAgent({
+        name: 'saved-transcript-agent',
+        displayName: 'Saved Transcript Agent',
+        getApiKeyEnvVar: () => 'MOCK_API_KEY',
+        getDefaultModel: () => 'mock-model',
+        run: vi.fn().mockResolvedValue({ success: true, output: '', transcript, duration: 6000 }),
+        definition: { name: 'saved-transcript-agent', o11yAgentName: 'codex' },
+      } as unknown as Agent);
+
+      const config = {
+        agent: 'saved-transcript-agent',
+        model: 'mock-model',
+        evals: ['custom-eval'],
+        runs: 1,
+        earlyExit: false,
+        scripts: [],
+        timeout: 600,
+      } as unknown as ResolvedExperimentConfig;
+
+      const results = await runExperiment({
+        config,
+        fixtures: [{ name: 'custom-eval', path: '/fake/path', prompt: 'Do it', isModule: true }],
+        apiKey: 'my-api-key',
+        resultsDir: TEST_DIR,
+        experimentName: 'custom-agent-experiment',
+      });
+
+      const runDir = join(TEST_DIR, 'custom-agent-experiment', results.startedAt.replace(/:/g, '-'), 'custom-eval', 'run-1');
+      const saved = JSON.parse(readFileSync(join(runDir, 'transcript.json'), 'utf-8'));
+      expect(saved.agent).toBe('saved-transcript-agent');
+      expect(saved.parseSuccess).toBe(true);
+      expect(saved.summary.toolCalls.shell).toBe(1);
+      const result = JSON.parse(readFileSync(join(runDir, 'result.json'), 'utf-8'));
+      expect(result.o11y.shellCommands).toEqual([expect.objectContaining({ command: 'bash -lc ls' })]);
     });
   });
 
