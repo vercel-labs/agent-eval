@@ -11,7 +11,7 @@
 
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
-import { tool } from 'ai';
+import { tool, type ToolSet } from 'ai';
 import { z } from 'zod';
 import type { Classification, FailureType } from './types.js';
 
@@ -55,7 +55,7 @@ function safePath(root: string, relativePath: string): string | null {
 /**
  * Creates sandboxed read-only tools for the AI classifier.
  */
-export function createClassifierTools(evalResultDir: string) {
+export function createClassifierTools(evalResultDir: string): ToolSet {
   return {
     list_files: tool({
       description:
@@ -237,7 +237,7 @@ export async function classifyWithAI(
 
   await generateText({
     model: gateway('anthropic/claude-haiku-4-5-20251001'),
-    system: CLASSIFIER_SYSTEM_PROMPT,
+    instructions: CLASSIFIER_SYSTEM_PROMPT,
     prompt: `Classify the failure for eval "${evalName}" (experiment: ${experimentName}). Use the exploration tools to investigate, then call classify() with your verdict.`,
     tools: allTools,
     stopWhen: hasToolCall('classify'),

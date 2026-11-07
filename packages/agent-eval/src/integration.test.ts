@@ -1,18 +1,21 @@
 /**
  * End-to-end integration tests for the eval framework.
  *
- * These tests require valid Vercel and Anthropic credentials.
- * Run with: INTEGRATION_TEST=1 npm test
+ * Classifier tests mock Gateway HTTP responses and run without credentials.
+ * Sandbox tests require valid credentials or Docker, and opt in with:
+ * INTEGRATION_TEST=1 npm test
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'fs';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
+import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, mkdtempSync } from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
 import { execSync } from 'child_process';
 import { createServer, type Server } from 'http';
 import type { AddressInfo } from 'net';
 import { config as dotenvConfig } from 'dotenv';
 import { initProject } from './lib/init.js';
+import { classifyFailure } from './lib/classifier.js';
 import { loadFixture, loadAllFixtures } from './lib/fixture.js';
 import { runSingleEval } from './lib/runner.js';
 import { loadConfig } from './lib/config.js';
@@ -53,6 +56,102 @@ const hasCursorCredentials = !!process.env.CURSOR_API_KEY && hasSandbox;
 // OpenCode credentials (only supports AI Gateway)
 const hasOpenCodeCredentials = hasAiGatewayCredentials;
 const hasFxCredentials = hasAiGatewayCredentials;
+
+// Exercise the real SDK with mocked HTTP responses in CI, without credentials.
+describe('failure classification (AI SDK)', () => {
+  let resultDir: string;
+  const classification = {
+    failureType: 'infra',
+    failureReason: 'The transcript reports a rate limit before any code was written.',
+  };
+
+  function gatewayResponse(content: unknown[], finishReason = 'tool-calls') {
+    return Response.json({
+      content,
+      finishReason: { unified: finishReason, raw: finishReason },
+      usage: {
+        inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+        outputTokens: { total: 5, text: 5, reasoning: 0 },
+      },
+      warnings: [],
+    });
+  }
+
+  beforeEach(() => {
+    resultDir = mkdtempSync(join(tmpdir(), 'agent-eval-classifier-'));
+    writeFileSync(join(resultDir, 'transcript.json'), 'Rate limited before code generation');
+    vi.stubEnv('AI_GATEWAY_API_KEY', 'test-gateway-key');
+    vi.stubEnv('VERCEL_OIDC_TOKEN', 'test-oidc-token');
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    rmSync(resultDir, { recursive: true, force: true });
+  });
+
+  it.each(['api-key', 'oidc'])('explores evidence, submits and caches a verdict with %s auth', async (auth) => {
+    if (auth === 'oidc') vi.stubEnv('AI_GATEWAY_API_KEY', undefined);
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(gatewayResponse([{
+        type: 'tool-call',
+        toolCallId: 'read-transcript',
+        toolName: 'read_file',
+        input: JSON.stringify({ path: 'transcript.json' }),
+      }]))
+      .mockResolvedValueOnce(gatewayResponse([{
+        type: 'tool-call',
+        toolCallId: 'submit-classification',
+        toolName: 'classify',
+        input: JSON.stringify(classification),
+      }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(classifyFailure(resultDir, 'example-eval', 'example-experiment'))
+      .resolves.toEqual(classification);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe('https://ai-gateway.vercel.sh/v4/ai/language-model');
+    const headers = new Headers(options?.headers);
+    expect(headers.get('authorization')).toBe(`Bearer ${auth === 'api-key' ? 'test-gateway-key' : 'test-oidc-token'}`);
+    const firstRequest = JSON.parse(String(options?.body));
+    expect(firstRequest.prompt).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: 'system', content: expect.stringContaining('failure classifier') }),
+      expect.objectContaining({ role: 'user' }),
+    ]));
+    const secondRequest = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    expect(JSON.stringify(secondRequest.prompt)).toContain('Rate limited before code generation');
+    expect(JSON.parse(readFileSync(join(resultDir, 'classification.json'), 'utf-8'))).toEqual(classification);
+
+    // Reuse the cached verdict without another Gateway request.
+    await expect(classifyFailure(resultDir, 'example-eval', 'example-experiment'))
+      .resolves.toEqual(classification);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('propagates Gateway failures without caching a verdict', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({ error: { message: 'Invalid model' } }, { status: 400 })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(classifyFailure(resultDir, 'example-eval', 'example-experiment')).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(existsSync(join(resultDir, 'classification.json'))).toBe(false);
+  });
+
+  it('returns null without caching when the model does not submit a verdict', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      gatewayResponse([{ type: 'text', text: 'Not enough evidence to classify.' }], 'stop')
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(classifyFailure(resultDir, 'example-eval', 'example-experiment')).resolves.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(existsSync(join(resultDir, 'classification.json'))).toBe(false);
+  });
+});
 
 describe.skipIf(!process.env.INTEGRATION_TEST)('integration tests', () => {
   beforeAll(() => {
