@@ -1,5 +1,13 @@
 # @vercel/agent-eval
 
+## 3.0.0
+
+### Major Changes
+
+- [#222](https://github.com/vercel-labs/agent-eval/pull/222) [`4353aa1`](https://github.com/vercel-labs/agent-eval/commit/4353aa166b7ce7216cfbd29f4b3d2162cb7660e0) Thanks [@aurorascharff](https://github.com/aurorascharff)! - Migrate failure classification to AI SDK 7 before AI SDK 5 support is removed from AI Gateway. Remove the unused Anthropic provider dependency and use the SDK's instructions option for the classifier prompt.
+
+  This release requires Node.js 22 or later, up from Node.js 18. Upgrade the host runtime before updating Agent Eval; the package remains ESM.
+
 ## 2.6.0
 
 ### Minor Changes
