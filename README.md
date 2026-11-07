@@ -14,6 +14,8 @@ You're building a frontend framework and want AI agents to work well with it. Bu
 
 ## Quick Start
 
+Requires Node.js 22 or later.
+
 ```bash
 # Create a new eval project
 npx @vercel/agent-eval init my-agent-evals
