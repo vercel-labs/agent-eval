@@ -11,6 +11,8 @@ import {
   formatRunResult,
   scanReusableResults,
 } from './results.js';
+import { injectTranscriptContext, TRANSCRIPT_CONTEXT_PATH } from './agents/shared.js';
+import { codexLegacySessionJsonl } from './o11y/codex-transcripts.test-support.js';
 import type { AgentRunResult } from './agents/types.js';
 import type { EvalRunResult, EvalRunData, ResolvedExperimentConfig } from './types.js';
 
@@ -414,6 +416,92 @@ describe('results utilities', () => {
       // Repair evidence must survive into the persisted result.json — it is the
       // removal signal for the codex shell-tool workaround (see codex/run.mjs).
       expect(resultJson.modelRepair).toBe('gpt-5.5');
+    });
+
+    it.each([
+      {
+        name: 'an agent without a parser (existing behavior)',
+        agent: 'custom-agent',
+        raw: '{"type":"message","role":"assistant","content":"Done"}',
+        parseSuccess: false,
+        summary: { totalTurns: 0, totalToolCalls: 0, errors: [] },
+      },
+      {
+        name: 'an agent without a parser that reports usage (existing summary behavior)',
+        agent: 'custom-agent',
+        raw: '{"type":"message","role":"assistant","content":"Done"}',
+        parseSuccess: false,
+        summary: { totalTurns: 0, totalToolCalls: 0, errors: [] },
+        usage: { totalTokens: 7, costUsd: 0.01 },
+      },
+      {
+        name: 'a successfully parsed empty session',
+        agent: 'codex',
+        raw: '{"type":"session_meta","payload":{"id":"empty"}}',
+        parseSuccess: true,
+        summary: { totalTurns: 0, totalToolCalls: 0, errors: [] },
+      },
+      {
+        name: 'an unsupported legacy session with a reported failure',
+        agent: 'codex',
+        raw: codexLegacySessionJsonl(undefined, 'stream disconnected'),
+        parseSuccess: false,
+        summary: null,
+        usage: { totalTokens: 24885 },
+      },
+      {
+        name: 'an unsupported session containing some recognized activity',
+        agent: 'codex',
+        raw: [
+          '{"type":"session_meta","payload":{"id":"mixed"}}',
+          '{"type":"response_item","payload":{"type":"message","role":"assistant","content":[]}}',
+          '{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","content":[{"type":"Text","text":"Done"}]}}}',
+        ].join('\n'),
+        parseSuccess: false,
+        summary: null,
+      },
+    ])('publishes consistent summaries for $name', async ({ agent, raw, parseSuccess, summary, usage }) => {
+      const config: ResolvedExperimentConfig = {
+        agent,
+        model: 'test-model',
+        evals: ['eval-1'],
+        runs: 1,
+        earlyExit: true,
+        scripts: [],
+        timeout: 300,
+      };
+      const outputDir = saveResults(
+        createExperimentResults(
+          config,
+          [createEvalSummary('eval-1', [{ result: { status: 'passed', duration: 1, usage }, transcript: raw }])],
+          new Date(0), new Date(1),
+        ),
+        { resultsDir: TEST_DIR, experimentName: 'transcript-summary' },
+      );
+      const runDir = join(outputDir, 'eval-1', 'run-1');
+      const result = JSON.parse(readFileSync(join(runDir, 'result.json'), 'utf8'));
+      const transcript = JSON.parse(readFileSync(join(runDir, 'transcript.json'), 'utf8'));
+      const written: Record<string, string> = {};
+      const sandbox = { writeFiles: async (files: Record<string, string>) => Object.assign(written, files) };
+      await injectTranscriptContext(sandbox as never, raw, agent, undefined, usage);
+      const context = JSON.parse(written[TRANSCRIPT_CONTEXT_PATH]);
+
+      expect(transcript.parseSuccess).toBe(parseSuccess);
+      expect(readFileSync(join(runDir, 'transcript-raw.jsonl'), 'utf8')).toBe(raw);
+      if (summary === null) {
+        expect.soft(result).not.toHaveProperty('o11y');
+        expect.soft(context.o11y).toBeNull();
+      } else {
+        expect(result.o11y).toMatchObject(summary);
+        expect(context.o11y).toEqual(result.o11y);
+      }
+      if (usage) {
+        expect(result.usage).toEqual(usage);
+        expect(context.usage).toEqual(result.usage);
+      } else {
+        expect(result).not.toHaveProperty('usage');
+        expect(context).not.toHaveProperty('usage');
+      }
     });
 
     it('writes a usage block to summary.json and per-run usage to result.json', () => {

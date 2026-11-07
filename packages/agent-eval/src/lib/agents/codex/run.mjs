@@ -131,39 +131,49 @@ function listSessionFiles(dir) {
   return out;
 }
 
+/** Every saved Codex session file, see {@link listSessionFiles}. */
+function listCodexSessionFiles() {
+  return listSessionFiles(join(homedir(), '.codex', 'sessions'));
+}
+
 /**
  * Locate + read the Codex session transcript file.
  *
- * Codex writes JSONL session files under `~/.codex/sessions`. The old adapter, in
- * shell, did:
- *   - with a threadId: `find ... -name '*<threadId>*.jsonl' | head -1`
- *   - without:         `find ... -name '*.jsonl' | sort | tail -1`
- *
- * We mirror that exactly: filter by threadId substring when present (first match),
- * otherwise lexicographically sort all `.jsonl` paths and take the last. Codex
- * session filenames are timestamp-prefixed, so the lexicographic max is the newest.
+ * Prefer the threadId from stdout. Without one, accept only a single new
+ * session whose metadata identifies an exec, excluding child agents and files
+ * saved before this task (such as the shell canary's). Filename order alone
+ * cannot identify the parent thread. Ambiguous or unknown sources are skipped.
  *
  * Best-effort: any failure → undefined (never throws).
  *
  * @param {string|undefined} threadId
+ * @param {Set<string>} [preexisting] session files that existed before the exec
  * @returns {string|undefined}
  */
-function captureCodexSessionTranscript(threadId) {
+function captureCodexSessionTranscript(threadId, preexisting) {
   try {
-    const sessionsDir = join(homedir(), '.codex', 'sessions');
-    const files = listSessionFiles(sessionsDir);
+    const files = listCodexSessionFiles();
     if (files.length === 0) return undefined;
 
-    let chosen;
     if (threadId) {
-      // `find ... | head -1`: the first match in the traversal order.
-      chosen = files.find((f) => f.includes(threadId));
-    } else {
-      // `find ... | sort | tail -1`: lexicographic max.
-      chosen = files.slice().sort()[files.length - 1];
+      const chosen = files.find((f) => f.includes(threadId));
+      return chosen ? readFileSync(chosen, 'utf8') : undefined;
     }
-    if (!chosen) return undefined;
-    return readFileSync(chosen, 'utf8');
+
+    let transcript;
+    for (const file of files) {
+      if (preexisting?.has(file)) continue;
+      try {
+        const raw = readFileSync(file, 'utf8');
+        const meta = JSON.parse(raw.split('\n', 1)[0]);
+        if (meta.type !== 'session_meta' || meta.payload?.source !== 'exec') continue;
+        if (transcript !== undefined) return undefined;
+        transcript = raw;
+      } catch {
+        // Another session may be incomplete or disappear while being inspected.
+      }
+    }
+    return transcript;
   } catch {
     return undefined;
   }
@@ -539,7 +549,9 @@ export async function runAgent(input) {
   }
 
   // Step 2: codex exec. Blocking is fine — the runner has nothing else to do while
-  // the agent works. The sandbox-level timeout bounds it.
+  // the agent works. The sandbox-level timeout bounds it. Sessions saved before it
+  // (the shell canary's) can never be this exec's transcript.
+  const sessionsBeforeExec = new Set(listCodexSessionFiles());
   const res = spawnSync('codex', buildCodexExecArgs(input), {
     cwd: input.cwd,
     env: process.env,
@@ -558,9 +570,10 @@ export async function runAgent(input) {
   // this even on the non-zero-exit path). Prefer the inline --json stdout, but
   // fall back to the saved session file under ~/.codex; newer Codex builds may
   // write the session transcript there without echoing the full JSONL to stdout.
+  // The host parser reads either format.
   const stdoutTranscript = extractTranscriptFromOutput(output);
   const threadId = extractCodexThreadId(output);
-  const sessionTranscript = captureCodexSessionTranscript(threadId);
+  const sessionTranscript = captureCodexSessionTranscript(threadId, sessionsBeforeExec);
   const transcript = stdoutTranscript ?? sessionTranscript ?? null;
   const observedModel = extractObservedModelFromCodexSession(sessionTranscript ?? stdoutTranscript) ?? null;
 

@@ -23,7 +23,7 @@ import type {
 } from './types.js';
 import type { AgentRunResult } from './agents/types.js';
 import { isWorkspacePath } from './agents/shared.js';
-import { parseTranscript, parseTranscriptUsage, type Transcript } from './o11y/index.js';
+import { shouldIncludeTranscriptSummary, parseTranscript, parseTranscriptUsage, type Transcript } from './o11y/index.js';
 import { isNonModelFailure } from './classifier.js';
 import { copyFixtureFiles } from './fixture.js';
 import { computeReuseCompatibilityFingerprint } from './fingerprint.js';
@@ -319,9 +319,11 @@ export function saveResults(
 
 				// Include summary in result.json for quick access. Usage the agent
 				// reported directly (outside its transcript) wins, as in the result.
-				resultWithPaths.o11y = runData.result.usage
-					? { ...transcript.summary, usage: runData.result.usage }
-					: transcript.summary;
+				if (shouldIncludeTranscriptSummary(transcript)) {
+					resultWithPaths.o11y = runData.result.usage
+						? { ...transcript.summary, usage: runData.result.usage }
+						: transcript.summary;
+				}
 			}
 
 			// Save script/test outputs to outputs/
