@@ -324,6 +324,12 @@ export async function createVitestConfig(sandbox: AnySandbox): Promise<void> {
     'vitest.config.ts': `
 import { defineConfig } from 'vitest/config';
 export default defineConfig({
+  // Transpile the eval file without the workspace tsconfig.json. A framework
+  // tsconfig can reference generated files (e.g. Nuxt's .nuxt/tsconfig.*.json)
+  // that the agent may have deleted, and a missing reference aborts the run
+  // before any test executes. oxc covers Vite 8, esbuild covers older Vite.
+  oxc: { tsconfig: false },
+  esbuild: { tsconfigRaw: '{}' },
   test: {
     include: ['${evalFile}'],
     globals: false,

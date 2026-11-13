@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { chmodSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { chmodSync, mkdirSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   captureGeneratedFiles,
+  createVitestConfig,
+  EVAL_HELPER_PATH,
   ensureValidationRunner,
   FALLBACK_VITEST_VERSION,
   initGitAndCommit,
@@ -79,6 +82,34 @@ describe('ensureValidationRunner', () => {
       `vitest@${FALLBACK_VITEST_VERSION}`,
     ]);
   });
+});
+
+describe('createVitestConfig', () => {
+  it('runs the eval when the workspace tsconfig references a missing file', async () => {
+    const sandbox = new LocalSandbox();
+    const ws = sandbox.getWorkingDirectory();
+    // vitest is hoisted to the repository root's node_modules.
+    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../../../../..');
+    symlinkSync(join(repoRoot, 'node_modules'), join(ws, 'node_modules'));
+    // Nuxt's root tsconfig.json references files generated into .nuxt/, which
+    // an agent can delete (`rm -rf .nuxt`) before validation runs.
+    writeFileSync(
+      join(ws, 'tsconfig.json'),
+      JSON.stringify({ files: [], references: [{ path: './.nuxt/tsconfig.app.json' }] })
+    );
+    writeFileSync(
+      join(ws, 'EVAL.ts'),
+      "import { expect, test } from 'vitest';\ntest('runs', () => { expect(1).toBe(1); });\n"
+    );
+    mkdirSync(join(ws, dirname(EVAL_HELPER_PATH)), { recursive: true });
+    writeFileSync(join(ws, EVAL_HELPER_PATH), 'export {};\n');
+
+    await createVitestConfig(sandbox as never);
+    const result = await sandbox.runCommand('npx', ['vitest', 'run', 'EVAL.ts']);
+
+    expect(result.stdout + result.stderr).toMatch(/1 passed/);
+    expect(result.exitCode).toBe(0);
+  }, 60_000);
 });
 
 describe('runValidation', () => {
